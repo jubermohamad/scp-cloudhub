@@ -1,0 +1,6 @@
+apiVersion: v2
+name: opensearch-extras
+appVersion: 2.13.0
+description: A Helm chart for opensearch-extras
+version: 2.19.0
+type: application

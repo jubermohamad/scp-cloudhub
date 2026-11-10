@@ -1,0 +1,80 @@
+{{- if .Values.api.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "prism.fullname" . }}-api
+  labels:
+    app: prism-api
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: prism-api
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.api.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "prism.fullname" . }}-api
+  labels:
+    app: prism-api
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  # ONE replica, Recreate — the write lock lives in the process. A rolling
+  # update would run two API pods that both believe they hold it; two replicas
+  # would do the same permanently. Neither is safe: the ledger is append-only
+  # and its ordering is enforced in-process.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: prism-api
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: prism-api
+        {{- include "prism.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "prism.imagePullSecrets" . | nindent 6 }}
+      {{- include "prism.scheduling" . | nindent 6 }}
+      containers:
+        - name: prism-api
+          image: {{ include "prism.image" (dict "ctx" $ "name" "prism-api" "tag" .Values.api.image.tag "registry" .Values.api.image.registry "repository" .Values.api.image.repository) }}
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.api.image.pullPolicy) }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.port }}
+          env:
+            {{- include "prism.graphAndLedgerEnv" . | nindent 12 }}
+            {{- with .Values.api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          # INVENTED (the raw manifest has readiness only). Generous
+          # failureThreshold: a reprojection or a long write holds the event
+          # loop, and restarting the process that owns the write lock mid
+          # transaction is worse than a slow /healthz.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+{{- end }}

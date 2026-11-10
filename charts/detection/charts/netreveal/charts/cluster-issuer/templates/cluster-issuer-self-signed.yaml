@@ -1,0 +1,33 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.global.issuer.selfSigned.name }}
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.issuer.selfSigned.certificate.name }}
+  namespace: {{ .Values.global.namespace }}
+spec:
+  isCA: true
+  secretName: {{ .Values.issuer.selfSigned.certificate.secretName }}
+  duration: {{ .Values.global.issuer.selfSigned.certificate.duration }}
+  renewBefore: {{ .Values.global.issuer.selfSigned.certificate.renewBefore }}
+  commonName: CA Root Netreveal
+  subject:
+    organizations: {{ .Values.global.certificate.subject.organizations }}
+    countries: {{ .Values.global.certificate.subject.countries }}
+    organizationalUnits: {{ .Values.global.certificate.subject.organizationalUnits }}
+    localities: {{ .Values.global.certificate.subject.localities }}
+    provinces: {{ .Values.global.certificate.subject.provinces }}
+  privateKey:
+    algorithm: {{ .Values.global.certificate.privateKey.algorithm }}
+    size: {{ .Values.global.certificate.privateKey.size }}
+  issuerRef:
+    name: {{ .Values.global.issuer.selfSigned.name }}
+    kind: Issuer
+    group: cert-manager.io

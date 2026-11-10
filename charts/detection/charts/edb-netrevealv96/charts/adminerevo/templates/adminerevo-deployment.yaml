@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "adminerevo.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "adminerevo.name" . }}
+    {{- include "common.helm.metadata.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "adminerevo.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "adminerevo.name" . }}
+        {{- include "common.helm.metadata.labels" . | nindent 8 }}
+        app.kubernetes.io/network-policy: "allow-ingress"
+        app.kubernetes.io/component: "adminerevo"
+        app.kubernetes.io/namespace: {{ .Values.global.namespace }}
+    spec:
+      hostname: "{{ .Release.Name}}-adminerevo"
+      terminationGracePeriodSeconds: 1
+
+      securityContext:
+        runAsUser: 200
+        runAsGroup: 200
+        fsGroup: 200
+        fsGroupChangePolicy: OnRootMismatch
+
+      {{- if eq .Values.global.useImagePullSecrets "true" }}
+      imagePullSecrets:
+      - name: regcred
+      {{- end }}
+
+      initContainers:
+        - name: init-adminerevo
+          image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.image.imageRepository }}:{{ .Values.image.imageTag }}"
+          imagePullPolicy: IfNotPresent
+
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+
+          volumeMounts:
+            - name: {{ .Release.Name }}-adminer-www
+              mountPath: /tmp/www
+
+          command:
+            - /bin/bash
+            - -exec
+            - |
+              set +x
+              cp -r /var/www/html/. /tmp/www
+
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.image.imageRepository }}:{{ .Values.image.imageTag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+
+          volumeMounts:
+            - name: {{ .Release.Name }}-adminer-php-sessions
+              mountPath: /var/lib/php/sessions
+            - name: {{ .Release.Name }}-adminer-tmp
+              mountPath: /tmp
+            - name: {{ .Release.Name }}-adminer-www
+              mountPath: /var/www/html
+
+          env:
+            - name: ADMINER_DESIGN
+              value: {{ .Values.config.design }}
+            - name: ADMINER_DEFAULT_SERVER
+              value: "{{ include "db.host" . }}:{{ .Values.global.baseConfigProperties.db.postgresql.port }}"
+            {{- if ne .Values.config.plugins "" }}
+            - name: ADMINER_PLUGINS
+              value: {{ .Values.config.plugins }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          {{- if eq .Values.global.useResourceConstraints "true" }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- end }}
+          {{- if .Values.probs.livenessProbe }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+              scheme: HTTP
+            {{- toYaml .Values.probs.livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.probs.readinessProbe }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+              scheme: HTTP
+            {{ toYaml .Values.probs.readinessProbe | indent 12 }}
+          {{- end }}
+          {{- if .Values.probs.startupProbe }}
+          startupProbe:
+            httpGet:
+              path: /
+              port: 8080
+              scheme: HTTP
+            {{- toYaml .Values.probs.startupProbe | nindent 12 }}
+          {{- end }}
+
+      volumes:
+        - name: {{ .Release.Name }}-adminer-php-sessions
+          emptyDir: {}
+        - name: {{ .Release.Name }}-adminer-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-adminer-www
+          emptyDir: {}
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}

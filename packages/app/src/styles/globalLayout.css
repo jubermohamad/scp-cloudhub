@@ -1,0 +1,395 @@
+:root {
+  --cloudhub-global-header-height: 60px;
+  --cloudhub-global-sidebar-width: 220px;
+  --cloudhub-glance-sidebar-bg: #1e3a8a;
+  --cloudhub-glance-sidebar-hover: #1e40af;
+  --cloudhub-glance-sidebar-active: #1d4ed8;
+  --cloudhub-glance-canvas: #f9fafb;
+  --cloudhub-glance-line: #e5e7eb;
+}
+
+body {
+  background: var(--cloudhub-glance-canvas);
+  overflow-x: hidden;
+  font-family: 'Inter', 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+  color: #111827;
+}
+
+/* Shared CloudHub portal baseline. Page-specific styles may change layout or
+   accent color, but typography and common surfaces stay consistent. */
+.MuiTypography-root,
+.MuiButton-root,
+.MuiInputBase-root,
+.MuiFormLabel-root,
+.MuiMenuItem-root,
+.MuiTableCell-root,
+.MuiChip-root {
+  font-family: 'Inter', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+  letter-spacing: 0 !important;
+}
+
+.MuiTypography-h4 {
+  font-size: 1.75rem !important;
+  line-height: 1.2 !important;
+  font-weight: 700 !important;
+}
+
+.MuiTypography-h5 {
+  font-size: 1.25rem !important;
+  line-height: 1.25 !important;
+  font-weight: 700 !important;
+}
+
+.MuiTypography-h6 {
+  font-size: 1rem !important;
+  line-height: 1.3 !important;
+  font-weight: 600 !important;
+}
+
+.MuiTypography-body1 {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.MuiTypography-body2 {
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.MuiTypography-caption {
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.MuiButton-root {
+  text-transform: none;
+  font-weight: 600;
+  border-radius: 6px;
+}
+
+.MuiTableCell-root {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  border-color: #e5e7eb;
+}
+
+.MuiTableHead-root .MuiTableCell-root {
+  background: #f5f5f5;
+  color: #4b5563;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase;
+}
+
+/* Compact Backstage page headers used by Platform Registry and tool pages. */
+[class*='BackstageHeader'] {
+  min-height: 124px !important;
+  padding-top: 20px !important;
+  padding-bottom: 20px !important;
+}
+
+[class*='BackstageHeader'] [class*='type'] {
+  display: none !important;
+}
+
+/* Normalize Backstage UI plugin-header icons across portal pages. */
+[class*='PluginHeaderToolbarIcon'] {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin-right: 10px !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 6px !important;
+  background: #f3f4f6 !important;
+  color: #4b5563 !important;
+  box-sizing: border-box !important;
+}
+
+[class*='PluginHeaderToolbarIcon'] svg {
+  width: 18px !important;
+  height: 18px !important;
+  color: inherit !important;
+}
+
+main {
+  background: var(--cloudhub-glance-canvas) !important;
+}
+
+main > div:first-child {
+  box-sizing: border-box;
+  padding-top: 0 !important;
+  padding-left: 4px !important;
+}
+
+/* Backstage sometimes applies inner content padding; clamp it too. */
+main > div:first-child > div:first-child {
+  padding-left: 4px !important;
+}
+
+/* Keep first content wrapper tight under the app shell header. */
+main > div:first-child > *:first-child {
+  margin-top: 0 !important;
+}
+
+/* Host node inserted by AppShellTabs into the native app shell toolbar. */
+.cloudhub-shell-tabs-host {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  margin-right: 12px;
+}
+
+[class*='BackstageSidebar-'],
+[class*='SidebarPage'] [class*='Drawer'] {
+  background: #1e3a8a !important;
+  background-color: #1e3a8a !important;
+}
+
+/* Keep nested sidebar containers transparent so no banding/patches appear. */
+[class*='BackstageSidebar-'] > *,
+[class*='BackstageSidebar-'] nav,
+[class*='BackstageSidebar-'] aside,
+[class*='SidebarScrollWrapper'] {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+[class*='BackstageSidebar-'] {
+  width: var(--cloudhub-global-sidebar-width) !important;
+  min-width: var(--cloudhub-global-sidebar-width) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 3px 0 10px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Target the MUI Drawer paper directly — this is the actual painted surface */
+[class*='BackstageSidebar-'] .MuiPaper-root {
+  background: #1e3a8a !important;
+  background-color: #1e3a8a !important;
+  border-radius: 0 !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 3px 0 10px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Fix Backstage's hardcoded label max-width so item text doesn't truncate.
+   At 220px sidebar: 10px margin each side = 200px item, ~40px icon → ~155px text */
+[class*='BackstageSidebarItem-label'],
+[class*='BackstageSidebar-'] [class*='label'],
+[class*='BackstageSidebar-'] a span,
+[class*='BackstageSidebar-'] button span {
+  max-width: 155px !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  font-size: 0.8125rem !important;
+}
+
+/* Hide Backstage's built-in sidebar collapse/pin toggle button.
+   The toggle renders as a <button> inside <nav aria-label="sidebar nav">
+   containing ArrowBackIosIcon (two overlapping arrows). Target it by
+   the icon container it wraps — or simply hide any direct-child button
+   of the sidebar nav that is not a SidebarItem link. */
+[aria-label='sidebar nav'] > button,
+[aria-label='sidebar nav']
+  > div
+  > button:has(svg[data-testid='ArrowBackIosIcon']),
+[class*='BackstageSidebar-']
+  button:has(.MuiSvgIcon-root[class*='ArrowBackIos']),
+[class*='BackstageSidebar-'] nav > button {
+  display: none !important;
+}
+
+[class*='BackstageSidebar-'] a,
+[class*='BackstageSidebar-'] button,
+nav[aria-label='sidebar nav'] a,
+nav[aria-label='sidebar nav'] button {
+  border-radius: 8px !important;
+  min-height: 40px !important;
+  margin: 2px 10px !important;
+  color: #dbeafe !important;
+  font-weight: 400 !important;
+  transition: all 0.2s ease-out !important;
+}
+
+[class*='BackstageSidebar-'] a *,
+[class*='BackstageSidebar-'] button *,
+[class*='BackstageSidebar-'] [class*='MuiTypography-root'],
+nav[aria-label='sidebar nav'] a *,
+nav[aria-label='sidebar nav'] button *,
+nav[aria-label='sidebar nav'] [class*='MuiTypography-root'] {
+  font-weight: 400 !important;
+}
+
+[class*='BackstageSidebar-'] a *,
+[class*='BackstageSidebar-'] button *,
+[class*='BackstageSidebar-'] [class*='MuiTypography-root'],
+[class*='BackstageSidebar-'] svg,
+nav[aria-label='sidebar nav'] a *,
+nav[aria-label='sidebar nav'] button *,
+nav[aria-label='sidebar nav'] [class*='MuiTypography-root'],
+nav[aria-label='sidebar nav'] svg {
+  color: inherit !important;
+}
+
+[class*='BackstageSidebar-'] .MuiListItemText-primary,
+[class*='BackstageSidebar-'] .MuiListItemText-root,
+[class*='BackstageSidebar-'] .MuiTypography-body1,
+[class*='BackstageSidebar-'] .MuiTypography-body2,
+[class*='BackstageSidebar-'] [aria-current='page'] .MuiListItemText-primary,
+[class*='BackstageSidebar-'] [class*='selected'] .MuiListItemText-primary,
+nav[aria-label='sidebar nav'] .MuiListItemText-primary,
+nav[aria-label='sidebar nav'] .MuiListItemText-root,
+nav[aria-label='sidebar nav'] .MuiTypography-body1,
+nav[aria-label='sidebar nav'] .MuiTypography-body2,
+nav[aria-label='sidebar nav'] [aria-current='page'] .MuiListItemText-primary,
+nav[aria-label='sidebar nav'] [class*='selected'] .MuiListItemText-primary {
+  font-weight: 400 !important;
+}
+
+[class*='BackstageSidebar-'] a:hover,
+[class*='BackstageSidebar-'] button:hover,
+nav[aria-label='sidebar nav'] a:hover,
+nav[aria-label='sidebar nav'] button:hover {
+  background: var(--cloudhub-glance-sidebar-hover) !important;
+  color: #ffffff !important;
+  text-decoration: none !important;
+  transition: all 0.2s ease-out !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Subtle section separators instead of harsh divider bands. */
+[class*='BackstageSidebar-'] hr,
+nav[aria-label='sidebar nav'] hr {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  margin: 8px 10px !important;
+}
+
+[class*='BackstageSidebar-'] a:hover *,
+[class*='BackstageSidebar-'] button:hover *,
+[class*='BackstageSidebar-'] a:hover svg,
+[class*='BackstageSidebar-'] button:hover svg,
+nav[aria-label='sidebar nav'] a:hover *,
+nav[aria-label='sidebar nav'] button:hover *,
+nav[aria-label='sidebar nav'] a:hover svg,
+nav[aria-label='sidebar nav'] button:hover svg {
+  color: #ffffff !important;
+}
+
+[class*='BackstageSidebar-'] [aria-current='page'],
+[class*='BackstageSidebar-'] [class*='selected'],
+nav[aria-label='sidebar nav'] [aria-current='page'],
+nav[aria-label='sidebar nav'] [class*='selected'] {
+  background: var(--cloudhub-glance-sidebar-active) !important;
+  color: #ffffff !important;
+  font-weight: 400 !important;
+  transition: all 0.2s ease-out !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15) !important;
+}
+
+[class*='BackstageSidebar-'] [aria-current='page'] *,
+[class*='BackstageSidebar-'] [class*='selected'] *,
+[class*='BackstageSidebar-'] [aria-current='page'] svg,
+[class*='BackstageSidebar-'] [class*='selected'] svg,
+nav[aria-label='sidebar nav'] [aria-current='page'] *,
+nav[aria-label='sidebar nav'] [class*='selected'] *,
+nav[aria-label='sidebar nav'] [aria-current='page'] svg,
+nav[aria-label='sidebar nav'] [class*='selected'] svg {
+  color: #ffffff !important;
+}
+
+/* Final guardrail: keep sidebar labels non-bold across generated JSS classes. */
+nav[aria-label='sidebar nav'] a,
+nav[aria-label='sidebar nav'] button,
+nav[aria-label='sidebar nav'] a *,
+nav[aria-label='sidebar nav'] button * {
+  font-weight: 400 !important;
+}
+
+nav[aria-label='sidebar nav'] [aria-current='page'],
+nav[aria-label='sidebar nav'] [class*='selected'],
+nav[aria-label='sidebar nav'] [aria-current='page'] *,
+nav[aria-label='sidebar nav'] [class*='selected'] * {
+  font-weight: 400 !important;
+}
+
+.MuiCard-root {
+  border-radius: 8px !important;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08) !important;
+  border-color: var(--cloudhub-glance-line) !important;
+}
+
+.cloudhub-global-header-spacer {
+  height: var(--cloudhub-global-header-height);
+}
+
+.cloudhub-backstage-generated-title-row {
+  display: flex !important;
+  align-items: center !important;
+  min-height: var(--cloudhub-global-header-height) !important;
+  font-family: 'Inter', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+  font-size: 0.875rem !important;
+  font-weight: 600 !important;
+  line-height: 1.4 !important;
+  letter-spacing: 0 !important;
+  color: #1d4ed8 !important;
+}
+
+.cloudhub-backstage-generated-title-row * {
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-weight: inherit !important;
+  line-height: inherit !important;
+  letter-spacing: inherit !important;
+  color: inherit !important;
+}
+
+/* ─── Modern Scrollbar Styling ─────────────────────────────────────── */
+/* Apply modern scrollbar to sidebar and all scrollable containers */
+[class*='BackstageSidebar-'],
+[class*='SidebarScrollWrapper'],
+nav[aria-label='sidebar nav'] {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+}
+
+/* Webkit browsers (Chrome, Safari, Edge, Brave, Opera) */
+[class*='BackstageSidebar-']::-webkit-scrollbar,
+[class*='SidebarScrollWrapper']::-webkit-scrollbar,
+nav[aria-label='sidebar nav']::-webkit-scrollbar,
+.cloudhub-backstage-wrapper::-webkit-scrollbar {
+  width: 8px;
+}
+
+[class*='BackstageSidebar-']::-webkit-scrollbar-track,
+[class*='SidebarScrollWrapper']::-webkit-scrollbar-track,
+nav[aria-label='sidebar nav']::-webkit-scrollbar-track,
+.cloudhub-backstage-wrapper::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+[class*='BackstageSidebar-']::-webkit-scrollbar-thumb,
+[class*='SidebarScrollWrapper']::-webkit-scrollbar-thumb,
+nav[aria-label='sidebar nav']::-webkit-scrollbar-thumb,
+.cloudhub-backstage-wrapper::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  border: 2px solid #1e3a8a;
+  transition: background 0.2s ease-out;
+}
+
+[class*='BackstageSidebar-']::-webkit-scrollbar-thumb:hover,
+[class*='SidebarScrollWrapper']::-webkit-scrollbar-thumb:hover,
+nav[aria-label='sidebar nav']::-webkit-scrollbar-thumb:hover,
+.cloudhub-backstage-wrapper::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+@media (max-width: 960px) {
+  :root {
+    --cloudhub-global-header-height: 60px;
+    --cloudhub-global-sidebar-width: 0px;
+  }
+}

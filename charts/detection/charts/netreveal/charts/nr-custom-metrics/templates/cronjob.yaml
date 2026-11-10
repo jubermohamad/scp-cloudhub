@@ -1,0 +1,81 @@
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "nr-custom-metrics.fullname" . }}
+  labels:
+    {{- include "nr-custom-metrics.labels" . | nindent 4 }}
+spec:
+  schedule: "{{ .Values.schedule }}"
+  {{- if .Values.global.timeZone }}
+  timeZone: "{{ .Values.global.timeZone }}"
+  {{- end }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "nr-custom-metrics.labels" . | nindent 8 }}
+    spec:
+      ttlSecondsAfterFinished: {{ .Values.ttlSecondsAfterFinished | default 60}}
+      template:
+        spec:
+          containers:
+          - name: {{ .Chart.Name }}
+            image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+            imagePullPolicy: {{ .Values.pullPolicy }}
+
+            securityContext:
+              runAsUser: 200
+              runAsGroup: 200
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+
+            command: ["/bin/sh", "-c"]
+            args:
+              - |
+                cd /scripts
+                for f in $(find . -type f -name "*.sql");
+                do
+                  echo "*****************************************************************"
+                  echo "* Run script: $f"
+                  echo "*****************************************************************"
+                  psql -f "$f"
+                done
+            env:
+            - name: PGHOST
+              value: {{ include "db.host.r" . }}
+            - name: PGPORT
+              value: "{{ .Values.global.baseConfigProperties.db.postgresql.port | default 5432 }}"
+            - name: PGCONNECT_TIMEOUT
+              value: "{{ .Values.db_conn_timeout | default 5 }}"
+            {{- if and .Values.global.baseConfigProperties.db.postgresql.sslmode (ne .Values.global.baseConfigProperties.db.postgresql.sslmode "disable") }}
+            - name: PGSSLMODE
+              value: "{{ .Values.global.baseConfigProperties.db.postgresql.sslmode }}"
+            - name: PGSSLROOTCERT
+              value: "{{ .Values.global.baseConfigProperties.db.postgresql.sslrootcert }}"
+            {{- end }}
+            - name: PGDATABASE
+              value: "{{ .Values.global.baseConfigProperties.db.postgresql.database }}"
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  key: {{ .Values.db_user_secret_name.key }}
+                  name: {{ .Values.db_user_secret_name.name }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: {{ .Values.db_password_secret_name.key }}
+                  name: {{ .Values.db_password_secret_name.name }}
+            volumeMounts:
+            - name: sql-scripts
+              mountPath: /scripts
+            {{ include "postgres.server.secret-mount" . | nindent 12 }}
+          volumes:
+          - name: sql-scripts
+            configMap:
+              name: {{ .Release.Name }}-custom-metrics-configmap
+          {{ include "postgres.server.secret-volume" . | nindent 10 }}
+
+{{- include "image.pull.secrets" . | nindent 10 }}
+
+          restartPolicy: Never

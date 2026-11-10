@@ -1,0 +1,30 @@
+{{- if (.Values.llmGateway.hpa).enabled }}
+# P3 (2026-06-14): optional CPU HPA for the llm-gateway tier. SIZE=efficient leans llm-gateway to 2
+# replicas (idle for non-LLM workloads like chain-M); enable this to auto-scale back up under real LLM
+# load. NOTE: for utilization% to be meaningful, raise llmGateway.resources.requests.cpu to ~100m
+# (default 15m makes utilization explode to ~1000% and pin at maxReplicas). Scale-up/down mechanism
+# live-validated 2026-07-04 (CPU-pressure test, not real LLM traffic): 2->8 under load, back to
+# minReplicas after ~5min idle stabilization. code-worker is NOT a CPU-HPA candidate
+# (it stays CPU-idle under code-heavy load — persistence/PG-bound; use a static replica bump or a
+# Temporal code-queue-backlog custom metric). See playbook 47 P3 section.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "aw.prefix" . }}-llm-gateway-hpa
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "aw.prefix" . }}-llm-gateway
+  minReplicas: {{ .Values.llmGateway.hpa.minReplicas | default 2 }}
+  maxReplicas: {{ .Values.llmGateway.hpa.maxReplicas | default 8 }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.llmGateway.hpa.targetCPUUtilization | default 70 }}
+{{- end }}

@@ -1,0 +1,22 @@
+{{- if .Values.catalog.database.enabled }}
+# The catalog schema + seed (db/portal-catalog.sql, copied to the chart's
+# files/), mounted into the ensure-database Job. Idempotent SQL: tables use
+# CREATE TABLE IF NOT EXISTS and seed rows use ON CONFLICT DO UPDATE.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "sri-micro-frontend.fullname" . }}-catalog-schema
+  labels:
+    {{- include "sri-micro-frontend.labels" . | nindent 4 }}
+  annotations:
+    # Also a pre-install/upgrade hook, weighted BEFORE the ensure-database
+    # Job (-10 < -5) so it exists when the Job mounts it — non-hook
+    # resources are created after hooks, which would leave the Job unable
+    # to find this ConfigMap.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  portal-catalog.sql: |-
+{{ .Files.Get "files/portal-catalog.sql" | indent 4 }}
+{{- end }}

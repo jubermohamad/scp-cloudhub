@@ -1,0 +1,16 @@
+# VENDORED from SymphonySensa/sensa-data-fin-cra-service deploy/helm
+# @ 802c09979c92 (main, 2026-08-12). Local deltas, re-apply on re-vendor:
+# chart renamed to the umbrella values key; platform naming prefix helper
+# (craService.prefix) routes every resource name; Job TTL 7200.
+apiVersion: v2
+name: sensa-data-fin-cra-service
+description: >-
+  fs-cra-svc (CRA/KYC backend: FastAPI HTTP + signal/event Kafka consumers, owns the
+  KYC Postgres schema) and cra-widget-ui (Module-Federation remote for the CRA
+  authoring widgets, static assets served by nginx). Deploys into the pre-existing
+  sri-dev-domain namespace. cra-widget-ui's Deployment/Service/Ingress keep the names
+  a hand-applied kubectl deployment used, so this chart adopts them cleanly (see
+  templates/cra-widget-ui.yaml and templates/ingress.yaml).
+type: application
+version: 0.1.2
+appVersion: develop

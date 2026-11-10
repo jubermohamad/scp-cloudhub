@@ -1,0 +1,53 @@
+{{- if or .Values.factiva.job.enableDailyJob .Values.factiva.job.enableWeeklyJob }}
+{{- if eq .Values.global.clusterType "nfs" }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Release.Name }}-standalone-factiva-volume
+  labels:
+    type: local
+  {{- if .Values.global.database.testBackupMode }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  storageClassName: {{ include "storage.storageClassName" . }}
+  capacity:
+    storage: {{ include "standalone.factiva.pvcStorage" . }}
+  accessModes:
+  - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    name: {{ include "generate.name.with.release.name" (list $ . "standalone-factiva-volume-claim") | quote }}
+  nfs:
+    server: {{ .Values.global.pv.host }}
+    path:  {{ $.Values.factiva.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/
+{{- end }}
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "generate.name.with.release.name" (list $ . "standalone-factiva-volume-claim") | quote }}
+  namespace: {{ $.Values.global.namespace }}
+  {{- if .Values.global.database.testBackupMode }}
+  annotations:
+    helm.sh/resource-policy: keep
+    {{- include "storage.pvc.annotations" (list $ . "without-annotation-label" (include "storage.storageClassName" .)) | indent 4 }}
+  {{- else }}
+    {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.storageClassName" .)) | indent 2 }}
+  {{- end }}
+spec:
+  storageClassName: {{ include "storage.storageClassName" . }}
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ include "standalone.factiva.pvcStorage" . }}
+{{- if eq .Values.global.clusterType "nfs" }}
+  volumeName: {{ .Release.Name }}-standalone-factiva-volume
+{{- end }}
+
+{{- end }}

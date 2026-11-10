@@ -1,0 +1,233 @@
+# Default values for api.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/invhub-disc-api
+  # When empty, omit imagePullPolicy and use the Kubernetes default.
+  pullPolicy: ""
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets:
+  - name: "regcred"
+
+nameOverride: ""
+fullnameOverride: "disc-api"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations:
+  configmap.reloader.stakater.com/reload: "flows"
+
+flowsConfigMapName: "flows"
+flowsSecretName: "flows"
+
+waitForTlsSecrets:
+  enabled: true
+  image: docker.io/curlimages/curl:8.11.1
+  imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+  timeoutSeconds: 900
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi
+
+# Wait for infrastructure dependency endpoints (including the API) before starting disc-api containers.
+# The api service name is auto-derived from global.internalApiBaseUrl / global.separateApiResponsibilities.
+waitForDependencies:
+  enabled: true
+  image: docker.io/curlimages/curl:8.11.1
+  imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+  timeoutSeconds: 1200
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi
+  postgres:
+    enabled: true
+    service: "" # leave empty to use global.services.postgresRw
+    port: 5432
+  kafka:
+    enabled: true
+    service: "" # leave empty to use global.services.kafkaBootstrap
+    port: 9093
+  minio:
+    enabled: true
+    service: "" # leave empty to use global.services.minio
+    port: 9000
+  api:
+    enabled: true
+    service: "" # leave empty to auto-derive: api (default) or api-for-ui (when global.separateApiResponsibilities=true)
+    port: 3001
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  ports:
+    - name: disc-api
+      port: 3002
+      protocol: TCP
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 50m
+    memory: 128Mi
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+livenessProbe:
+  httpGet:
+    path: /v1/disclosures/health/liveness
+    port: 3002
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /v1/disclosures/health/readiness
+    port: 3002
+  initialDelaySeconds: 15
+  periodSeconds: 20
+  timeoutSeconds: 15
+  successThreshold: 1
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - disc-api
+          topologyKey: "topology.kubernetes.io/zone"
+
+# in-tree addition (P7): the `disclosures` schema is migrated by a hook Job
+# (templates/migrations-job.yaml) instead of relying on the image entrypoint,
+# which runs `prisma migrate deploy` but swallows its failures.
+migrations:
+  enabled: true
+  backoffLimit: 6
+  # 7200, not 900: a TTL shorter than helm's wait deletes a completed Job
+  # while the watcher still needs it, and the release fails as NotFound
+  ttlSecondsAfterFinished: 7200
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+dbRootCert:
+  secretName: "cn-postgres-ca"
+  mountPath: "/pg-ca-cert"
+  key: "ca.crt"
+kafkaRootCert:
+  secretName: "invhub-clients-ca-cert"
+  mountPath: "/kafka-ca-cert"
+  key: "ca.crt"
+# kube-prometheus-stack:
+#   prometheus-node-exporter:
+#     hostRootFsMount: false
+
+# neo4j-standalone:
+#   volumes:
+#     data:
+#       mode: defaultStorageClass
+
+# prometheus-redis-exporter:
+#  redisAddress: redis://myredis:6379
+
+# prometheus-postgresql-exporter:
+#  config:
+#    datasource:
+#      # Specify one of both datasource or datasourceSecret
+#      host:
+#      user: postgres
+#      # Only one of password and passwordSecret can be specified
+#      password:
+#      # Specify passwordSecret if DB password is stored in secret.
+#      passwordSecret: {}
+#      # Secret name
+#      #  name:
+#      # Password key inside secret
+#      #  key:
+#      port: "5432"
+#      database: 'postgres'
+#      sslmode: disable
+
+global:
+  imagePullPolicy: Always   # platform default; the umbrella global overrides it
+  SENSA_KAFKA_BOOTSTRAP: "invhub-kafka-bootstrap:9093"
+  KAFKA_GROUP_ID: "disclosure"
+  KAFKA_CONSUMER_GROUP_ID: "disclosure-consumer"
+  SENSA_KAFKA_SSL: "true"
+  SENSA_KAFKA_SSL_CA_PATH: "/kafka-ca-cert/ca.crt"
+  SENSA_KAFKA_INITIAL_RETRY_TIME: 5000
+  SENSA_KAFKA_RETRIES: 3
+  SENSA_KAFKA_SESSION_TIMEOUT: 45000
+  SENSA_KAFKA_HEARTBEAT_INTERVAL: 15000
+  SENSA_KAFKA_MAX_BYTES: "10485880"
+  MINIO_SSL_CA_PATH: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  NODE_ENV: "production"
+  INVESTIGATION_HUB_SERVICE_ACCOUNT_EMAIL: "disclosuresService@symphony.ai"

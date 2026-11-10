@@ -1,0 +1,6 @@
+apiVersion: v2
+name: monitoring_tool
+description: AI Store monitoring tool
+type: application
+version: 1.2.5
+appVersion: "1.2.4"

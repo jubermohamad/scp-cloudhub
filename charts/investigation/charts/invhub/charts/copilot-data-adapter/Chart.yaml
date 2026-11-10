@@ -1,0 +1,6 @@
+apiVersion: v2
+name: copilot-data-adapter
+description: A Helm chart for Copilot data adapter
+type: application
+version: 0.31.1
+appVersion: v2026.07.1

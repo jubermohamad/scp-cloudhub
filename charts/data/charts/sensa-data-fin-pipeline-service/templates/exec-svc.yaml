@@ -1,0 +1,88 @@
+{{- if .Values.execSvc.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-exec-svc
+  labels:
+    app: pipeline-exec-svc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pipeline-exec-svc
+  template:
+    metadata:
+      labels:
+        app: pipeline-exec-svc
+      {{- include "finPipeline.podAnnotations" . | nindent 6 }}
+    spec:
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      containers:
+        - name: api
+          image: {{ include "finPipeline.image" (dict "root" . "name" .Values.execSvc.imageName) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default (default dict .Values.global).imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: {{ .Values.execSvc.port }}
+          env:
+            - name: POSTGRES_HOST
+              value: {{ .Values.postgres.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            - name: KAFKA_TOPIC_PLAN
+              value: {{ .Values.kafka.topicPlan | quote }}
+            - name: KAFKA_TOPIC_RESULTS
+              value: {{ .Values.kafka.topicResults | quote }}
+            # Bundled Valkey by default; environments on the external
+            # instance (sri-cdd-valkey) override valkey.host to its FQDN.
+            - name: VALKEY_HOST
+              value: {{ .Values.valkey.host | default (printf "%s-valkey" (include "finPipeline.prefix" .)) | quote }}
+            - name: VALKEY_PORT
+              value: {{ .Values.valkey.port | quote }}
+            # gRPC hand-offs to services from OTHER repos (fs-kyc-svc, the
+            # real data service) — flags default off until those are
+            # deployed alongside.
+            - name: KYC_VIA_EVALUATOR
+              value: {{ .Values.execSvc.kycViaEvaluator | quote }}
+            - name: KYC_SVC_ADDR
+              value: {{ .Values.execSvc.kycSvcAddr | quote }}
+            - name: DATA_VIA_SERVICE
+              value: {{ .Values.execSvc.dataViaService | quote }}
+            - name: DATA_SVC_ADDR
+              value: {{ .Values.execSvc.dataSvcAddr | quote }}
+            {{- with .Values.execSvc.kafkaGroupPrefix }}
+            # Per-environment consumer groups — the binary's defaults are
+            # static and would collide across environments on shared Kafka.
+            - name: KAFKA_GROUP_TXN
+              value: {{ printf "%s-txn-ingest" . | quote }}
+            - name: KAFKA_GROUP_PLAN
+              value: {{ printf "%s-plan-sync" . | quote }}
+            - name: KAFKA_GROUP_RESULTS
+              value: {{ printf "%s-pipeline-results" . | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.postgres.existingSecret }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.execSvc.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-exec-svc
+  labels:
+    app: pipeline-exec-svc
+spec:
+  selector:
+    app: pipeline-exec-svc
+  ports:
+    - port: {{ .Values.execSvc.port }}
+      targetPort: {{ .Values.execSvc.port }}
+{{- end }}

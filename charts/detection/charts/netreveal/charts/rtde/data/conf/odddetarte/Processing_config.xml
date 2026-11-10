@@ -1,0 +1,398 @@
+<smart>
+
+	<topics>
+		<topic name="nr-ind_scoring" format="JSON" type="kafka">
+			<fields>
+				<field name="ActiveAMLAlert" type="string"/>
+				<field name="ActiveWLMAlert" type="string"/>
+				<field name="AdverseMediaFlag" type="string"/>
+				<field name="BankruptFlag" type="string"/>
+				<field name="BeneficialOwnerRisk" type="listtomap"/>
+				<field name="BusinessSegment1" type="string"/>
+				<field name="BusinessSegment2" type="string"/>
+				<field name="BusinessType" type="string"/>
+				<field name="CalculateBoRiskFlag" type="string"/>
+				<field name="CalculateJaoRiskFlag" type="string"/>
+				<field name="CashInVolume" type="double"/>
+				<field name="CashOutVolume" type="double"/>
+				<field name="Channel" type="string"/>
+				<field name="CheckInVolume" type="double"/>
+				<field name="CheckOutVolume" type="double"/>
+				<field name="CompanyForm" type="string"/>
+				<field name="ComplexStructure" type="string"/>
+				<field name="CountryOfOrigin" type="string"/>
+				<field name="CountryOfResidence" type="string"/>
+				<field name="CustomerCategoryCode" type="string"/>
+				<field name="CustomerId" type="string"/>
+				<field name="CustomerName" type="string"/>
+				<field name="CustomerTypeCode" type="string"/>
+				<field name="DisclosureCount" type="int"/>
+				<field name="EmployeeFlag" type="string"/>
+				<field name="EmploymentStatus" type="string"/>
+				<field name="ExternalRiskFactors" type="string"/>
+				<field name="ExternalRiskScoreContribution" type="int"/>
+				<field name="FaceToFaceFlag" type="string"/>
+				<field name="IncorporationCountryCode" type="string"/>
+				<field name="IncorporationDate" type="date"/>
+				<field name="IndividualScore" type="double"/>
+				<field name="JointAccountRisk" type="listtomap"/>
+				<field name="LinkedAccountTypes" type="multivalue"/>
+				<field name="Nationality" type="string"/>
+				<field name="NearBorderFlag" type="string"/>
+				<field name="NumberOfYearsInBusiness" type="int"/>
+				<field name="Occupation" type="string"/>
+				<field name="OnOtherWatchList" type="string"/>
+				<field name="OrganisationUnit" type="string"/>
+				<field name="OverallScoreAdjustment" type="double"/>
+				<field name="PEPFlag" type="string"/>
+				<field name="PEPType" type="string"/>
+				<field name="PostalCode" type="string"/>
+				<field name="RCAFlag" type="string"/>
+				<field name="ResidenceFlag" type="string"/>
+				<field name="RunTimestamp" type="string"/>
+				<field name="SanctionedFlag" type="string"/>
+				<field name="ScoringChannel" type="string"/>
+                <field name="SensaAnomalyDetectionScore" type="int"/>
+                <field name="SensaChangeBehaviourScore" type="int"/>
+				<field name="SourceOfFunds" type="string"/>
+				<field name="WireInNumber" type="int"/>
+				<field name="WireInVolume" type="double"/>
+				<field name="WireOutNumber" type="int"/>
+				<field name="WireOutVolume" type="double"/>
+			</fields>
+		</topic>
+		<topic name="nr-agg_scoring" format="JSON" type="kafka">
+			<fields>
+				<field name="ActiveAMLAlert" type="string"/>
+				<field name="ActiveWLMAlert" type="string"/>
+				<field name="AdverseMediaFlag" type="string"/>
+				<field name="AssignedRiskLevelName" type="string"/>
+				<field name="BankruptFlag" type="string"/>
+				<field name="BeneficialOwnerRisk" type="listtomap"/>
+				<field name="BusinessSegment1" type="string"/>
+				<field name="BusinessSegment2" type="string"/>
+				<field name="BusinessType" type="string"/>
+				<field name="CalculateBoRiskFlag" type="string"/>
+				<field name="CalculateJaoRiskFlag" type="string"/>
+				<field name="CashInVolume" type="double"/>
+				<field name="CashOutVolume" type="double"/>
+				<field name="Channel" type="string"/>
+				<field name="CheckInVolume" type="double"/>
+				<field name="CheckOutVolume" type="double"/>
+				<field name="CompanyForm" type="string"/>
+				<field name="ComplexStructure" type="string"/>
+				<field name="CountryOfOrigin" type="string"/>
+				<field name="CountryOfResidence" type="string"/>
+				<field name="CustomerCategoryCode" type="string"/>
+				<field name="CustomerId" type="string"/>
+				<field name="CustomerName" type="string"/>
+				<field name="CustomerTypeCode" type="string"/>
+				<field name="DisclosureCount" type="int"/>
+				<field name="EmployeeFlag" type="string"/>
+				<field name="EmploymentStatus" type="string"/>
+				<field name="ExternalRiskFactors" type="string"/>
+				<field name="ExternalRiskScoreContribution" type="int"/>
+				<field name="FaceToFaceFlag" type="string"/>
+				<field name="IncorporationCountryCode" type="string"/>
+				<field name="IncorporationDate" type="date"/>
+				<field name="IndividualScore" type="double"/>
+				<field name="JointAccountRisk" type="listtomap"/>
+				<field name="LinkedAccountTypes" type="multivalue"/>
+				<field name="Nationality" type="string"/>
+				<field name="NearBorderFlag" type="string"/>
+				<field name="NumberOfYearsInBusiness" type="int"/>
+				<field name="Occupation" type="string"/>
+				<field name="OnOtherWatchList" type="string"/>
+				<field name="OrganisationUnit" type="string"/>
+				<field name="OverallScoreAdjustment" type="double"/>
+				<field name="PEPFlag" type="string"/>
+				<field name="PEPType" type="string"/>
+				<field name="PostalCode" type="string"/>
+				<field name="RCAFlag" type="string"/>
+				<field name="RequestType" type="string"/>
+				<field name="ResidenceFlag" type="string"/>
+				<field name="RunTimestamp" type="string"/>
+				<field name="SanctionedFlag" type="string"/>
+				<field name="ScoreId" type="int"/>
+				<field name="ScoringChannel" type="string"/>
+                <field name="SensaAnomalyDetectionScore" type="int"/>
+                <field name="SensaChangeBehaviourScore" type="int"/>
+				<field name="SourceOfFunds" type="string"/>
+				<field name="WireInNumber" type="int"/>
+				<field name="WireInVolume" type="double"/>
+				<field name="WireOutNumber" type="int"/>
+				<field name="WireOutVolume" type="double"/>
+			</fields>
+		</topic>
+		<topic name="nr-internal_agg_risk_odd" format="JSON" type="kafka"><fields></fields></topic>
+	</topics>
+
+	<filters>
+		<filter name="IndScoringFilteringODD">
+			<field name="ScoringChannel"/>
+			<field name="CustomerId"/>
+			<field name="OrganisationUnit"/>
+            <field name="Ind_score"/>
+            <field name="Ind_score_contributions"/>
+            <field name="Dimensions"/>
+		</filter>
+		<filter name="AggScoringFilteringODD">
+			<field name="ScoringChannel"/>
+			<field name="RequestType"/>
+			<field name="CustomerId"/>
+			<field name="OrganisationUnit"/>
+            <field name="Agg_score"/>
+			<field name="RunTimestamp"/>
+			<field name="CustomerName"/>
+			<field name="CustomerCategoryCode"/>
+			<field name="CustomerTypeCode"/>
+			<field name="CountryOfResidence"/>
+            <field name="Agg_score_contributions"/>
+            <field name="Dimensions"/>
+			<field name="CDD_riskModel"/>
+			<field name="ScoreId"/>
+		</filter>
+		<filter name="customerAggScoringFilteringODD">
+			<field name="CustomerId"/>
+			<field name="ScoringChannel"/>
+            <field name="Agg_score"/>
+			<field name="CDD_riskModel"/>
+		</filter>
+		<filter name="applicationResponseFilteringODD">
+			<field name="CustomerSourceUniqueId"/>
+			<field name="ScoreId"/>
+			<field name="CDDRiskScore"/>
+			<field name="ScoreContributions"/>
+			<field name="EDDFlag"/>
+			<field name="CDDRisk"/>
+		</filter>
+	</filters>
+
+	<mappings>
+		<mapping name="riskScoresIndScoringMappingODD">
+			<field name="Customer_ScoringChannel" alias="ScoringChannel"/>
+			<field name="Customer_CustomerId" alias="CustomerId"/>
+			<field name="Customer_OrganisationUnit" alias="OrganisationUnit"/>
+            <field name="Ind_score" alias="Score"/>
+            <field name="Ind_score_contributions" alias="Contributions"/>
+		</mapping>
+		<mapping name="riskScoresAggScoringMappingODD">
+			<field name="Customer_ScoringChannel" alias="ScoringChannel"/>
+			<field name="Customer_ScoreId" alias="ScoreId"/>
+			<field name="Customer_RequestType" alias="RequestType"/>
+			<field name="Customer_CustomerId" alias="CustomerId"/>
+			<field name="Customer_OrganisationUnit" alias="OrganisationUnit"/>
+			<field name="Customer_RunTimestamp" alias="RunTimestamp"/>
+			<field name="Customer_CustomerName" alias="CustomerName"/>
+			<field name="Customer_CustomerCategoryCode" alias="CustomerCategoryCode"/>
+			<field name="Customer_CustomerTypeCode" alias="CustomerTypeCode"/>
+			<field name="Customer_CountryOfResidence" alias="CountryOfResidence"/>
+			<field name="CDD_riskModel" alias="RiskModel"/>
+            <field name="Agg_score" alias="Score"/>
+            <field name="Agg_score_contributions" alias="Contributions"/>
+		</mapping>
+		<mapping name="customerAggScoringMappingODD">
+			<field name="Customer_ScoringChannel" alias="ScoringChannel"/>
+			<field name="Customer_CustomerId" alias="CustomerId"/>
+            <field name="Agg_score" alias="Score"/>
+			<field name="CDD_riskModel" alias="RiskModel"/>
+		</mapping>
+		<mapping name="applicationResponseMappingODD">
+			<field name="Customer_CustomerId" alias="CustomerSourceUniqueId"/>
+			<field name="Customer_ScoreId" alias="ScoreId"/>
+			<field name="Agg_score" alias="CDDRiskScore"/>
+            <field name="Agg_score_contributions" alias="ScoreContributions"/>
+			<field name="CDD_riskModel.GenerateAlert" alias="EDDFlag"/>
+			<field name="CDD_riskModel.RiskLevel" alias="CDDRisk"/>
+		</mapping>
+	</mappings>
+
+	<constants>
+		<constant name="scoredOutput">
+			<field name="EventType" defaultValue="SCORED" type="string"/>
+		</constant>
+	</constants>
+
+    <riskModels>
+        <riskmodel name="LevelTransition" previousRiskLevelColumnName="AssignedRiskLevelName"  scoreColumnName="Agg_score" defaultOrgUnit="SHA"/>
+    </riskModels>
+
+	<combiners>
+		<!-- The output result of Ind_score combiner is used to return IndScore after Individual scoring. -->
+        <combiner name="Ind_score" type="NUMERIC" resultName="Ind_score">
+            <field name="Channel_score"/>
+            <field name="Customer_score"/>
+            <field name="Geography_score"/>
+            <field name="Override_score"/>
+            <field name="Behaviour_score"/>
+            <field name="Product_score"/>
+        </combiner>
+		
+        <!-- combiner to produce Individual score contributions-->
+		<combiner name="Ind_score_contributions" type="SCORE_CONTRIBUTION_COLLECTION" resultName="Ind_score_contributions" filterNonZeroScoreContribution ="false">
+            <field name="Channel_score_contributions"/>
+            <field name="Customer_score_contributions"/>
+            <field name="Geography_score_contributions"/>
+            <field name="Override_score_contributions"/>
+            <field name="Behaviour_score_contributions"/>
+            <field name="Product_score_contributions"/>
+		</combiner>
+
+		<!-- The output result of Agg_score combiner is used to return Score after Aggregated scoring. -->
+        <combiner name="Agg_score" type="NUMERIC" resultName="Agg_score">
+            <field name="IndividualScore_score"/>
+            <field name="RelatedParties_score"/>
+        </combiner>
+		
+        <!-- combiner to produce Aggregated score contributions-->
+        <combiner name="Agg_score_contributions" type="SCORE_CONTRIBUTION_COLLECTION" resultName="Agg_score_contributions" filterNonZeroScoreContribution ="false">
+            <field name="IndividualScore_score_contributions"/>
+            <field name="RelatedParties_score_contributions"/>
+        </combiner>
+
+        <combiner name="Ind_dimension_scores" type="SCORE_DIMENSION" resultName="Dimensions">
+            <field name="Channel_score"/>
+            <field name="Customer_score"/>
+            <field name="Geography_score"/>
+            <field name="Override_score"/>
+            <field name="Behaviour_score"/>
+            <field name="Product_score"/>
+        </combiner>
+
+        <combiner name="Agg_dimension_scores" type="SCORE_DIMENSION" resultName="Dimensions">
+            <field name="RelatedParties_score"/>
+        </combiner>
+	</combiners>
+
+	<scores>
+		<score name="ODD_score" weightedScore="true"/>
+	</scores>
+
+	<processes>
+		<!-- INDIVIDUAL SCORING -->
+		<process name="RTDE_IND_ODD" dataSource="Customer" trigger="BATCH" intervalSeconds="0" outputMode="append">
+			<inputTopics>
+				<inputTopic name="nr-ind_scoring"/>
+			</inputTopics>
+			<services>
+				<service type="parse"/>
+				<service type="datalabel">
+					<apply name="*"/>
+				</service>
+				<service type="detect"/>
+				<service type="score">
+					<apply name="ODD_score"/>
+				</service>
+				<service type="column_combiner">
+					<apply name="Ind_score"/>
+				</service>
+				<service type="column_combiner">
+					<apply name="Ind_score_contributions"/>
+				</service>
+                <service type="column_combiner">
+                    <apply name="Ind_dimension_scores"/>
+                </service>
+				<service type="filter_columns">
+					<apply name="IndScoringFilteringODD"/>
+				</service>
+				<service type="map_columns_names">
+					<apply name="riskScoresIndScoringMappingODD"/>
+				</service>
+			</services>
+			<outputTopics>
+				<outputTopic name="nr-risk_scores" rootName="RiskScores"/>
+			</outputTopics>
+		</process>
+
+		<!-- AGGREGATED SCORING-->
+		<process name="RTDE_AGG_ODD" dataSource="Customer" trigger="BATCH" intervalSeconds="0" outputMode="append">
+			<inputTopics>
+				<inputTopic name="nr-agg_scoring"/>
+			</inputTopics>
+			<services>
+				<service type="parse"/>
+				<service type="datalabel">
+					<apply name="*"/>
+				</service>
+				<service type="detect"/>
+				<service type="score">
+					<apply name="ODD_score"/>
+				</service>
+				<service type="column_combiner">
+					<apply name="Agg_score"/>
+				</service>
+				<service type="column_combiner">
+					<apply name="Agg_score_contributions"/>
+				</service>
+                <service type="column_combiner">
+                    <apply name="Agg_dimension_scores"/>
+                </service>
+				<service type="risk_model" entity="CustomerCDD">
+					<apply name="LevelTransition"/>
+				</service>
+				<service type="filter_columns">
+					<apply name="AggScoringFilteringODD"/>
+				</service>
+			</services>
+			<outputTopics>
+				<outputTopic name="nr-internal_agg_risk_odd" rootName="InternalRisk"/>
+			</outputTopics>
+		</process>
+
+		<process name="savingToRiskScores_AggScoring_ODD" dataSource="Customer" trigger="BATCH" intervalSeconds="0" outputMode="append">
+			<inputTopics>
+				<inputTopic name="nr-internal_agg_risk_odd"/>
+			</inputTopics>
+			<services>
+				<service type="parse"/>
+				<service type="map_columns_names">
+					<apply name="riskScoresAggScoringMappingODD"/>
+				</service>
+			</services>
+			<outputTopics>
+				<outputTopic name="nr-risk_scores" rootName="RiskScores"/>
+			</outputTopics>
+		</process>
+
+		<process name="savingToSubjects_AggScoring_ODD" dataSource="Customer" trigger="BATCH" intervalSeconds="0" outputMode="append">
+			<inputTopics>
+				<inputTopic name="nr-internal_agg_risk_odd"/>
+			</inputTopics>
+			<services>
+				<service type="parse"/>
+				<service type="filter_columns">
+					<apply name="customerAggScoringFilteringODD"/>
+				</service>
+				<service type="add_constant_values">
+					<apply name="scoredOutput"/>
+				</service>
+				<service type="map_columns_names">
+					<apply name="customerAggScoringMappingODD"/>
+				</service>
+			</services>
+			<outputTopics>
+				<outputTopic name="nr-subjects" rootName="Subjects"/>
+			</outputTopics>
+		</process>
+
+		<process name="savingToApplicationResponseODD" dataSource="Customer" trigger="BATCH" intervalSeconds="0" outputMode="append">
+			<inputTopics>
+				<inputTopic name="nr-internal_agg_risk_odd"/>
+			</inputTopics>
+			<services>
+				<service type="parse"/>
+				<service type="map_columns_names">
+					<apply name="applicationResponseMappingODD"/>
+				</service>
+				<service type="filter_columns">
+					<apply name="applicationResponseFilteringODD"/>
+				</service>
+			</services>
+			<outputTopics>
+				<outputTopic name="nr-customer_scores_internal" rootName="CustomerScores"/>
+			</outputTopics>
+		</process>
+
+	</processes>
+
+</smart>

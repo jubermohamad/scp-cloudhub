@@ -1,0 +1,9 @@
+apiVersion: v2
+name: platform-addons
+description: |
+  Umbrella chart for cluster-wide platform addons. Intentionally empty for now;
+  future placeholders include ArgoCD, cert-manager, external-dns, Kyverno,
+  service mesh, observability stack.
+type: application
+version: 0.1.0
+appVersion: '1.0.0'

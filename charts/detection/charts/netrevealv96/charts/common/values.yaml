@@ -1,0 +1,9 @@
+pvc:
+  wlmIndexStorage: 10Gi
+  storageClassName: ""
+pv:
+  hostPathWlmIndexesMinikube: "/opt/netreveal"
+  hostPathWlmIndexes: "/var/nfs_k8s"
+kafkaCluster:
+# For new certificated below number has to be increased
+  certGeneration: "0"

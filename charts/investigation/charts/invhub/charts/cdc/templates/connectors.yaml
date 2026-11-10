@@ -1,0 +1,86 @@
+{{- $dbType := include "global.remoteDataDbType" . -}}
+{{- range $connectorKey, $connector := .Values.connectors }}
+{{- if $connector.enabled }}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnector
+metadata:
+  name: {{ $dbType }}-{{ $connectorKey | kebabcase }}
+  labels:
+    strimzi.io/cluster: {{ $.Values.kafkaConnect.name }}
+    app.kubernetes.io/name: {{ $connectorKey | kebabcase }}
+    app.kubernetes.io/component: kafka-connector
+    app.kubernetes.io/part-of: invhub-cdc
+    database.type: {{ $dbType }}
+spec:
+  class: io.confluent.connect.jdbc.JdbcSourceConnector
+  tasksMax: {{ $connector.tasksMax | default 1 }}
+  {{- if $connector.autoRestart }}
+  autoRestart:
+    enabled: {{ $connector.autoRestart.enabled | default false }}
+    {{- if $connector.autoRestart.maxRestarts }}
+    maxRestarts: {{ $connector.autoRestart.maxRestarts }}
+    {{- end }}
+  {{- end }}
+  state: {{ $connector.state | default "stopped" }}
+  config:
+    # Database connection configuration
+    # https://github.com/confluentinc/kafka-connect-jdbc/blob/master/src/main/java/io/confluent/connect/jdbc/source/JdbcSourceConnectorConfig.java
+    {{- if eq $dbType "oracle" }}
+    connection.url: "jdbc:oracle:thin:@{{ include "global.remoteDataDbHost" $ }}:{{ include "global.remoteDataDbPort" $ }}/{{ include "global.remoteDataDbName" $ }}"
+    {{- else if eq $dbType "postgres" }}
+    {{- if eq (include "global.remoteDataDbUseSsl" $) "true" }}
+    connection.url: "jdbc:postgresql://{{ include "global.remoteDataDbHost" $ }}:{{ include "global.remoteDataDbPort" $ }}/{{ include "global.remoteDataDbName" $ }}?sslmode=require"
+    {{- else }}
+    connection.url: "jdbc:postgresql://{{ include "global.remoteDataDbHost" $ }}:{{ include "global.remoteDataDbPort" $ }}/{{ include "global.remoteDataDbName" $ }}"
+    {{- end }}
+    {{- end }}
+    connection.user: "{{ include "global.remoteDataDbUsername" $ }}"
+    connection.password: "{{ include "global.remoteDataDbPassword" $ }}"
+    
+    # Schema configuration
+    schema.pattern: "{{ index $connector.config.schemaPattern $dbType }}"
+    
+    # Topic configuration
+    topic.prefix: "{{ $connector.config.topicPrefix }}"
+    
+    # Query and mode configuration
+    mode: "{{ $connector.config.mode }}"
+    query: "{{ $connector.config.query }}"
+    timestamp.column.name: "{{ index $connector.config.timestampColumnName $dbType }}"
+    
+    {{- if and (eq $dbType "postgres") $connector.config.tableTypes }}
+    {{- if index $connector.config.tableTypes $dbType }}
+    table.types: "{{ index $connector.config.tableTypes $dbType }}"
+    {{- end }}
+    {{- end }}
+    
+    # Polling configuration
+    poll.interval.ms: {{ $connector.config.pollIntervalMs }}
+    batch.max.rows: {{ $connector.config.batchMaxRows }}
+    db.timezone: "{{ $connector.config.dbTimezone }}"
+    
+    # Topic creation configuration
+    topic.creation.enable: "{{ $connector.config.topicCreation.enable }}"
+    topic.creation.default.replication.factor: {{ $connector.config.topicCreation.defaultReplicationFactor }}
+    topic.creation.default.partitions: {{ $connector.config.topicCreation.defaultPartitions }}
+    topic.creation.default.cleanup.policy: "{{ $connector.config.topicCreation.defaultCleanupPolicy }}"
+    topic.creation.default.compression.type: "{{ $connector.config.topicCreation.defaultCompressionType }}"
+    topic.creation.default.delete.retention.ms: {{ $connector.config.topicCreation.defaultDeleteRetentionMs }}
+    
+    # Converter configuration
+    value.converter: "{{ $connector.config.valueConverter }}"
+    value.converter.schemas.enable: {{ $connector.config.valueConverterSchemasEnable }}
+    key.converter: "{{ $connector.config.keyConverter }}"
+    key.converter.schemas.enable: {{ $connector.config.keyConverterSchemasEnable }}
+    
+    # Transform configuration
+    transforms: "createKey,extractKey,extractPayload"
+    transforms.createKey.type: "org.apache.kafka.connect.transforms.ValueToKey"
+    transforms.createKey.fields: "{{ index $connector.config.transforms.keyField $dbType }}"
+    transforms.extractKey.type: "org.apache.kafka.connect.transforms.ExtractField$Key"
+    transforms.extractKey.field: "{{ index $connector.config.transforms.keyField $dbType }}"
+    transforms.extractPayload.type: "org.apache.kafka.connect.transforms.ExtractField$Value"
+    transforms.extractPayload.field: "{{ index $connector.config.transforms.payloadField $dbType }}"
+{{- end }}
+{{- end }}

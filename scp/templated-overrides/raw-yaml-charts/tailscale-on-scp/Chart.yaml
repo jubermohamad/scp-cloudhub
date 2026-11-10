@@ -1,0 +1,4 @@
+apiVersion: v2
+name: tailscale-on-scp
+description: Local Helm chart to deploy Tailscale Connector, ProxyClass, and Service
+version: 0.1.0

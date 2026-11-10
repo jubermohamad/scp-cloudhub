@@ -1,0 +1,61 @@
+{{- if not .Values.postgres.enabled }}
+  {{- if not .Values.postgres.host }}
+    {{- fail "postgres.host is required when postgres.enabled is false — set it to your existing Postgres service name or hostname" }}
+  {{- end }}
+  {{- if not .Values.postgres.username }}
+    {{- fail "postgres.username is required when postgres.enabled is false" }}
+  {{- end }}
+  {{- if not .Values.postgres.database }}
+    {{- fail "postgres.database is required when postgres.enabled is false" }}
+  {{- end }}
+  {{- if and .Values.secrets.create (not .Values.secrets.postgresPassword) }}
+    {{- fail "secrets.postgresPassword is required when postgres.enabled is false and secrets.create is true" }}
+  {{- end }}
+{{- end }}
+
+{{- if .Values.secrets.create }}
+  {{- if not .Values.secrets.anthropicApiKey }}
+    {{- fail "secrets.anthropicApiKey is required when secrets.create is true" }}
+  {{- end }}
+{{- end }}
+
+{{- if .Values.imageCredentials.create }}
+  {{- /* The platform pull secret now satisfies this too — see
+       `lens.dockerConfigJsonB64`. Without this third arm the chart refused an
+       environment that had supplied the credential once, correctly, and simply
+       had not supplied it a SECOND time under lens's own keys. */}}
+  {{- $global := (((.Values.global | default dict).pullSecrets) | default dict).dockerconfigjson | default "" }}
+  {{- if and (not .Values.imageCredentials.dockerConfigJson) (not .Values.imageCredentials.username) (not $global) }}
+    {{- fail "a pull secret is required when imageCredentials.create is true: set global.pullSecrets.dockerconfigjson (the platform one), or imageCredentials.dockerConfigJson, or imageCredentials.username + .password" }}
+  {{- end }}
+{{- end }}
+
+{{- if and .Values.ingress.tls.enabled (not .Values.ingress.tls.managedExternally) }}
+  {{- if not .Values.ingress.tls.cert }}
+    {{- fail "ingress.tls.cert is required when ingress.tls.enabled is true (unless ingress.tls.managedExternally is set, e.g. cert-manager)" }}
+  {{- end }}
+  {{- if not .Values.ingress.tls.key }}
+    {{- fail "ingress.tls.key is required when ingress.tls.enabled is true (unless ingress.tls.managedExternally is set, e.g. cert-manager)" }}
+  {{- end }}
+{{- end }}
+
+{{- if .Values.keycloak.setup.enabled }}
+  {{- if not .Values.keycloak.url }}
+    {{- fail "keycloak.url is required when keycloak.setup.enabled is true" }}
+  {{- end }}
+  {{- if not .Values.keycloak.realm }}
+    {{- fail "keycloak.realm is required when keycloak.setup.enabled is true" }}
+  {{- end }}
+  {{- if not .Values.secrets.keycloakAdminUser }}
+    {{- fail "secrets.keycloakAdminUser is required when keycloak.setup.enabled is true" }}
+  {{- end }}
+  {{- if not .Values.secrets.keycloakAdminPassword }}
+    {{- fail "secrets.keycloakAdminPassword is required when keycloak.setup.enabled is true" }}
+  {{- end }}
+  {{- if not .Values.secrets.keycloakClientSecret }}
+    {{- fail "secrets.keycloakClientSecret is required when keycloak.setup.enabled is true (the setup Job pins lens-backend's secret to this value)" }}
+  {{- end }}
+  {{- if not (or .Values.keycloak.setup.redirectHost .Values.ingress.host) }}
+    {{- fail "keycloak.setup.redirectHost or ingress.host is required when keycloak.setup.enabled is true" }}
+  {{- end }}
+{{- end }}

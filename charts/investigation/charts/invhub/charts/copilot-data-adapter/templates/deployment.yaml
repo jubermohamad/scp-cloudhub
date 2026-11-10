@@ -1,0 +1,162 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "copilot-data-adapter.fullname" . }}
+  labels:
+    {{- include "copilot-data-adapter.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "copilot-data-adapter.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: {{ list (toYaml .Values.config) ((index (.Values.global | default dict) "internalApiBaseUrl") | default "") ((index (.Values.global | default dict) "separateApiResponsibilities") | default false | toString) | join "|" | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "copilot-data-adapter.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "copilot-data-adapter.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if include "copilot-data-adapter.waitDependenciesNeeded" . | trim }}
+      initContainers:
+        {{- include "copilot-data-adapter.waitDependenciesInitContainer" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: app-log
+              mountPath: /app/log
+          {{- if ne .Values.dbRootCert.secretName "" }}
+            - name: db-root-cert
+              mountPath: {{ .Values.dbRootCert.mountPath }}
+              readOnly: true
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.copilotCommonConfigMapName }}
+            - secretRef:
+                name: {{ .Values.copilotCommonSecretName }}
+            - configMapRef:
+                name: {{ include "copilot-data-adapter.fullname" . }}
+            - secretRef:
+                name: {{ include "copilot-data-adapter.fullname" . }}-secret
+          env:
+            - name: PGVECTOR_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds-copilot-data-adapter
+                  key: password
+            - name: PGVECTOR_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds-copilot-data-adapter
+                  key: username
+            - name: PGVECTOR_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds-copilot-data-adapter
+                  key: dbname
+            - name: PGVECTOR_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds-copilot-data-adapter
+                  key: port
+            - name: PGVECTOR_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds-copilot-data-adapter
+                  key: host
+          {{- if ne .Values.dbRootCert.secretName "" }}
+            - name: PGSSLMODE
+              value: "verify-full"
+            - name: PGSSLROOTCERT
+              value: "{{ .Values.dbRootCert.mountPath }}/{{ .Values.dbRootCert.key }}"
+          {{- end }}
+            - name: GQL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: invhub-service-api-keys
+                  key: investigation-hub-copilot-service-user-api-key
+            - name: GQL_API_KEY_FINAL_NARRATIVE
+              valueFrom:
+                secretKeyRef:
+                  name: invhub-service-api-keys
+                  key: investigation-hub-copilot-service-user-api-key
+          {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- range .Values.extraSecretEnv }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: {{ .key }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: app-log
+          emptyDir:
+            sizeLimit: 256Mi
+      {{- if ne .Values.dbRootCert.secretName "" }}
+        - name: db-root-cert
+          secret:
+            secretName: {{ .Values.dbRootCert.secretName }}
+            items:
+              - key: {{ .Values.dbRootCert.key }}
+                path: {{ .Values.dbRootCert.key }}
+      {{- end }}
+      {{- if .Values.topologySpreadConstraints.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpreadConstraints.maxSkew | default 1 }}
+          topologyKey: {{ .Values.topologySpreadConstraints.topologyKey | default "kubernetes.io/hostname" }}
+          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.whenUnsatisfiable | default "ScheduleAnyway" }}
+          labelSelector:
+            matchLabels:
+              {{- include "copilot-data-adapter.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

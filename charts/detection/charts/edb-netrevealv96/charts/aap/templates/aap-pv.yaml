@@ -1,0 +1,38 @@
+{{- if (or (eq $.Values.global.clusterType "nfs") (eq $.Values.global.clusterType "minikube")) }}
+{{- $rootContext := . -}}
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-aap-data-{{ $i }}
+  labels:
+    app.kubernetes.io/name: {{ include "aap.fullname" $ }}
+    {{- include "common.helm.metadata.labels" $ | nindent 4 }}
+    storage: {{ $.Release.Name }}-aap-data-{{ $i }}
+spec:
+  capacity:
+    storage: {{ $.Values.storage.storage }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $rootContext }}
+    {{- $aapServiceName := include "generate.name.with.release.name" (list $ . "aap") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "aap-data" $aapServiceName $i)) | quote }}
+    {{- end }}
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: {{ include "storage.storageClassName" $ }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.storage.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/aap-{{ $i }}
+    type: DirectoryOrCreate
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.storage.nfs_server_dir }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/aap-{{ $i }}
+  {{- end }}
+{{- end }}
+---
+{{- end }}

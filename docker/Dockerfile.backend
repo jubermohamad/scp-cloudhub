@@ -1,0 +1,105 @@
+#FROM docker/dockerfile:1.7
+FROM node:22-alpine AS base
+
+ENV NODE_ENV=production
+WORKDIR /app
+RUN corepack enable
+
+COPY --chown=node:node \
+    package.json \
+    yarn.lock \
+    .yarnrc.yml \
+    backstage.json \
+    ./
+COPY --chown=node:node .yarn ./.yarn
+
+RUN mkdir -p packages plugins services/data-export-agent
+COPY --chown=node:node services/data-export-agent/package.json services/data-export-agent/
+COPY --chown=node:node packages/backend/package.json packages/backend/
+COPY --chown=node:node packages/app/package.json packages/app/
+COPY --chown=node:node plugins/cluster-registry/package.json plugins/cluster-registry/
+COPY --chown=node:node plugins/aks-health/package.json plugins/aks-health/
+COPY --chown=node:node plugins/aks-health-backend/package.json plugins/aks-health-backend/
+COPY --chown=node:node plugins/deployment-control-plane-backend/package.json plugins/deployment-control-plane-backend/
+COPY --chown=node:node plugins/data-export-hub/package.json plugins/data-export-hub/
+COPY --chown=node:node plugins/data-export-hub-backend/package.json plugins/data-export-hub-backend/
+COPY --chown=node:node plugins/data-export-scheduler/package.json plugins/data-export-scheduler/
+COPY --chown=node:node plugins/infrastructure-provisioning/package.json plugins/infrastructure-provisioning/
+COPY --chown=node:node plugins/observability/package.json plugins/observability/
+COPY --chown=node:node plugins/platform-common/package.json plugins/platform-common/
+COPY --chown=node:node plugins/platform-deployment/package.json plugins/platform-deployment/
+COPY --chown=node:node plugins/platform-home/package.json plugins/platform-home/
+COPY --chown=node:node plugins/platform-registry/package.json plugins/platform-registry/
+COPY --chown=node:node plugins/platform-registry-backend/package.json plugins/platform-registry-backend/
+COPY --chown=node:node plugins/tenant-overlay-manager/package.json plugins/tenant-overlay-manager/
+COPY --chown=node:node plugins/tenant-registry/package.json plugins/tenant-registry/
+COPY --chown=node:node plugins/tenant-registry-backend/package.json plugins/tenant-registry-backend/
+
+FROM base AS deps
+RUN mkdir -p /home/node/.yarn/berry/cache /home/node/.yarn/berry/index \
+    && chown -R node:node /home/node/.yarn \
+    && yarn workspaces focus backend
+
+FROM deps AS builder
+COPY --chown=node:node packages ./packages
+COPY --chown=node:node plugins ./plugins
+COPY --chown=node:node catalog ./catalog
+COPY --chown=node:node cloudhub-backstage-templates ./cloudhub-backstage-templates
+COPY --chown=node:node templates ./templates
+COPY --chown=node:node examples ./examples
+
+# Refresh install-state after source
+RUN mkdir -p /home/node/.yarn/berry/cache /home/node/.yarn/berry/index \
+    && chown -R node:node /home/node/.yarn \
+    && YARN_ENABLE_SCRIPTS=0 yarn install --immutable
+
+RUN yarn workspace backend build
+
+# ---------------------------------------------------------------------------
+# Production-only deps (keeps final image small)
+# ---------------------------------------------------------------------------
+FROM base AS prod-deps
+RUN mkdir -p /home/node/.yarn/berry/cache /home/node/.yarn/berry/index \
+    && chown -R node:node /home/node/.yarn \
+    && yarn workspaces focus --all --production
+
+FROM node:22-alpine AS runner
+ENV NODE_ENV=production
+WORKDIR /app
+
+ARG CLOUDHUB_VERSION=dev
+ENV CLOUDHUB_VERSION=${CLOUDHUB_VERSION}
+
+RUN apk add --no-cache curl ca-certificates sqlite-libs libsecret \
+    && rm -rf /var/cache/apk/* \
+    && corepack enable
+
+# Manifests + Yarn metadata
+COPY --from=base --chown=node:node /app/package.json /app/yarn.lock /app/.yarnrc.yml ./
+COPY --from=base --chown=node:node /app/.yarn ./.yarn
+
+# Production node_modules only (or PnP files if you use nodeLinker: pnp)
+COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
+# If the project is pure PnP, replace the line above with:
+# COPY --from=prod-deps --chown=node:node /app/.pnp.cjs /app/.pnp.loader.mjs ./
+
+COPY --chown=node:node app-config.yaml app-config.production.yaml ./
+COPY --chown=node:node examples ./examples
+COPY --chown=node:node catalog ./catalog
+COPY --chown=node:node catalog-info.yaml ./catalog-info.yaml
+COPY --chown=node:node charts ./charts
+COPY --from=builder --chown=node:node /app/packages/backend/dist ./packages/backend/dist
+
+RUN tar -xzf /app/packages/backend/dist/bundle.tar.gz -C /app \
+    && chmod 755 /app \
+    && chown -R node:node /app/packages/backend \
+    && rm -f /app/packages/backend/dist/bundle.tar.gz \
+             /app/packages/backend/dist/skeleton.tar.gz
+
+USER node
+EXPOSE 7007
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:7007/.backstage/health/v1/readiness || exit 1
+
+CMD ["node", "packages/backend", "--config", "app-config.yaml", "--config", "app-config.production.yaml"]

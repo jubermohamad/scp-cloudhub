@@ -1,0 +1,122 @@
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: {{ .Release.Name }}-entity-resolution-jobs
+  namespace: {{ include "er.namespace" . }}
+spec:
+  securityContext:
+    runAsUser: 1200
+    runAsGroup: 1200
+    fsGroup: 1200
+    fsGroupChangePolicy: "OnRootMismatch"
+  schedule: "{{ .Values.cronSchedule }}"
+  {{- if .Values.global.timeZone }}
+  timezone: "{{ .Values.global.timeZone }}"
+  {{- end}}
+  concurrencyPolicy: "{{ .Values.concurrencyPolicy }}"
+  startingDeadlineSeconds: {{ .Values.startingDeadlineSeconds }}
+  workflowSpec:
+    serviceAccountName: spark-app
+    entrypoint: spark-jobs
+    onExit: exit-handler
+
+{{- include "image.pull.secrets" . | nindent 4 }}
+
+    templates:
+      - name: spark-jobs
+        steps:
+          - - name: prepare-config-jar
+              template: entres-config-jar-template
+          - - name: fragment-generator-spark
+              templateRef:
+                name: {{ .Release.Name }}-spark-application-workflow-template
+                template: spark-application-template
+              arguments:
+                parameters:
+                  - name: name
+                    value: fragment-generator
+                  - name: mainClass
+                    value: com.baesystems.ai.netreveal.builder.runner.DistributedBuilder
+                  - name: mainApplicationFile
+                    value: local:///opt/entresSparkRoot/lib/uber-sb-runner.jar
+                  - name: springDefinition
+                    value: fragment-generator-framework.xml
+                  - name: springProfiles
+                    value: sb-springprofiles.properties
+          - - name: fragment-loader-spark
+              templateRef:
+                name: {{ .Release.Name }}-spark-application-workflow-template
+                template: spark-application-template
+              arguments:
+                parameters:
+                  - name: name
+                    value: fragment-loader
+                  - name: mainClass
+                    value: com.baesystems.ai.netreveal.builder.fragmentloader.FragmentLoaderRunner
+                  - name: mainApplicationFile
+                    value: local:///opt/entresSparkRoot/lib/uber-sb-fragment-loader.jar
+                  - name: springDefinition
+                    value: fragment-loader.xml
+                  - name: springProfiles
+                    value: sb-fl-springprofiles.properties
+          - - name: builder-spark
+              templateRef:
+                name: {{ .Release.Name }}-spark-application-workflow-template
+                template: spark-application-template
+              arguments:
+                parameters:
+                  - name: name
+                    value: builder
+                  - name: mainClass
+                    value: com.baesystems.ai.netreveal.builder.runner.DistributedBuilder
+                  - name: mainApplicationFile
+                    value: local:///opt/entresSparkRoot/lib/uber-sb-runner.jar
+                  - name: springDefinition
+                    value: distributed-builder-framework.xml
+                  - name: springProfiles
+                    value: sb-springprofiles.properties
+      - name: entres-config-jar-template
+        executor:
+          serviceAccountName: {{ .Release.Name }}-ent-res-spark-config
+        resource:
+          action: create
+          successCondition: status.succeeded > 0
+          failureCondition: status.failed > 0 # Should only run this container once
+          manifest: |
+            apiVersion: batch/v1
+            kind: Job
+            metadata:
+              generateName: entres-config-jar-generator-
+              namespace: {{ include "er.namespace" . }}
+            spec:
+              template:
+                spec:
+                  securityContext:
+                    runAsUser: 1200
+                    runAsGroup: 1200
+                    fsGroup: 1200
+                    fsGroupChangePolicy: "OnRootMismatch"
+{{- include "image.pull.secrets" . | nindent 18 }}
+                  containers:
+                    - name: entres-config-jar-generator
+                      image: {{ .Values.global.dockerRegistryName }}/{{ .Values.entresConfigJar.image.imageRepository }}:{{ .Values.entresConfigJar.image.imageTag }}
+                      imagePullPolicy: {{ .Values.entresConfigJar.imagePullPolicy }}
+                      volumeMounts:
+                        - name: er-config-volume
+                          mountPath: /data
+                  volumes:
+                    - name: er-config-volume
+                      persistentVolumeClaim:
+                        claimName: {{ include "generate.name.with.release.name" (list $ . "er-pvc-config") | quote }}
+                  restartPolicy: Never
+      - name: exit-handler
+        steps: # failure handler definition via steps (rather than directly) to allow for support for other types of handlers in the future
+          - - name: suspend-er-workflow
+              template: suspend-er-workflow
+              when: "{{`{{workflow.status}}`}} != Succeeded"
+      - name: suspend-er-workflow
+        container:
+          image: {{ .Values.global.dockerRegistryName }}/{{ .Values.argoCli.image.imageRepository }}:{{ .Values.argoCli.image.imageTag }}
+          imagePullPolicy: {{ .Values.argoCli.imagePullPolicy }}
+          command: [sh, -c]
+          args: ["argo cron suspend {{ .Release.Name }}-entity-resolution-jobs -n {{ include "er.namespace" . }}"]

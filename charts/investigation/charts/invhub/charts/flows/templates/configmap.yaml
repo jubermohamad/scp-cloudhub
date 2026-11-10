@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flows.fullname" . }}
+  labels:
+    {{- include "flows.labels" . | nindent 4 }}
+  annotations:
+    checksum/config: {{ toYaml .Values.config | sha256sum }}
+data:
+  EUREKA_FLOWS_RELEASE_ID: {{ .Values.config.releaseId | default "tobeupdated" | quote }}
+  EUREKA_FLOWS_TENANT: {{ .Values.config.tenant | default "tobeupdated" | quote }}
+  EUREKA_FLOWS_AUTH_CLIENT_ID: {{ .Values.config.authClientId | default "tobeupdated" | quote }}
+  EUREKA_FLOWS: {{ .Values.config.url | default "tobeupdated" | quote }}
+  NARRATIVE_AGENT_DEPLOYMENT_ID: {{ .Values.config.narrativeAgentDeploymentId | default "tobeupdated" | quote }}
+  INITIAL_SUMMARY_DEPLOYMENT_ID: {{ .Values.config.initialSummaryDeploymentId | default "tobeupdated" | quote }}
+  INITIAL_SUMMARY_CASE_DEPLOYMENT_ID: {{ .Values.config.initialSummaryCaseDeploymentId | default "tobeupdated" | quote }}
+  EMAIL_AGENT_DEPLOYMENT_ID: {{ .Values.config.emailAgentDeploymentId | default "tobeupdated" | quote }}
+  WEB_RESEARCH_AGENT_DEPLOYMENT_ID: {{ .Values.config.webResearchAgentDeploymentId | default "tobeupdated" | quote }}
+  EVIDENCE_BOARD_AGENT_DEPLOYMENT_ID: {{ .Values.config.evidenceBoardAgentDeploymentId | default "tobeupdated" | quote }}
+  DISCLOSURE_SUBMISSION_DEPLOYMENT_ID: {{ .Values.config.disclosureSubmissionAgentDeploymentId | default "tobeupdated" | quote }}
+  ECDD_AGENT_DEPLOYMENT_ID: {{ .Values.config.ecddAgentDeploymentId | default "tobeupdated" | quote }}
+  AUSTRAC_SMR_SUBMISSION_AGENT_DEPLOYMENT_ID: {{ .Values.config.austracSmrSubmissionAgentDeploymentId | default "tobeupdated" | quote }}
+  FLOWS_INVHUB_PROXY_URL: {{ .Values.config.proxyUrl | default "" | quote }}
+  FLOWS_INVHUB_USE_INTERNAL_URL: {{ .Values.config.useInternalUrls | default "true" | quote }}
+  FLOWS_INVHUB_INTERNAL_URL: {{ (.Values.config.internalInvHubHostUrl | default "") | trimSuffix "/" | quote }}  
+  FLOWS_DISCLOSURES_INTERNAL_URL: {{ .Values.config.internalDisclosuresHostUrl | default "" | quote }}
+  FLOWS_INTERNAL_URL: {{ .Values.config.internalFlowsUrl | default "" | quote }}
+  FLOWS_INTERNAL_AUTH_URL: {{ .Values.config.internalFlowsAuthUrl | default "" | quote }}
+  VITE_INVESTIGATION_NOTES_WEBHOOK_ID: {{ .Values.config.investigationNotesWebhookId | default "" | quote }}

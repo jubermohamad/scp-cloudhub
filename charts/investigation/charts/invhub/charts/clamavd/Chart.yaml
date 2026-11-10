@@ -1,0 +1,6 @@
+apiVersion: v2
+name: clamavd
+description: A Helm chart for ClamAV deamon
+type: application
+version: 0.28.1
+appVersion: v2026.07.1

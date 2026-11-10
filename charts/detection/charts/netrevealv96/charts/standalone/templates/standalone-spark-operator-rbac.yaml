@@ -1,0 +1,55 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark-operator-manipulator
+  namespace: "{{ .Values.global.namespace }}"
+  labels:
+    app: spark-operator
+
+{{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spark-operator-manipulator-token
+  namespace: "{{ .Values.global.namespace }}"
+  labels:
+    app: spark-operator
+  annotations:
+    kubernetes.io/service-account.name: spark-operator-manipulator
+    kubernetes.io/service-account.namespace: "{{ .Values.global.namespace }}"
+type: kubernetes.io/service-account-token
+{{- end }}
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spark-operator-manipulator
+  namespace: "{{ .Values.global.namespace }}"
+  labels:
+    app: spark-operator
+rules:
+- apiGroups: ["sparkoperator.k8s.io"]
+  resources: ["*"]
+  verbs: ["*"]
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spark-operator-manipulator
+  namespace: "{{ .Values.global.namespace  }}"
+  labels:
+    app: spark-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: spark-operator-manipulator
+subjects:
+- kind: ServiceAccount
+  name: spark-operator-manipulator
+  namespace: "{{ .Values.global.namespace }}"

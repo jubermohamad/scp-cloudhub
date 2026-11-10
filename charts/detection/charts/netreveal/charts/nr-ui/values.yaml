@@ -1,0 +1,213 @@
+pod:
+  nrUiDockerImageName: "nri-nrod-k8s-ui:s1-c9.4.0.0__r9.4.0.0__v9.4.0.35-20260312061440"
+  samlNrUiDockerImageName: "nri-nrod-k8s-ui:s1-saml-c9.4.0.0__r9.4.0.0__v9.4.0.35-20260312061440"
+  replicas: 1
+  java:
+    nrUiMaxHeap: "6144m"
+    nrUiMinHeap: "2048m"
+    nrUiMaxRam: "7g"
+    # Email debug options: -Dsmtp.debug=true -Dmail.debug=true
+    extraJavaOpts: "-Dmail.smtp.ssl.enable=true -Dmail.smtp.ssl.trust=*"
+    switchOnDebug: false
+  # soft: preferredDuringSchedulingIgnoredDuringExecution
+  # hard: requiredDuringSchedulingIgnoredDuringExecution
+  # custom: custom affinity rules defined with affinityRules
+  antiAffinity: "soft"
+  customAffinityRules: {}
+
+  dbPoolSize:
+    min: 10
+    max: 120
+  wildfly:
+    httpsListener:
+      maxParameters: "2000"
+      # maxPostSize is in bytes
+      maxPostSize: "104857600"
+    threadPool:
+      maxThreads: "10"
+  livenessProbe:
+    failureThreshold: 10
+    initialDelaySeconds: 200
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  # readinessProbe:
+  #   failureThreshold: 10
+  #   initialDelaySeconds: 200
+  #   periodSeconds: 10
+  #   successThreshold: 1
+  #   timeoutSeconds: 5
+  startupProbe:
+    failureThreshold: 120
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  resources:
+    requests:
+      memory: "8Gi"
+      cpu: "1000m"
+    limits:
+      memory: "10Gi"
+      cpu: "1500m"
+pvc:
+  serverLogsStorage: 10Gi
+  serverConfigurationHistoryStorage: 10Gi
+  serverDeploymentsStorage: 10Gi
+  applicationLogsStorage: 10Gi
+  confWlmStorage: 10Gi
+  confFtsStorage: 1Gi
+  dataStorage: 10Gi
+  samlDataStorage: 1Gi
+pv:
+  hostPath: "/var/nfs_k8s/uiHome"
+  hostPathMinikube: "/opt/netreveal/uiHome"
+
+log4j2:
+  functionstatsLogLevel: "debug"
+  messagestatsLogLevel: "debug"
+  overrideLog4j2: ""
+
+saml:
+  keystorePassword: "ENC:SuRl28t5Mrs+yfNrp2snxcUEAT6Inr7OMBTfTgzABDtzi5Djjg=="
+  keyAliasName: "saml"
+  keyAliasPassword: "ENC:SuRl28t5Mrs+yfNrp2snxcUEAT6Inr7OMBTfTgzABDtzi5Djjg=="
+  # Options: "sp-initiated", "idp-initiated"
+  #   - sp-initiated: user will start authentication from NetReveal side and will be redirected to IDP. After authentication will be redirected to NetReveal.
+  #   - idp-initiated: user will start authenticating from IDP provider side. After authentication will be redirected to NetReveal.
+  authenticationFlow: "sp-initiated"
+  # Optional parameter: defining prefered idp in sp-initiated flow, if empty the first from parameter saml.config.idp.metadata.url or saml.config.idp.metadata.url.<suffixed> will be used
+  spOptionalDefaultIDP: ""
+  # true/folse
+  # Defines if the IDP is a single IDP or multiple IDP. Depending on the value set, other parameters are used to define IPD(s)
+  singleIDP: true
+  idpMetadataFile:
+    # Whether generate IDP Metadata File. This is required when IDP URL is not accessible from NR UI POD
+    generateFile: false
+    # Below 2 parameters have to be provided when saml.idpMetadataFile.generateFile=true
+    secretName: ""
+    secretKey: ""
+  useExternalKeystore: false
+  # required when saml.useExternalKeystore=true
+  samlNrUiCertificate:
+    secretName: ""
+    keyForCertificateKey: ""
+    keyForCertificate: ""
+  # required when 'saml.useExternalKeystore=true' and 'saml.singleIDP=true'
+  #   Option1: when 'keyForSignedCertificate' is not empty (this option has precedence over Option2)
+  #     - keyForSignedCertificate will be imported into the saml keysotre as a signed certificate
+  #   Option2: when 'keyForCertificateKey' and 'keyForCertificate' are not empty
+  #     - 'keyForCertificateKey' and 'keyForCertificate' will be used to generate a signed certificate'
+  #     - signed certificate will be imported into the saml keystore
+  samlIdpCertificate:
+    secretName: ""
+    keyForCertificateKey: ""
+    keyForCertificate: ""
+    keyForSignedCertificate: ""
+  idpMetadataUrl: "https://{{ .Release.Name }}-keycloak-headless.{{ .Values.global.namespace }}.svc.cluster.local:8450/auth/realms/IDP-REALM/protocol/saml/descriptor"
+  spAliasName: "nrod"
+  spEndpointUrl: "https://{{ .Release.Name }}-nr-ui.{{ .Values.global.namespace }}.svc.cluster.local:8443/netreveal"
+  multipleIdpDefinition: []
+  spOptionalIdpDiscoveryEnabled: "false"
+  spSignatureAlgorithmName: "RSA"
+  spSignatureAlgorithmUri: "org.opensaml.xml.signature.SignatureConstants.ALGO_ID_SIGNATURE_RSA_SHA256"
+  spDigestAlgorithmUri: "org.opensaml.xml.signature.SignatureConstants.ALGO_ID_DIGEST_SHA256"
+  userGroupSync: "true"
+  # Default groups separated by a comma. At least one default group is required.
+  userDefaultGroupList: ""
+  usernameWithDomain: "false"
+  # SAML logging settings
+  loggerLogMessages: "false"
+  loggerLogErrors: "true"
+
+baseConfigProperties:
+  # filtering.batch.transformer.max_row_count
+  filteringBatchTransformerMaxRowCount: "5000"
+  # filtering.batch.processor.max_processing_row_amount
+  filteringBatchProcessorMaxProcessingRowAmount: "1000"
+  # filtering.build.indexes.onstartup
+  filteringBuildIndexesOnStartup: "false"
+  # filtering.editable
+  filteringEditable: "false"
+  # filtering.editablelists
+  filteringEditableLists: "true"
+  # filtering.db.statement.batch.size
+  filteringDbStatementBatchSize: "100"
+  # filtering.24x7.ags.backup.recovery.interval
+  filtering24x7AgsBackupRecorveryInterval: "300000"
+  # filtering.24x7.wlm.model.datasource.cache
+  filtering24x7WlmModelDatasourceCache: "true"
+  # filtering.24x7.wlm.model.datasource.cache.size
+  filtering24x7WlmModelDatasourceCacheSize: "2"
+  # filtering.24x7.wlm.igs.write.sleep.time
+  filtering24x7WlmProcWriteSleepTime: "1000"
+  # filtering.24x7.processing.node.registration.start.delay
+  filtering24x7ProcessingNodeRegistrationStartDelay: "60000"
+  # filtering.24x7.processing.node.registration.retry.interval
+  filtering24x7ProcessingNodeRegistrationRetryInterval: "600000"
+  # filtering.24x7.processing.node.swift.mt.linking.job.enable
+  filtering24x7ProcessingNodeSwiftMtLinkingJobEnable: "false"
+  # filtering.24x7.processing.node.swift.mt.linking.job.retry.interval
+  filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval: "15000"
+  # filtering.24x7.processing.node.swift.mt.linking.job.start.delay
+  filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay: "120000"
+  kafka:
+    producer:
+      # kafka.producer.EIM-Default-Producer.interceptor.enabled
+      EIMDefaultProducer:
+        interceptorEnabled: "false"
+        # kafka.producer.EIM-Default-Producer.metrics.interval
+        metricsInterval: "1200"
+  # Open search configuration
+  elasticsearch:
+    protocol: "https"
+    hostnamePrefixed: true
+    host: "open-search"
+    port: "9200"
+    username: "admin"
+    password: "ENC:9b2TWo31jiZNEflINC2hdivNPx4bSM5dHfmdSmzvpjrIde6ptQ=="
+  # Solution
+  amlopt:
+    smbd:
+      alert:
+        prefix: "SIM"
+  installed:
+    apps:
+      vertical:
+        amlorch_cluster: "Y"
+
+  # Project specific base_config.properties parameters. When it is defined as empty string then no new parameters are added into this file.
+  # To define new parameters please define it as follows:
+  # extraParameters: |
+  #   param1=value1
+  #   param2="value2"
+  #   param3=value3
+  extraParameters: ""
+
+service:
+  type: ClusterIP
+  port: 8443
+
+ingress:
+  enabled: true
+  ingressAllowList:
+    customerIPs: []
+    platformIPs: []
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: nr-ui.local
+      paths:
+        - path: /netreveal
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local

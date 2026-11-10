@@ -1,0 +1,210 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-engine
+  labels:
+    app: assembly-engine
+    tier: backend
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  {{- /* NOT WHEN AN HPA OWNS IT. This chart ships an HPA for this very
+       Deployment (assembly-engine-hpa.yaml), and once it scales, the
+       scale subresource makes kube-controller-manager the field manager of
+       .spec.replicas. Helm 4 applies server-side, so a chart that also declares
+       replicas conflicts with the autoscaler it installed itself:
+
+         UPGRADE FAILED: conflict occurred while applying object
+         <ns>/assembly-engine ... conflict with "kube-controller-manager"
+         with subresource "scale" using apps/v1: .spec.replicas
+
+       and the whole release fails on the second install, not the first — because
+       the first has nothing to conflict with yet. Every other chart in this
+       platform that ships an HPA already guards its replicas this way. */}}
+  {{- if not .Values.agents.hpa.enabled }}
+  replicas: {{ .Values.agents.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-engine
+  template:
+    metadata:
+      # NO prometheus scrape annotations here on purpose: web pods disable
+      # the SDK Prometheus exporter (empty TEMPORAL_METRICS_PROMETHEUS_BIND_
+      # ADDRESS below) because uvicorn --workers 4 means four processes would
+      # contend for one bind port. SDK metrics come from the worker-role
+      # deployments, which are single-process and scrape-annotated.
+      annotations:
+        # Forces a rollout whenever platform-secrets changes -- secretKeyRef env
+        # vars are read once at container start, so without this a secret rotation
+        # never reaches already-running pods (#1325). Secrets are deterministic now
+        # (no randAlphaNum/lookup), so we hash the rendered Secret directly: it
+        # changes iff the actual content changes (incl. database-url, derived from
+        # the pg password) -- no spurious rollout on values-structure changes, and
+        # no need to fold in infra.postgres/externalInfra.
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+      labels:
+        app: assembly-engine
+        tier: backend
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      # This workload does not call the Kubernetes API.
+      automountServiceAccountToken: false
+      # Explicit (was the implicit k8s 30s default) so the preStop-sleep-vs-grace-period
+      # safety margin this pod'''s preStop hook depends on (below, issue #1531/#1526) stays
+      # visible in the chart rather than silently depending on a default that could change
+      # (issue #1537).
+      terminationGracePeriodSeconds: 30
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.scheduling" . | nindent 6 }}
+      topologySpreadConstraints:
+        # Soft: this tier has not been measured as placement-sensitive the way
+        # sandbox-execute was (#2123), so the spread stays a preference rather
+        # than a scheduling gate.
+        #
+        # matchLabelKeys still matters even while soft. Without it the scheduler
+        # scores a new pod against the OUTGOING revision's placement too, so
+        # during a rollout it can "prefer" a node that is only empty of new pods
+        # while already crowded with old ones. Per-revision scoring is what makes
+        # the preference actually spread the new ReplicaSet.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app: assembly-engine
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: agents
+          image: {{ include "aw.image" (dict "registry" .Values.image.registry "repo" .Values.agents.image.repository "default" "assembly-workflows-engine" "tag" .Values.agents.image.tag "globalTag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          command: [uvicorn]
+          args:
+            - app.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --workers
+            - "4"
+            - --backlog
+            - "8192"
+            # Above APISIX's upstream keep-alive idle window (nginx default
+            # 60s). uvicorn's default 5s closes pooled connections while the
+            # proxy still considers them reusable; the loser is whatever
+            # request rides the stale connection — a connection reset that is
+            # NOT retryable for POSTs (execute-launch). Reproduced at C=180:
+            # ~1/360 launches failed with ReadError. Server keep-alive must
+            # outlive every client/proxy reuse window.
+            - --timeout-keep-alive
+            - "75"
+          ports:
+            - containerPort: 8000
+          env:
+            - name: AGENTS_ROLE
+              value: "web"
+            - name: ASSEMBLY_ENGINE_ROLE
+              value: "web"
+            - name: TEMPORAL_WORKER_TYPE
+              value: "agent-builder-only"
+            - name: TEMPORAL_AGENT_BUILDER_WORKER_QUEUES
+              # Default "main,subflow" preserves prior behavior. tierA overrides to
+              # "main" to stop web pods adding to subflow-queue sticky fanout (3 web +
+              # 16 worker + 3 subflow pods on subflow = 22 → cache hit rate 1/22).
+              value: {{ .Values.agents.temporal.workerQueues | default "main,subflow" | quote }}
+            # Required even though this pod doesn't poll the aux queue —
+            # the workflow code reads this env var to resolve which queue
+            # to dispatch aux activities (save_workflow_checkpoint, etc.) to.
+            # Without it, _resolved_aux_task_queue() falls back to the main
+            # queue and dispatches land on workers that didn't register
+            # those activities.
+            - name: TEMPORAL_AGENT_BUILDER_AUX_TASK_QUEUE
+              value: "agent-builder-aux-tasks"
+            # Worker Versioning (Build IDs) — playbook 39. The web pod polls the
+            # main+subflow queues and RUNS AssemblyWorkflowExecution, so it MUST
+            # advertise the same build as the worker deployments or build-id
+            # routing fragments. Chart-wide `workerVersioning` source of truth.
+            - name: TEMPORAL_WORKER_VERSIONING_ENABLED
+              value: {{ include "aw.workerVersioning.enabled" . | quote }}
+            - name: ASSEMBLY_WORKER_BUILD_ID
+              value: {{ include "aw.workerVersioning.buildId" . | quote }}
+            - name: ASSEMBLY_TRACE_ASYNC_INGEST
+              # Batched trace ingestion (#507): trace writes ride a redis
+              # stream + per-process batch consumer; every run keeps its full
+              # trace (sync fallback on enqueue failure). +28% runs/hr
+              # measured at C=1200. Set "false" to restore synchronous writes.
+              value: {{ .Values.traceAsyncIngest | default "true" | quote }}
+            - name: TEMPORAL_METRICS_PROMETHEUS_BIND_ADDRESS
+              value: ""
+            - name: TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS
+              value: {{ .Values.agents.temporal.maxConcurrentWorkflowTasks | default 50 | quote }}
+            - name: TEMPORAL_MAX_CONCURRENT_ACTIVITIES
+              value: {{ .Values.agents.temporal.maxConcurrentActivities | default 50 | quote }}
+            - name: TEMPORAL_MAX_CACHED_WORKFLOWS
+              value: {{ .Values.agents.temporal.maxCachedWorkflows | default 1000 | quote }}
+            - name: TEMPORAL_TARGET_MEMORY
+              value: "0.85"
+            # Phoenix tracing defaults ON in code (PHOENIX_COLLECTOR_ENDPOINT
+            # -> http://phoenix:6006), but this chart never deploys a Phoenix
+            # collector. The worker deployments already disable it; the API
+            # engine was missed, so it spammed endless OTLP export-retry errors
+            # to the non-resolving phoenix host. Disable it here too for parity.
+            - name: ENABLE_PHOENIX_TRACING
+              value: "false"
+            - name: ENABLE_PHOENIX_WORKFLOW_TRACING
+              value: "false"
+            {{- include "aw.agentEnv" . | nindent 12 }}
+            {{- with .Values.agents.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.agents.resources | nindent 12 }}
+          lifecycle:
+            preStop:
+              exec:
+                # Give kube-proxy/the Service endpoint controller a moment to remove this pod
+                # before SIGTERM fires -- without this, a HPA scale-down killing several replicas
+                # at once has a ~1s race window where an in-flight request can still be routed to
+                # a pod that's already terminating, producing a connection-refused error. Same gap
+                # found+fixed on assembly-llm-gateway (issue #1526/PR #1530, measured live 2/2710
+                # failures in that exact window); assembly-engine's HPA is default-ON in this
+                # chart's base values (unlike llm-gateway's opt-in), so this is higher-stakes.
+                command: ["sh", "-c", "sleep 5"]
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: {{ .Values.agents.probes.liveness.timeoutSeconds | default 1 }}
+            failureThreshold: {{ .Values.agents.probes.liveness.failureThreshold | default 3 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: {{ .Values.agents.probes.readiness.timeoutSeconds | default 1 }}
+            failureThreshold: {{ .Values.agents.probes.readiness.failureThreshold | default 3 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-engine
+  labels:
+    app: assembly-engine
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+  selector:
+    app: assembly-engine

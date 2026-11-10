@@ -1,0 +1,173 @@
+{{- if and .Values.auth.enabled .Values.auth.setup.enabled }}
+{{- $adminSecret := .Values.auth.setup.adminSecret }}
+{{- if not $adminSecret }}
+{{- if and .Values.auth.setup.adminUser .Values.auth.setup.adminPassword }}
+{{- $adminSecret = printf "%s-keycloak-admin" (include "sri-micro-frontend.fullname" .) }}
+{{- else }}
+{{- fail "auth.setup.enabled requires auth.setup.adminSecret, or auth.setup.adminUser + adminPassword (via an encrypted values file)" }}
+{{- end }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "sri-micro-frontend.fullname" . }}-keycloak-setup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sri-micro-frontend.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-setup
+  annotations:
+    # Re-syncs on every install/upgrade — every step below is idempotent
+    # (create-if-missing / update-if-exists), so running it repeatedly is safe.
+    "helm.sh/hook": post-install,post-upgrade
+    # IN-TREE PATCH: weight 10, i.e. AFTER the platform Keycloak chart's
+    # config-cli hook (weight 5) which CREATES the realm this client goes in.
+    # At weight 0 the client creation ran against a realm that did not exist yet
+    # and the job died — the same ordering the lens keycloak-setup hook learned.
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: keycloak-setup
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: keycloak-setup
+          image: "{{ .Values.auth.setup.image }}:{{ .Values.auth.setup.imageTag }}"
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: KEYCLOAK_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $adminSecret }}
+                  key: keycloak-admin-user
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $adminSecret }}
+                  key: keycloak-admin-password
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+
+              # IN-TREE PATCH: admin-API calls go through setup.internalUrl when
+              # set. Through the PUBLIC ingress the per-call latency outlives the
+              # master realm's 60s access token and the job dies mid-run — the
+              # lesson lens's keycloak-setup hook taught on this cluster. The
+              # default keeps upstream behaviour.
+              KC={{ .Values.auth.setup.internalUrl | default .Values.auth.keycloakUrl | quote }}
+              REALM={{ .Values.auth.keycloakRealm | quote }}
+              ADMIN_REALM={{ (.Values.auth.setup.adminRealm | default .Values.auth.keycloakRealm) | quote }}
+              CLIENT_ID={{ .Values.auth.keycloakClientId | quote }}
+              APP_URL={{ .Values.auth.appUrl | quote }}
+              KCADM=/opt/keycloak/bin/kcadm.sh
+
+              echo "==> Logging in to $KC (realm $ADMIN_REALM)"
+              "$KCADM" config credentials --server "$KC" --realm "$ADMIN_REALM" \
+                --user "$KEYCLOAK_ADMIN_USER" --password "$KEYCLOAK_ADMIN_PASSWORD"
+
+              # IN-TREE PATCH: the realm is created by another chart's hook, so
+              # wait for it rather than assuming an order (kcadm only — the
+              # official keycloak image ships neither curl nor wget).
+              echo "==> Waiting for realm $REALM"
+              i=0
+              until "$KCADM" get "realms/$REALM" >/dev/null 2>&1; do
+                i=$((i+1))
+                if [[ "$i" -ge 60 ]]; then
+                  echo "realm $REALM does not exist after 60 attempts — is the Keycloak config-cli hook enabled?" >&2
+                  exit 1
+                fi
+                sleep 5
+                # the admin token expires in 60s; refresh it while waiting
+                "$KCADM" config credentials --server "$KC" --realm "$ADMIN_REALM" \
+                  --user "$KEYCLOAK_ADMIN_USER" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1 || true
+              done
+
+              echo "==> Ensuring client $CLIENT_ID (public, PKCE)"
+              CID=$("$KCADM" get clients -r "$REALM" -q clientId="$CLIENT_ID" \
+                --fields id --format csv --noquotes 2>/dev/null)
+              if [[ -z "$CID" ]]; then
+                # First time only: full desired config, including redirect/origin
+                # URIs (the server-side OIDC flow in src/app/api/auth/* only ever
+                # returns to /api/auth/callback). Never repeated on update — see
+                # note below.
+                CID=$("$KCADM" create clients -r "$REALM" -i \
+                  -s clientId="$CLIENT_ID" \
+                  -s publicClient=true \
+                  -s standardFlowEnabled=true \
+                  -s directAccessGrantsEnabled=false \
+                  -s serviceAccountsEnabled=false \
+                  -s "redirectUris=[\"$APP_URL/api/auth/callback\"]" \
+                  -s "webOrigins=[\"$APP_URL\"]" \
+                  -s 'attributes."pkce.code.challenge.method"=S256' \
+                  -s 'attributes."post.logout.redirect.uris"='"$APP_URL")
+              else
+                # Update only the flags auth cannot function without.
+                # Deliberately NOT touching redirectUris/webOrigins/attributes:
+                # kcadm's -s is a full-field replace, and a hand-tuned client
+                # may carry extra entries (dev origins, other environments) —
+                # replacing would silently drop them.
+                "$KCADM" update "clients/$CID" -r "$REALM" \
+                  -s publicClient=true \
+                  -s standardFlowEnabled=true
+              fi
+
+              {{- if .Values.auth.setup.audience }}
+              # Audience mapper: stamps aud={{ .Values.auth.setup.audience }} into access
+              # tokens so auth-enabled Lens backends accept them (the embedded
+              # /ontology console passes our session's token as its Bearer).
+              # Direct per-client protocol mapper, added only if absent —
+              # mirrors sensa-data-ontology's ensure_audience_mapper.
+              AUDIENCE={{ .Values.auth.setup.audience | quote }}
+              if ! "$KCADM" get "clients/$CID/protocol-mappers/models" -r "$REALM" \
+                   | grep -q "\"included.client.audience\" *: *\"$AUDIENCE\""; then
+                echo "==> Adding audience mapper (aud=$AUDIENCE)"
+                "$KCADM" create "clients/$CID/protocol-mappers/models" -r "$REALM" \
+                  -s name=lens-audience \
+                  -s protocol=openid-connect \
+                  -s protocolMapper=oidc-audience-mapper \
+                  -s 'config."included.client.audience"='"$AUDIENCE" \
+                  -s 'config."access.token.claim"=true' \
+                  -s 'config."id.token.claim"=false'
+              fi
+              {{- end }}
+
+              # Post-logout redirect is a SEPARATE allowlist from redirectUris
+              # (Keycloak 18+): without it, RP-initiated logout dies on
+              # "Invalid redirect uri". Synced on every run — kcadm update
+              # merges per-attribute into the fetched representation, so other
+              # attributes (incl. hand-added ones) are preserved.
+              "$KCADM" update "clients/$CID" -r "$REALM" \
+                -s 'attributes."post.logout.redirect.uris"='"$APP_URL"
+
+              # Client roles the app maps onto Command Centre roles — the
+              # callback picks the highest-precedence match among these names
+              # (or cc-<name>), defaulting to operator (src/app/api/auth/
+              # callback/route.ts ROLE_PRECEDENCE). Assign them to users/groups
+              # in Keycloak to grant the corresponding dashboard role.
+              echo "==> Ensuring Command Centre client roles on $CLIENT_ID"
+              ensure_role() {
+                local role="$1"
+                if ! "$KCADM" get "clients/$CID/roles/$role" -r "$REALM" >/dev/null 2>&1; then
+                  echo "  creating role $role"
+                  "$KCADM" create "clients/$CID/roles" -r "$REALM" -s name="$role"
+                fi
+              }
+              ensure_role operator
+              ensure_role analyst
+              ensure_role investigator
+              ensure_role compliance
+              ensure_role cco
+              ensure_role admin
+
+              echo "==> Keycloak setup complete"
+{{- end }}

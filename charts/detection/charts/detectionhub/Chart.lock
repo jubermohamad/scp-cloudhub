@@ -1,0 +1,45 @@
+dependencies:
+- name: cn-postgres
+  repository: file://charts/cn-postgres
+  version: 0.1.0
+- name: db-updater
+  repository: file://charts/db-updater
+  version: 0.1.0
+- name: core-api
+  repository: file://charts/core-api
+  version: 0.1.0
+- name: spark-operator
+  repository: https://kubeflow.github.io/spark-operator
+  version: 2.3.0
+- name: spark-operator-manipulator
+  repository: file://charts/spark-operator-manipulator
+  version: 0.1.0
+- name: nfs-server
+  repository: file://charts/nfs-server
+  version: 0.1.0
+- name: minio
+  repository: file://charts/minio
+  version: 0.1.0
+- name: kafka-cluster
+  repository: file://charts/kafka-cluster
+  version: 0.1.0
+- name: cn-postgres
+  repository: file://charts/cn-postgres
+  version: 0.1.0
+- name: superset
+  repository: http://apache.github.io/superset
+  version: 0.14.3
+- name: db-updater
+  repository: file://charts/db-updater
+  version: 0.1.0
+- name: cn-postgres
+  repository: file://charts/cn-postgres
+  version: 0.1.0
+- name: core-api-ext
+  repository: file://charts/core-api-ext
+  version: 0.1.0
+- name: keycloak
+  repository: file://charts/keycloak
+  version: 0.1.0
+digest: sha256:6d54f288700dd3ed829fb6e85674bf67d21ab8fe02cb7f412eec8b50aaf721fd
+generated: "2026-05-18T10:40:56.6224458+05:30"

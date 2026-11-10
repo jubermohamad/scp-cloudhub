@@ -1,0 +1,38 @@
+{{- if .Values.global.nrSubChartSwitches.enableOpenSearch }}
+{{- if eq .Values.global.clusterType "nfs" }}
+{{ $currentScope := .}}
+
+{{- range $i, $e := until (.Values.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: opensearch-cluster-master-opensearch-cluster-master-{{ $i }}-pv
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "opensearch.pvcStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    name: opensearch-cluster-master-opensearch-cluster-master-{{ $i }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/opensearch-{{ $i }}
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/opensearch-{{ $i }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: flows
+description: A Helm chart for Eureka Flows configuration
+type: application
+version: 0.38.0
+appVersion: v2026.07.1

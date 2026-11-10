@@ -1,0 +1,121 @@
+name: Auto PR via GitHub PAT
+
+on:
+  push:
+    branches:
+      - 'cloudhub/**'
+      - 'feature/**'
+  workflow_dispatch:
+    inputs:
+      head:
+        description: Source branch to open a PR from
+        required: true
+        type: string
+      base:
+        description: Target branch
+        required: false
+        default: main
+        type: string
+      title:
+        description: PR title
+        required: false
+        default: Automated PR from CloudHub automation
+        type: string
+      body:
+        description: PR body
+        required: false
+        default: Created by CloudHub automation workflow.
+        type: string
+      dry_run:
+        description: Print the resolved PR plan without creating or merging a PR
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-pr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve branch and PR fields
+        id: inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            head='${{ inputs.head }}'
+            base='${{ inputs.base }}'
+            title='${{ inputs.title }}'
+            body='${{ inputs.body }}'
+            dry_run='${{ inputs.dry_run }}'
+          else
+            head='${{ github.ref_name }}'
+            base='main'
+            title="Automated PR from CloudHub automation"
+            body="Created by CloudHub automation workflow for branch ${head}."
+            dry_run='false'
+          fi
+
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "title=$title" >> "$GITHUB_OUTPUT"
+          echo "body=$body" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+
+      - name: Create PR and enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_BRANCH: ${{ steps.inputs.outputs.head }}
+          BASE_BRANCH: ${{ steps.inputs.outputs.base }}
+          PR_TITLE: ${{ steps.inputs.outputs.title }}
+          PR_BODY: ${{ steps.inputs.outputs.body }}
+          DRY_RUN: ${{ steps.inputs.outputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "dry_run=true"
+            echo "head=$HEAD_BRANCH"
+            echo "base=$BASE_BRANCH"
+            echo "title=$PR_TITLE"
+            echo "body=$PR_BODY"
+            echo "would run: gh pr list --head \"$HEAD_BRANCH\" --base \"$BASE_BRANCH\" --state open --json url -q '.[0].url'"
+            echo "would run: gh pr create --base \"$BASE_BRANCH\" --head \"$HEAD_BRANCH\" --title \"$PR_TITLE\" --body \"$PR_BODY\""
+            echo "would run: gh pr merge <pr-url> --auto --squash --delete-branch"
+            exit 0
+          fi
+
+          existing_pr_url="$(gh pr list \
+            --head "$HEAD_BRANCH" \
+            --base "$BASE_BRANCH" \
+            --state open \
+            --json url \
+            -q '.[0].url' || true)"
+
+          if [ -n "$existing_pr_url" ]; then
+            pr_url="$existing_pr_url"
+          else
+            pr_url="$(gh pr create \
+              --base "$BASE_BRANCH" \
+              --head "$HEAD_BRANCH" \
+              --title "$PR_TITLE" \
+              --body "$PR_BODY")"
+          fi
+
+          gh pr merge "$pr_url" --auto --squash --delete-branch

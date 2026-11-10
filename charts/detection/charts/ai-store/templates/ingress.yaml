@@ -1,0 +1,237 @@
+{{- if .Values.ingress.enabled }}
+{{- $rh := .Values.ingress.responseHeaders | default dict }}
+{{- $hdrOn := $rh.enabled | default true }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: modelhub-auth-ingress
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: oauth2-proxy
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    {{- if .Values.ingress.whitelistSourceRange }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ .Values.ingress.whitelistSourceRange | quote }}
+    {{- end }}
+    {{- if .Values.ingress.authLimitRps }}
+    nginx.ingress.kubernetes.io/limit-rps: {{ .Values.ingress.authLimitRps | quote }}
+    {{- end }}
+    {{- if .Values.ingress.authLimitConnections }}
+    nginx.ingress.kubernetes.io/limit-connections: {{ .Values.ingress.authLimitConnections | quote }}
+    {{- end }}
+    {{- if .Values.ingress.authLimitBurstMultiplier }}
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: {{ .Values.ingress.authLimitBurstMultiplier | quote }}
+    {{- end }}
+    {{- if .Values.ingress.authLimitWhitelist }}
+    nginx.ingress.kubernetes.io/limit-whitelist: {{ .Values.ingress.authLimitWhitelist | quote }}
+    {{- end }}
+    {{- if $hdrOn }}
+    nginx.ingress.kubernetes.io/add-headers: {{ include "model-store.ingressAddHeadersAuthRef" . | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.domain.modelhubHost }}
+      secretName: {{ include "model-store.modelhubTlsSecret" . }}
+  rules:
+    - host: {{ .Values.domain.modelhubHost }}
+      http:
+        paths:
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "model-store.componentName" (list . "oauth2-proxy-service") }}
+                port:
+                  number: 80
+          - path: /dex
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "model-store.componentName" (list . "dex") }}
+                port:
+                  number: 5556
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: modelhub-app-ingress
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: modelhub
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    {{- if .Values.ingress.whitelistSourceRange }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ .Values.ingress.whitelistSourceRange | quote }}
+    {{- end }}
+    {{- if .Values.ingress.authEnabled }}
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/oauth2/auth"
+    nginx.ingress.kubernetes.io/auth-signin: "https://{{ .Values.domain.modelhubHost }}/oauth2/start?rd=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Authorization,X-Auth-Request-User,X-Auth-Request-Email,X-Auth-Request-Preferred-Username"
+    {{- end }}
+    {{- if $hdrOn }}
+    nginx.ingress.kubernetes.io/add-headers: {{ include "model-store.ingressAddHeadersAppRef" . | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.domain.modelhubHost }}
+      secretName: {{ include "model-store.modelhubTlsSecret" . }}
+  rules:
+    - host: {{ .Values.domain.modelhubHost }}
+      http:
+        paths:
+          - path: /openapi.json
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "model-store.componentName" (list . "backend") }}
+                port:
+                  number: 8000
+          - path: /docs
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "model-store.componentName" (list . "backend") }}
+                port:
+                  number: 8000
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "model-store.componentName" (list . "backend") }}
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "model-store.componentName" (list . "frontend") }}
+                port:
+                  number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: modelhub-external-api-ingress
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: modelhub
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    {{- if .Values.ingress.whitelistSourceRange }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ .Values.ingress.whitelistSourceRange | quote }}
+    {{- end }}
+    {{- if $hdrOn }}
+    nginx.ingress.kubernetes.io/add-headers: {{ include "model-store.ingressAddHeadersAppRef" . | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.domain.modelhubHost }}
+      secretName: {{ include "model-store.modelhubTlsSecret" . }}
+  rules:
+    - host: {{ .Values.domain.modelhubHost }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.externalApiPath }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "model-store.componentName" (list . "backend") }}
+                port:
+                  number: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: modelhub-health-ingress
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: modelhub
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    {{- if .Values.ingress.whitelistSourceRange }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ .Values.ingress.whitelistSourceRange | quote }}
+    {{- end }}
+    {{- if $hdrOn }}
+    nginx.ingress.kubernetes.io/add-headers: {{ include "model-store.ingressAddHeadersAppRef" . | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.domain.modelhubHost }}
+      secretName: {{ include "model-store.modelhubTlsSecret" . }}
+  rules:
+    - host: {{ .Values.domain.modelhubHost }}
+      http:
+        paths:
+          # Prefix matches /health, /health/status, /health/ready, etc. (no auth-url; see modelhub-app-ingress)
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "model-store.componentName" (list . "backend") }}
+                port:
+                  number: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: models-mcp-ingress
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: mcp-server
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    nginx.ingress.kubernetes.io/proxy-body-size: {{ .Values.ingress.mcpProxyBodySize | quote }}
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    {{- if .Values.ingress.mcpLimitRps }}
+    nginx.ingress.kubernetes.io/limit-rps: {{ .Values.ingress.mcpLimitRps | quote }}
+    {{- end }}
+    {{- if .Values.ingress.mcpLimitConnections }}
+    nginx.ingress.kubernetes.io/limit-connections: {{ .Values.ingress.mcpLimitConnections | quote }}
+    {{- end }}
+    {{- if .Values.ingress.mcpLimitBurstMultiplier }}
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: {{ .Values.ingress.mcpLimitBurstMultiplier | quote }}
+    {{- end }}
+    {{- if .Values.ingress.mcpLimitWhitelist }}
+    nginx.ingress.kubernetes.io/limit-whitelist: {{ .Values.ingress.mcpLimitWhitelist | quote }}
+    {{- end }}
+    {{- if .Values.ingress.whitelistSourceRange }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ .Values.ingress.whitelistSourceRange | quote }}
+    {{- end }}
+    {{- if $hdrOn }}
+    nginx.ingress.kubernetes.io/add-headers: {{ include "model-store.ingressAddHeadersMcpRef" . | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.domain.mcpHost }}
+      secretName: {{ include "model-store.mcpTlsSecret" . }}
+  rules:
+    - host: {{ .Values.domain.mcpHost }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "model-store.componentName" (list . "mcp-server") }}
+                port:
+                  number: 8081
+{{- end }}

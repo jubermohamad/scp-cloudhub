@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "copilot-data-adapter.fullname" . }}
+  labels:
+    {{- include "copilot-data-adapter.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    checksum/config: {{ toYaml .Values.config | sha256sum }}
+data:
+  API_TYPE: "GraphQL"
+  TRANSACTIONS_FILTER_ROWS: "100"
+  RESOLVED_AML_DETECTIONS_FILTER_ROWS: "100"
+  AML_DETECTIONS_FILTER_ROWS: "100"
+  {{- $sep := (index (.Values.global | default dict) "separateApiResponsibilities") | default false }}
+  {{- $apiBase := ((index (.Values.global | default dict) "internalApiBaseUrl") | default (ternary "http://api-for-ui:3001" "http://api:3001" $sep)) | trimSuffix "/" }}
+  SERVICE_DISCOVERY: {{ printf "%s/graphql" $apiBase | quote }}
+  GQL_EMAIL: "copilotService@symphony.ai"
+  GQL_EMAIL_FINAL_NARRATIVE: "copilotService@symphony.ai"
+  PGVECTOR_DB_DRIVER: psycopg
+  RUN_ENV: local
+  SENSA_DATA_ADAPTER_CLASS: sensa_data_adapter.sensa_data_adapter.SensaDataAdapter

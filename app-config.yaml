@@ -1,0 +1,251 @@
+app:
+  title: CloudHub
+  # Default to the public CloudHub production host unless a local-only override
+  # explicitly sets localhost values for a developer rebuild.
+  baseUrl: ${APP_BASE_URL:-https://cloudhub.symphonyai.cloud}
+  listen:
+    host: 0.0.0.0
+    port: 3000
+  # Enable all packages by default, this will discover packages from packages/app/package.json
+  packages: all
+
+  extensions:
+    # Platform Home plugin serves the landing page at /
+    # Catalog is accessible at /catalog but hidden from navigation
+    - page:catalog:
+        config:
+          path: /catalog
+    - page:platform-home/home:
+        config:
+          path: /
+    # Disable built-in themes; only the CloudHub light theme is active
+    - theme:app/light: false
+    - theme:app/dark: false
+
+organization:
+  name: SymphonyAI
+
+backend:
+  # Shared by backend plugins for service-to-service calls, including the
+  # Microsoft sign-in resolver's catalog lookup.
+  auth:
+    keys:
+      - secret: ${BACKEND_SECRET}
+  # Local development must use the local override file and should never inherit
+  # the live production origin unless explicitly set in a local rebuild.
+  baseUrl: ${BACKEND_BASE_URL:-${APP_BASE_URL:-https://cloudhub.symphonyai.cloud}}
+  listen:
+    port: 7007
+    # Uncomment the following host directive to bind to specific interfaces
+    # host: 127.0.0.1
+  csp:
+    connect-src: ["'self'", 'http:', 'https:']
+    # Content-Security-Policy directives follow the Helmet format: https://helmetjs.github.io/#reference
+    # Default Helmet Content-Security-Policy values can be removed by setting the key to false
+  cors:
+    origin:
+      - ${APP_BASE_URL:-https://cloudhub.symphonyai.cloud}
+      - https://cloudhub.symphonyai.cloud
+      - https://www.cloudhub.symphonyai.cloud
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+  # Local development database (Docker postgres on localhost).
+  # Production overrides remain in app-config.production.yaml.
+  database:
+    client: pg
+    connection:
+      host: ${POSTGRES_HOST:-localhost}
+      port: ${POSTGRES_PORT:-5433}
+      user: ${POSTGRES_USER:-backstage}
+      password: ${POSTGRES_PASSWORD:-backstage}
+      database: ${POSTGRES_DB:-cloudhub}
+integrations:
+  github:
+    - host: github.com
+      apiBaseUrl: https://api.github.com
+      # This is a Personal Access Token or PAT from GitHub. You can find out how to generate this token, and more information
+      # about setting up the GitHub integration here: https://backstage.io/docs/integrations/github/locations#configuration
+      # GitHub integration remains available for public catalog locations without a token.
+    ### Example for how to add your GitHub Enterprise instance using the API:
+    # - host: ghe.example.net
+    #   apiBaseUrl: https://ghe.example.net/api/v3
+    #   token: ${GHE_TOKEN}
+
+# AKS provisioning workflow configuration.
+provisioning:
+  # Tailscale policy repository used to grant jumpbox SSH access after a cluster
+  # is provisioned. Repository-driven rather than hardcoded so it can be pointed
+  # at a fork or renamed repo without a code change.
+  tailscale:
+    # SymphonyFS/tailscale is the live tailnet repo; SymphonySensa/tailscale
+    # is archived (docs/aks-workflow-audit.md, D7).
+    owner: SymphonyFS
+    repo: tailscale
+    baseBranch: main
+    policyPath: policy.hujson
+  github:
+    autoMerge:
+      # Read by the Backstage backend; this is separate from GitHub Actions env.
+      enabled: false
+      method: squash
+  aks:
+    productionSubmissions:
+      # prd/ppd AKS submissions stay blocked until the production gates
+      # (CIDR inventory, quota, approver groups, GitHub access) are verified.
+      enabled: false
+
+# Platform-owned target for developer workspaces. The backend resolves this
+# configuration; developers do not select an Azure subscription or AKS cluster.
+workspace:
+  provider: azure
+  cluster:
+    subscriptionId: ${CLOUDHUB_WORKSPACE_AKS_SUBSCRIPTION_ID:-}
+    resourceGroup: ${CLOUDHUB_WORKSPACE_AKS_RESOURCE_GROUP:-}
+    name: ${CLOUDHUB_WORKSPACE_AKS_CLUSTER_NAME:-}
+  namespace: ${CLOUDHUB_WORKSPACE_NAMESPACE:-cloudhub-workspaces}
+
+proxy:
+  ### Example for how to add a proxy endpoint for the frontend.
+  ### A typical reason to do this is to handle HTTPS and CORS for internal services.
+  # endpoints:
+  #   '/test':
+  #     target: 'https://example.com'
+  #     changeOrigin: true
+
+# Reference documentation http://backstage.io/docs/features/techdocs/configuration
+# Note: After experimenting with basic setup, use CI/CD to generate docs
+# and an external cloud storage when deploying TechDocs for production use-case.
+# https://backstage.io/docs/features/techdocs/how-to-guides#how-to-migrate-from-techdocs-basic-to-recommended-deployment-approach
+techdocs:
+  builder: 'local' # Alternatives - 'external'
+  generator:
+    runIn: 'docker' # Alternatives - 'local'
+  publisher:
+    type: 'local' # Alternatives - 'googleGcs' or 'awsS3'. Read documentation for using alternatives.
+
+auth:
+  # see https://backstage.io/docs/auth/ to learn about auth providers
+  environment: ${AUTH_ENVIRONMENT:-development}
+  providers:
+    microsoft:
+      development:
+        clientId: ${AUTH_MICROSOFT_CLIENT_ID}
+        clientSecret: ${AUTH_MICROSOFT_CLIENT_SECRET}
+        tenantId: ${AUTH_MICROSOFT_TENANT_ID}
+        domainHint: ${AUTH_MICROSOFT_TENANT_ID}
+        callbackUrl: ${AUTH_MICROSOFT_CALLBACK_URL:-http://localhost:7007/api/auth/microsoft/handler/frame}
+        signIn:
+          resolvers:
+            - resolver: symphonySensaEmail
+      production:
+        clientId: ${AUTH_MICROSOFT_CLIENT_ID}
+        clientSecret: ${AUTH_MICROSOFT_CLIENT_SECRET}
+        tenantId: ${AUTH_MICROSOFT_TENANT_ID}
+        domainHint: ${AUTH_MICROSOFT_TENANT_ID}
+        callbackUrl: ${AUTH_MICROSOFT_CALLBACK_URL:-https://cloudhub.symphonyai.cloud/api/auth/microsoft/handler/frame}
+        signIn:
+          resolvers:
+            - resolver: symphonySensaEmail
+
+enableExperimentalRedirectFlow: true
+scaffolder:
+  # see https://backstage.io/docs/features/software-templates/configuration for software template options
+
+catalog:
+  import:
+    entityFilename: catalog-info.yaml
+    pullRequestBranchName: backstage-integration
+  rules:
+    - allow: [User, Group, Component, System, API, Resource, Location, Template]
+  locations:
+    # Persona groups (Entra RBAC)
+    - type: file
+      target: ./examples/org.yaml
+      rules:
+        - allow: [User, Group]
+
+    # Platform CloudHub catalog
+    - type: file
+      target: ./catalog/components.yaml
+
+    # Backstage self-registration
+    - type: file
+      target: ./catalog-info.yaml
+
+  providers:
+    microsoftGraphOrg:
+      default:
+        target: https://graph.microsoft.com/v1.0
+        tenantId: ${AZURE_TENANT_ID}
+        clientId: ${AZURE_CLIENT_ID}
+        clientSecret: ${AZURE_CLIENT_SECRET}
+        user:
+          filter: accountEnabled eq true
+        group:
+          # Default to a broad, non-destructive filter for local development. In
+          # production, override this with a strict Entra group filter when the
+          # catalog should only ingest a specific approval group.
+          filter: ${CATALOG_APPROVER_GROUP_FILTER:-accountEnabled eq true}
+        schedule:
+          frequency: { minutes: 30 }
+          timeout: { minutes: 5 }
+          initialDelay: { seconds: 15 }
+
+# GPU Compute (GPU_COMPUTE_ACCESS) is gated on Entra ID group membership by
+# plugins/deployment-control-plane-backend/src/services/gpuAuthorizationService.ts.
+# That service reads access settings from environment variables.
+#   GPU_ENTRA_GROUP_ID   - Azure AD *object id* of the GPU user group (required;
+#                          access is denied for everyone if unset)
+#   GPU_ADMIN_GROUP_ID   - Azure AD object id of a future GPU admin group (optional)
+#   GPU_GRAPH_ENABLED    - "true" to verify membership via Microsoft Graph when
+#                          the caller's token did not already grant a GPU role.
+#                          Required whenever users sign in without a catalog
+#                          entity, since those tokens carry no group claims.
+#                          Graph uses the canonical AZURE_* platform SPN;
+#                          it needs GroupMember.Read.All + User.Read.All.
+#   Network allow-list comes from cloudhub.networks or CLOUDHUB_NETWORKS_JSON.
+#   GPU profiles must be named gpu-* (for example gpu-a100, gpu-h100).
+#
+# VM power control (start/deallocate) uses the same policy shape via
+# plugins/deployment-control-plane-backend/src/services/vmAuthorizationService.ts,
+# sharing group matching through EntraGroupMembershipResolver:
+#   VM_OPERATORS_ENTRA_GROUP_ID - Entra object id allowed to start/stop VMs
+#                                 (required; denies everyone if unset)
+#   ENTRA_GRAPH_ENABLED         - "true" for the Graph fallback; falls back to
+#                                 GPU_GRAPH_ENABLED.
+#
+# Test VM provisioning uses the same JSON-driven network pattern:
+#   cloudhub.networks             - map of named network profiles configured in
+#                                   app-config (preferred).
+#   CLOUDHUB_NETWORKS_JSON        - JSON map of named network profiles for
+#                                   runtime/appsettings injection.
+# Profile schema for each entry:
+#   subscriptionId, resourceGroup, vnetName, subnetName, region.
+# Required Test VM profile name:
+#   testvm
+# gpuAuthorization:
+#   entraGroupId: ${GPU_ENTRA_GROUP_ID}
+#   adminGroupId: ${GPU_ADMIN_GROUP_ID}
+#   graphEnabled: ${GPU_GRAPH_ENABLED}
+
+cloudhub:
+  networks: {}
+
+kubernetes:
+  serviceLocatorMethod:
+    type: 'multiTenant'
+  # No placeholder/local cluster is configured. Add only real, approved
+  # cluster connections through environment-specific configuration.
+  clusterLocatorMethods: []
+
+github:
+  organization: ${GITHUB_ORGANIZATION:-SymphonySensa}
+  repositoryProvisioning:
+    enabled: ${GITHUB_REPO_PROVISIONING_ENABLED:-false}
+    authorizedGroups:
+      - ${GITHUB_REPO_PROVISIONING_GROUP:-CloudHub-GitHub-RepoCreators}
+
+# see https://backstage.io/docs/permissions/getting-started for more on the permission framework
+permission:
+  # setting this to `false` will disable permissions
+  enabled: true

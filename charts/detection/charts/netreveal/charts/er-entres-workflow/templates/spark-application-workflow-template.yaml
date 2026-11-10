@@ -1,0 +1,127 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: {{ .Release.Name }}-spark-application-workflow-template
+  namespace: {{ include "er.namespace" . }}
+spec:
+  entrypoint: spark-application-template
+  arguments:
+    parameters:
+      - name: name
+      - name: mainClass
+      - name: mainApplicationFile
+      - name: springDefinition
+      - name: springProfiles
+  templates:
+    - name: spark-application-template
+      inputs:
+        parameters:
+          - name: name
+          - name: mainClass
+          - name: mainApplicationFile
+          - name: springDefinition
+          - name: springProfiles
+      resource:
+          action: create
+          successCondition: status.applicationState.state == COMPLETED
+          failureCondition: status.applicationState.state == FAILED
+          manifest: |
+            apiVersion: "sparkoperator.k8s.io/v1beta2"
+            kind: SparkApplication
+            metadata:
+              generateName: {{`{{inputs.parameters.name}}`}}-
+              namespace: {{ include "er.namespace" . }}
+              labels:
+                app: {{ .Release.Name }}-er-spark
+            spec:
+              type: Scala
+              mode: cluster
+              {{- if eq .Values.global.useImagePullSecrets "true" }}
+              imagePullSecrets:
+              - regcred
+              {{- end }}
+              image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.entresSpark.image.imageRepository }}:{{ .Values.entresSpark.image.imageTag }}"
+              imagePullPolicy: {{ .Values.entresSpark.imagePullPolicy }}
+              mainClass: {{`{{inputs.parameters.mainClass}}`}}
+              mainApplicationFile: "{{`{{inputs.parameters.mainApplicationFile}}`}}"
+              sparkVersion: "3.4.1"
+              deps:
+                jars:
+                  - local:///opt/entresSparkRoot/config/cdd-internal-solution.jar
+                  - local:///opt/entresRoot/entres/config/_config.jar
+              sparkConf:
+                spark.executor.extraClassPath: "local:///opt/entresSparkRoot/jdbc/postgresql-42.6.2.jar"
+                spark.driver.extraClassPath: "local:///opt/entresSparkRoot/jdbc/postgresql-42.6.2.jar"
+              arguments:
+                - classpath:{{`{{inputs.parameters.springDefinition}}`}}
+                - classpath:{{`{{inputs.parameters.springProfiles}}`}}
+                - dev
+              restartPolicy:
+                type: Never
+              volumes:
+                - name: er-config-volume
+                  persistentVolumeClaim:
+                    claimName: {{ include "generate.name.with.release.name" (list $ . "er-pvc-config") | quote }}
+{{- if .Values.global.kubePrometheusStackPresent }}
+              monitoring:
+{{ .Values.monitoring | toYaml | indent 16 }}
+{{- end }}
+              driver:
+                cores: {{ .Values.spark.driver.cores }}
+                memory: {{ .Values.spark.driver.memory }}
+                labels:
+                  version: 3.4.1
+                annotations:
+{{ .Values.spark.driver.annotations | toYaml | indent 18 }}
+                serviceAccount: spark-app
+                securityContext:
+                  runAsUser: 1200
+                  runAsGroup: 1200
+                javaOptions: "-Dlog4j.configuration=file:///opt/entresRoot/entres/log4j-config/log4j-{{`{{inputs.parameters.name}}`}}.xml"
+                env:
+                  - name: "numPartitions.default"
+                    value: {{ .Values.spark.properties.numPartitionsDefault | quote }}
+                  - name: "numPartitions.deltaProcessing"
+                    value: {{ .Values.spark.properties.numPartitionsDeltaProcessing | quote }}
+                volumeMounts:
+                  - name: er-config-volume
+                    mountPath: /opt/entresRoot/entres/config
+                    subPath: config
+                  - name: er-config-volume
+                    mountPath: /opt/entresRoot/entres/data
+                    subPath: data
+                  - name: er-config-volume
+                    mountPath: /opt/entresRoot/entres/reports
+                    subPath: reports
+                  - name: er-config-volume
+                    mountPath: /opt/entresRoot/entres/logs
+                    subPath: logs
+                  - name: er-config-volume
+                    mountPath: /opt/entresRoot/entres/log4j-config
+                    subPath: conf/logging
+              executor:
+                cores: {{ .Values.spark.executor.cores }}
+                instances: {{ .Values.spark.executor.instances }}
+                memory: {{ .Values.spark.executor.memory }}
+                memoryOverhead: {{ .Values.spark.executor.memoryOverhead }}
+                labels:
+                  version: 3.4.1
+                annotations:
+{{ .Values.spark.executor.annotations | toYaml | indent 18 }}
+                securityContext:
+                  runAsUser: 1200
+                  runAsGroup: 1200
+                javaOptions: "-Dlog4j.configuration=file:///opt/entresRoot/entres/log4j-config/log4j-spark-executors.xml"
+                volumeMounts:
+                  - name: er-config-volume
+                    mountPath: /opt/entresRoot/entres/config
+                    subPath: config
+                  - name: er-config-volume
+                    mountPath: /opt/entresRoot/entres/data
+                    subPath: data
+                  - name: er-config-volume
+                    mountPath: /opt/entresRoot/entres/logs
+                    subPath: logs
+                  - name: er-config-volume
+                    mountPath: /opt/entresRoot/entres/log4j-config
+                    subPath: conf/logging

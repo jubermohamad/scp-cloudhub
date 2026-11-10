@@ -1,0 +1,97 @@
+{{ $organisationUnits := include "get.organisation.units.list" . | fromJsonArray }}
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-minio
+  namespace: {{ .Values.global.namespace }}
+spec:
+  policyTypes:
+  - Ingress
+  - Egress
+  podSelector:
+    matchLabels:
+      app: minio
+  ingress:
+  # Allow from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace }}
+      podSelector:
+        matchLabels:
+          {{- if eq .Values.global.ingress.className "nginx" }}
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+          {{- else }}
+          app.kubernetes.io/name: nginx-ingress
+          {{- end }}
+    ports:
+    - protocol: TCP
+      port: 9000
+    - protocol: TCP
+      port: 9001
+    - protocol: TCP
+      port: 8022
+  # Allow cross-namespace MinIO communication
+  - from:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          app: minio
+    ports:
+    - protocol: TCP
+      port: 9000
+    - protocol: TCP
+      port: 9001
+    - protocol: TCP
+      port: 8022
+  {{- range .Values.minio.trustedClientNamespaces }}
+  # East-west access from trusted namespace {{ . }}
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ . }}
+    ports:
+    - protocol: TCP
+      port: 9000
+    - protocol: TCP
+      port: 9001
+    - protocol: TCP
+      port: 8022
+  {{- end }}
+  egress:
+  # Allow DNS for hostname resolution
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow access to Kubernetes API (needed for some operations)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: default
+      podSelector:
+        matchLabels:
+          component: kube-apiserver
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow MinIO to communicate with other MinIO instances
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          app: minio
+    ports:
+    - protocol: TCP
+      port: 9000
+    - protocol: TCP
+      port: 9001
+    - protocol: TCP
+      port: 8022

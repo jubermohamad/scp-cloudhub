@@ -1,0 +1,13 @@
+{{- if default false .Values.internalServices.zot.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot-config
+data:
+  config.json: |
+{{ include "model-store.zotConfigJson" . | nindent 4 }}
+{{- end }}

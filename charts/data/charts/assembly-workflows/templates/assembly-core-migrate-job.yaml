@@ -1,0 +1,61 @@
+# --- Schema migration job (rolls out WITH the release; assembly-core pods
+# gate on it via the wait-migrate init container in assembly-core.yaml) ---
+# Regular Job, NOT a Helm hook: hooks run before the chart's own
+# ConfigMaps/Secrets exist, which would deadlock a fresh install (same
+# reasoning as temporal-split.yaml's schema-migrate Job). As a normal
+# resource it's created after ConfigMaps/Secrets (Helm's built-in kind
+# ordering) and rolls out alongside the Deployment. Revision suffix
+# sidesteps Job spec immutability on upgrade; ttlSecondsAfterFinished
+# garbage-collects finished runs. Job's default parallelism=1 means only
+# one pod ever runs `alembic upgrade head` at a time, regardless of
+# .Values.userProject.replicas -- this is the actual fix for #1299.
+{{- if .Values.userProject.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aw.prefix" . }}-core-migrate-r{{ .Release.Revision }}
+  labels:
+    app: assembly-core
+    tier: backend
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 6
+  # 7200, NOT 600: helm4's --wait watcher held this release for its full
+  # 1500s timeout waiting on a Job that had already COMPLETED — the TTL
+  # reaped it before the watcher observed the completion, and from then on
+  # the watcher saw only "status: NotFound". A TTL shorter than the helm
+  # wait fails a working release; 7200 matches the platform convention.
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        app: assembly-core-migrate
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.scheduling" . | nindent 6 }}
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: migrate
+          image: {{ include "aw.image" (dict "registry" .Values.image.registry "repo" .Values.userProject.image.repository "default" "assembly-workflows-core" "tag" .Values.userProject.image.tag "globalTag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          command: ["alembic", "upgrade", "head"]
+          env:
+            - name: ASSEMBLY_EDITION
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: assembly-edition
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: database-url
+          resources:
+            {{- toYaml .Values.userProject.migration.resources | nindent 12 }}
+{{- end }}

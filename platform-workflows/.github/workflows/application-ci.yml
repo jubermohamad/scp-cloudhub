@@ -1,0 +1,252 @@
+name: application-ci
+
+on:
+  workflow_call:
+    inputs:
+      component-id:
+        required: true
+        type: string
+      build-adapter:
+        required: true
+        type: string
+      image-repository:
+        required: true
+        type: string
+      dockerfile:
+        required: false
+        default: Dockerfile
+        type: string
+      context:
+        required: false
+        default: .
+        type: string
+      run-deploy:
+        required: false
+        default: false
+        type: boolean
+      deploy-workflow:
+        required: false
+        default: deploy-aks-dev.yml
+        type: string
+      deploy-ref:
+        required: false
+        default: v1
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+  packages: read
+
+env:
+  ACR_NAME: symphonyfs
+
+concurrency:
+  group: ci-${{ inputs.component-id }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Standard CI
+    runs-on: ubuntu-latest
+    outputs:
+      image-repository: ${{ steps.image.outputs.image_repository }}
+      image-tag: ${{ steps.image.outputs.image_tag }}
+      image-digest: ${{ steps.image.outputs.image_digest }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve immutable image tag
+        id: image
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_SHA::12}"
+          echo "image_repository=${{ inputs.image-repository }}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        if: ${{ inputs.build-adapter == 'node' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up Python
+        if: ${{ inputs.build-adapter == 'python' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Java
+        if: ${{ inputs.build-adapter == 'java' || inputs.build-adapter == 'scala' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          case "${{ inputs.build-adapter }}" in
+            node)
+              if [ -f package-lock.json ]; then npm ci; elif [ -f package.json ]; then npm install; fi
+              ;;
+            python)
+              if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+              if [ -f pyproject.toml ]; then pip install .; fi
+              ;;
+            java)
+              if [ -f pom.xml ]; then mvn -B -q -DskipTests dependency:go-offline; fi
+              ;;
+            scala)
+              if [ -f build.sbt ]; then sbt update; fi
+              ;;
+            database)
+              echo "No dependency install required for database adapter"
+              ;;
+            *)
+              echo "Unsupported adapter: ${{ inputs.build-adapter }}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Lint
+        run: |
+          set -euo pipefail
+          case "${{ inputs.build-adapter }}" in
+            node)
+              if [ -f package.json ]; then npm run lint --if-present; fi
+              ;;
+            python)
+              if command -v ruff >/dev/null 2>&1; then ruff check .; else echo "ruff not installed; skipping"; fi
+              ;;
+            java)
+              if [ -f pom.xml ]; then mvn -B -DskipTests verify; fi
+              ;;
+            scala)
+              if [ -f build.sbt ]; then sbt scalafmtCheckAll; fi
+              ;;
+            database)
+              echo "No lint step for database adapter"
+              ;;
+          esac
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          case "${{ inputs.build-adapter }}" in
+            node)
+              if [ -f package.json ]; then npm run build --if-present; fi
+              ;;
+            python)
+              python -m compileall .
+              ;;
+            java)
+              if [ -f pom.xml ]; then mvn -B -DskipTests package; fi
+              ;;
+            scala)
+              if [ -f build.sbt ]; then sbt compile; fi
+              ;;
+            database)
+              echo "No compile step for database adapter"
+              ;;
+          esac
+
+      - name: Unit tests
+        run: |
+          set -euo pipefail
+          case "${{ inputs.build-adapter }}" in
+            node)
+              if [ -f package.json ]; then npm test -- --ci --passWithNoTests; fi
+              ;;
+            python)
+              if command -v pytest >/dev/null 2>&1; then pytest; else echo "pytest not installed; skipping"; fi
+              ;;
+            java)
+              if [ -f pom.xml ]; then mvn -B test; fi
+              ;;
+            scala)
+              if [ -f build.sbt ]; then sbt test; fi
+              ;;
+            database)
+              echo "No unit tests configured for database adapter"
+              ;;
+          esac
+
+      - name: Authenticate to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Build and push application image
+        id: build-image
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.image_repository }}
+          IMAGE_TAG: ${{ steps.image.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          image="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          docker build -f "${{ inputs.dockerfile }}" -t "$image" "${{ inputs.context }}"
+          docker push "$image"
+          digest="$(docker inspect --format='{{index .RepoDigests 0}}' "$image" | cut -d'@' -f2)"
+          echo "image_digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Container scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ steps.image.outputs.image_repository }}:${{ steps.image.outputs.image_tag }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      - name: Build provenance
+        run: |
+          set -euo pipefail
+          cat <<'JSON' > build-provenance.json
+          {
+            "componentId": "${{ inputs.component-id }}",
+            "repository": "${{ github.repository }}",
+            "branch": "${{ github.ref_name }}",
+            "commitSha": "${{ github.sha }}",
+            "workflowRunId": "${{ github.run_id }}",
+            "buildTimestamp": "${{ github.run_started_at }}",
+            "imageRepository": "${{ steps.image.outputs.image_repository }}",
+            "imageTag": "${{ steps.image.outputs.image_tag }}",
+            "imageDigest": "${{ steps.build-image.outputs.image_digest }}",
+            "buildAdapter": "${{ inputs.build-adapter }}",
+            "workflowRef": "${{ github.workflow_ref }}"
+          }
+          JSON
+
+      - name: Upload provenance artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: provenance-${{ inputs.component-id }}-${{ github.run_id }}
+          path: build-provenance.json
+
+  deploy:
+    if: ${{ inputs.run-deploy == true && github.event_name == 'push' }}
+    needs: ci
+    uses: ./.github/workflows/deploy-aks-dev.yml
+    with:
+      component-id: ${{ inputs.component-id }}
+      image-repository: ${{ needs.ci.outputs.image-repository }}
+      image-tag: ${{ needs.ci.outputs.image-tag }}
+      image-digest: ${{ needs.ci.outputs.image-digest }}
+      source-branch: ${{ github.ref_name }}
+    secrets: inherit

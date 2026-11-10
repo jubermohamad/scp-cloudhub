@@ -1,0 +1,46 @@
+{
+  "name": "@internal/plugin-deployment-control-plane-backend",
+  "version": "0.1.0",
+  "private": true,
+  "backstage": {
+    "role": "backend-plugin"
+  },
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "start": "backstage-cli package start",
+    "build": "backstage-cli package build",
+    "lint": "backstage-cli package lint",
+    "test": "backstage-cli package test",
+    "clean": "backstage-cli package clean"
+  },
+  "dependencies": {
+    "@1password/sdk": "^0.5.0",
+    "@azure/arm-compute": "^22.0.0",
+    "@azure/arm-containerservice": "^25.2.0",
+    "@azure/arm-resourcegraph": "^4.2.1",
+    "@azure/identity": "^4.0.0",
+    "@backstage/backend-plugin-api": "^1.10.1",
+    "@internal/plugin-platform-common": "^0.1.0",
+    "@kubernetes/client-node": "^1.0.0",
+    "@mui/icons-material": "^5.0.0",
+    "@mui/material": "^5.18.0",
+    "@mui/styles": "^5.18.0",
+    "@octokit/auth-app": "^7.0.0",
+    "@octokit/rest": "^20.1.1",
+    "express": "^4.21.2",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "@backstage/cli": "^0.36.6",
+    "@jest/globals": "^30.2.0",
+    "@mui/icons-material": "^5.0.0",
+    "@mui/material": "^5.18.0",
+    "@mui/styles": "^5.18.0",
+    "@types/supertest": "^7.2.0",
+    "supertest": "^7.2.2"
+  },
+  "files": [
+    "dist"
+  ]
+}

@@ -1,0 +1,58 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "config": {
+            "type": "object",
+            "properties": {
+                "azureDeploymentName": {
+                    "type": "string"
+                },
+                "azureDeploymentNameSupervisor": {
+                    "type": "string"
+                },
+                "azureEmbeddingsDeployment": {
+                    "type": "string"
+                },
+                "azureEmbeddingsEndpoint": {
+                    "type": "string"
+                },
+                "azureEmbeddingsModel": {
+                    "type": "string"
+                },
+                "azureOpenAIApiVersion": {
+                    "type": "string"
+                },
+                "azureOpenAIApiVersionSupervisor": {
+                    "type": "string"
+                },
+                "azureOpenAIEndpoint": {
+                    "type": "string"
+                },
+                "openAIApiVersion": {
+                    "type": "string"
+                }
+            }
+        },
+        "fullnameOverride": {
+            "type": "string"
+        },
+        "nameOverride": {
+            "type": "string"
+        },
+        "secrets": {
+            "type": "object",
+            "properties": {
+                "azureEmbeddingsKey": {
+                    "type": "string"
+                },
+                "azureOpenAIKey": {
+                    "type": "string"
+                },
+                "tavilyApiKey": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

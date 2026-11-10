@@ -1,0 +1,239 @@
+{{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+
+{{ $currentScope := .}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-ui-logs-{{ $i }}
+  labels:
+    resource/type: pv
+    {{- with $currentScope }}
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+    {{- end }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "nrUi.pvcApplicationLogsStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "nr-ui") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "ui-logs" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/logs
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/logs
+  {{- end }}
+{{- end }}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-ui-app-server-logs-{{ $i }}
+  labels:
+    resource/type: pv
+    {{- with $currentScope }}
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+    {{- end }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "nrUi.pvcServerLogsStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "nr-ui") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "ui-app-server-logs" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/server-logs
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/server-logs
+  {{- end }}
+{{- end -}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-ui-data-{{ $i }}
+  labels:
+    resource/type: pv
+    {{- with $currentScope }}
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+    {{- end }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "nrUi.pvcDataStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "nr-ui") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "ui-data" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/data
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/data
+  {{- end }}
+{{- end -}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-ui-conf-wlm-{{ $i }}
+  labels:
+    resource/type: pv
+    {{- with $currentScope }}
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+    {{- end }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "nrUi.pvcConfWlmStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "nr-ui") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "ui-conf-wlm" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/conf/wlm
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/conf/wlm
+  {{- end }}
+{{- end -}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-ui-conf-fts-{{ $i }}
+  labels:
+    resource/type: pv
+    {{- with $currentScope }}
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+    {{- end }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "nrUi.pvcDataStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "nr-ui") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "ui-conf-fts" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/conf/fts
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/conf/fts
+  {{- end }}
+{{- end -}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-ui-conf-saml-{{ $i }}
+  labels:
+    resource/type: pv
+    {{- with $currentScope }}
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+    {{- end }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "nrUi.pvcConfSamlStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "nr-ui") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "ui-conf-saml" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/conf/saml
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/nr-ui-{{ $i }}/conf/saml
+  {{- end }}
+{{- end -}}
+
+{{- end }}

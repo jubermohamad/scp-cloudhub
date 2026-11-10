@@ -1,0 +1,52 @@
+# username is retrieved from the environment with the format SYMPHONYFS_USERNAME
+# password is retrieved from the environment with the format SYMPHONYFS_PASSWORD
+repositories:
+  - name: tailscale
+    url: https://pkgs.tailscale.com/helmcharts
+
+helmDefaults:
+  timeout: 1500
+  wait: false  # 'true' will cause deadlock for NR with helm waiting for override-volume-claim indefinitely
+               # more: https://netreveal.atlassian.net/browse/FCENGX-3005
+  kubeContext: aks-UPDATE_ME_NC_SUFFIX
+
+---
+
+# The environments section to define the reusable variables
+environments:
+  default:
+    values:
+      - clusterName: '{{ requiredEnv "INSTANCE_NAME" }}'
+      - appName: '{{ requiredEnv "APP_NAME" }}'
+      - namespace: '{{ requiredEnv "APP_NAME" }}'
+      - helm_chart_version: '{{ env "CLOUDHUB_HELM_CHART_VERSION" }}'
+
+---
+
+releases:
+
+  - name: tailscale-operator
+    namespace: "{{ .Values.namespace }}"
+    chart: tailscale/tailscale-operator
+    version: "{{ .Values.helm_chart_version }}"
+    values:
+      - oauth:
+          clientId: '{{ env "CLOUDHUB_OAUTH_CLIENT_ID" }}'
+          clientSecret: '{{ env "CLOUDHUB_OAUTH_CLIENT_SECRET" }}'
+        operatorConfig:
+          defaultTags:
+            - "tag:k8s-operator-{{ .Values.clusterName }}"
+
+  - name: tailscale-on-scp
+    namespace: "{{ .Values.namespace }}"
+    chart: ../../templated-overrides/raw-yaml-charts/tailscale-on-scp
+    values:
+      - clusterName: "{{ .Values.clusterName }}"
+      - lbIp: 'UPDATE_ME' # read -p "Enter the CONTEXT: " CONTEXT; kubectl --context="${CONTEXT}" -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}'; echo;
+      - tailnets: # read -p "Enter the URL: " URL; dig +short "$(echo -n "${URL}" | sed -E 's|^[a-z]+://||; s|/.*||; s|:.*||')"; echo;
+          - url: "demo.invhub.fseng.net"
+            ip: "10.232.0.10"
+          - url: "dev.invhub.fseng.net"
+            ip: "10.232.65.10"
+    needs:
+      - "tailscale-operator"

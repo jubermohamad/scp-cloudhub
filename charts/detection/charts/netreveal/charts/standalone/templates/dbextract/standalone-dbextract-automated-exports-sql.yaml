@@ -1,0 +1,16 @@
+{{- if or .Values.dbextract.job.enableHourlyJob .Values.dbextract.job.enableDailyJob .Values.dbextract.job.enableWeeklyJob .Values.dbextract.job.enableMonthlyJob }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "config.map.standalone.dbextract.automatedexport.sql.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ include "config.map.standalone.dbextract.automatedexport.sql.name" . }}"
+data:
+  automated_exports_tableVerify.sql: |
+  {{- tpl ( .Files.Get "scripts/dbextract/sql/automated_exports_tableVerify.sql" ) . | nindent 4 }}
+  automated_exports_orgunitList.sql: |
+  {{- tpl ( .Files.Get "scripts/dbextract/sql/automated_exports_orgunitList.sql" ) . | nindent 4 }}
+  automated_exports_exportList.sql: |
+  {{- tpl ( .Files.Get "scripts/dbextract/sql/automated_exports_exportList.sql" ) . | nindent 4 }}
+{{- end }}

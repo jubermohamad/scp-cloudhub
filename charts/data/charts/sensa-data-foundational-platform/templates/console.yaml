@@ -1,0 +1,90 @@
+{{- if .Values.console.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "prism.fullname" . }}-console
+  labels:
+    app: prism-console
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: prism-console
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.console.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "prism.fullname" . }}-console
+  labels:
+    app: prism-console
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.console.replicas }}
+  selector:
+    matchLabels:
+      app: prism-console
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: prism-console
+        {{- include "prism.labels" . | nindent 8 }}
+      {{- if or .Values.console.overrideNginxConf .Values.podAnnotations }}
+      annotations:
+        {{- if .Values.console.overrideNginxConf }}
+        # Roll the pods when the proxy config changes — nginx reads it once at
+        # start, so a ConfigMap edit alone would leave the old routes serving.
+        checksum/nginx-conf: {{ include (print $.Template.BasePath "/console-nginx-configmap.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      {{- include "prism.imagePullSecrets" . | nindent 6 }}
+      {{- include "prism.scheduling" . | nindent 6 }}
+      containers:
+        - name: console
+          image: {{ include "prism.image" (dict "ctx" $ "name" "console" "tag" .Values.console.image.tag "registry" .Values.console.image.registry "repository" .Values.console.image.repository) }}
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.console.image.pullPolicy) }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.console.port }}
+          {{- with .Values.console.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.console.resources | nindent 12 }}
+          # INVENTED (the raw manifest has no probes): static nginx, so serving
+          # the SPA entrypoint is the whole readiness contract.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+            failureThreshold: 3
+          {{- if .Values.console.overrideNginxConf }}
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+              readOnly: true
+          {{- end }}
+      {{- if .Values.console.overrideNginxConf }}
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: {{ include "prism.fullname" . }}-console-nginx
+      {{- end }}
+{{- end }}

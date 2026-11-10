@@ -1,0 +1,30 @@
+{
+  "name": "aks-scheduler",
+  "version": "1.0.0",
+  "description": "Azure Function that reads AKS stop/start schedules from Backstage and executes them via Azure ARM APIs.",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc -w",
+    "start": "func start",
+    "prestart": "npm run build",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@azure/arm-containerservice": "^21.1.0",
+    "@azure/functions": "^4.5.0",
+    "@azure/identity": "^4.4.1",
+    "@mui/icons-material": "^5.0.0",
+    "@mui/material": "^5.18.0",
+    "@mui/styles": "^5.18.0"
+  },
+  "devDependencies": {
+    "@mui/icons-material": "^5.0.0",
+    "@mui/material": "^5.18.0",
+    "@mui/styles": "^5.18.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

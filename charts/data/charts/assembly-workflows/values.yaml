@@ -1,0 +1,990 @@
+global:
+  imagePullPolicy: Always   # platform default; the umbrella global overrides it
+  environment: production
+  labels: {}
+  # Optional mirror registry for the BUNDLED third-party infra images (postgres,
+  # redis, keycloak, temporal*, minio/mc, apisix). When set, aw.infraImage swaps
+  # each image's registry host for this one (repo path + tag preserved) so an
+  # air-gapped / SCP cluster pulls everything from a private ACR. Empty (default)
+  # leaves every third-party ref byte-for-byte unchanged. First-party app images
+  # use image.registry, not this.
+  imageRegistry: ""
+
+nameOverride: ""
+
+image:
+  registry: assemblyrgacr.azurecr.io
+  # Chart-wide default tag; any <service>.image.tag overrides it for that
+  # service. CI/deploy scripts override a whole release with a single
+  # --set image.tag=<tag> instead of ten per-service flags.
+  tag: release-v1.0.0-0b3a19ce2
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  pullSecrets: []
+  createPullSecret:
+    enabled: false
+    name: acr-secret
+    registry: assemblyrgacr.azurecr.io
+    username: ""
+    # Registry pull token. Intentionally NOT declared here so we never ship an
+    # empty/placeholder password in config. Supply it per-deploy (see
+    # values-dev.yaml); imagepullsecret.yaml `required`s it when enabled.
+
+# Worker Versioning (Build IDs) — playbook 39. SINGLE chart-wide source of truth
+# for ALL main-queue workflow runners (agents web, agentsWorker,
+# agentsSubflowWorker). When enabled, each advertises its build id and the
+# Temporal server pins workflow executions to a compatible build → determinism
+# by ROUTING, which lets us retire the per-run workflow.patched() version markers
+# (~13-20% of per-workflow events/PG txns). Multi-revision deployments are
+# orthogonal (graph = data); the shared task queue is preserved.
+#
+# CRITICAL: every main-queue runner MUST advertise the SAME build id, or build-id
+# routing fragments. That is why this is global, not per-deployment. buildId
+# defaults to the release image.tag (unique per build); set it explicitly only to
+# pin a build across a tag change. Activity-only workers (code-worker) are left
+# unversioned on purpose. Keep OFF until a full blue/green has been validated on
+# the perf cluster (playbook 39 §7).
+workerVersioning:
+  enabled: false
+  buildId: ""  # falls back to image.tag
+
+rollout:
+  # When true, chart-managed rolling Deployments use maxSurge=0 so Kubernetes
+  # frees old pod capacity before scheduling replacement pods. Keep false by
+  # default; constrained clusters such as assembly-aks-dev opt in.
+  noSurge: false
+
+# ---------------------------------------------------------------------------
+# Built-in infrastructure — set enabled: true for a self-contained install.
+# When enabled, externalInfra URLs are auto-resolved to same-namespace DNS.
+# ---------------------------------------------------------------------------
+infra:
+  enabled: false
+  nodeSelector: {}
+  tolerations: []
+  # Connection pooler in front of the bundled Postgres. OFF by default: pool_mode
+  # transaction forbids session state, so a service only benefits after its DSN
+  # disables asyncpg statement caching. Enabling this creates the pooler; repointing
+  # traffic at it is a separate, per-service decision. (demo runs one)
+  pgbouncer:
+    enabled: false
+    image: edoburu/pgbouncer:v1.25.1-p0
+    replicas: 1
+    poolMode: transaction
+    maxClientConn: 1000
+    defaultPoolSize: 25
+    extraEnv: []
+    resources:
+      requests: { memory: 64Mi, cpu: 25m }
+      limits: { memory: 256Mi, cpu: 500m }
+  postgres:
+    # The Secret holding these credentials. Unqualified `postgres-secret`
+    # collides with the SRI platform's own consumer-credentials Secret when
+    # both charts install into one namespace — see aw.postgresSecretName.
+    secretName: postgres-secret
+    # The role the Assembly components present. `assembly` is the bundled
+    # server's own role and also the platform's role name, so the default
+    # is right for both; it is a value so a shared server can differ.
+    username: assembly
+    # bundled Postgres — set false to use the platform's
+    enabled: true
+    image: postgres:16-alpine
+    # Application database name. A knob rather than a constant because an existing
+    # install's data lives under whatever name it was created with — the demo cluster
+    # uses assembly_db — and pointing a deploy at the wrong name silently comes up
+    # against an EMPTY database instead of failing.
+    databaseName: workflows_db
+    storage: 20Gi
+    storageClass: managed-csi
+    password: ""
+    resources:
+      requests: { memory: 1Gi, cpu: 250m }
+      limits: { memory: 3Gi, cpu: "2" }
+  redis:
+    # bundled Redis — set false to use the platform's
+    enabled: true
+    image: redis:7-alpine
+    resources:
+      requests: { memory: 256Mi, cpu: 50m }
+      limits: { memory: 1Gi, cpu: 500m }
+    # Cap redis's dataset memory (maxmemory) BELOW the container limit so
+    # hitting it returns
+    # OOM errors to producers (which degrade gracefully — e.g. the trace
+    # ingest stream falls back to direct PG writes) instead of the kernel
+    # OOMKilling redis. Measured on tierA: a 512Mi-limit redis with no
+    # maxmemory was OOMKilled 9x in 12h under perf burst, and every death
+    # stalled all worker redis ops ~24s inside workflow ticks.
+    maxmemory: 768mb
+  keycloak:
+    # bundled Keycloak — set false to use the platform's realm
+    enabled: true
+    image: quay.io/keycloak/keycloak:23.0
+    adminPassword: ""
+    resources:
+      requests: { memory: 256Mi, cpu: 30m }
+      limits: { memory: 1Gi, cpu: "1" }
+    # InvHub "flows integration": provision the public ROPC client + realm
+    # service user that InvHub's copilot uses to call assembly
+    # (client_id=workflow-canvas + invhub_service_user, password shared with
+    # InvHub's `flows` Secret via secrets.invhubServiceUserPassword). Applied on
+    # BOTH paths: injected into the realm seed for fresh installs, AND
+    # converged onto already-imported realms by the keycloak-flows-integration
+    # post-install/post-upgrade Job -- Keycloak's --import-realm is a NO-OP
+    # once the realm exists, so the seed alone never fixes a live instance.
+    # Requires infra.enabled=true (the in-chart Keycloak).
+    flowsIntegration:
+      enabled: false
+      clientId: workflow-canvas
+      serviceUser: invhub_service_user@symphonyai.com
+      # Browser origins Keycloak itself should CORS-allow on the token
+      # endpoint (the get-token POST is browser-direct from InvHub).
+      webOrigins: []
+      # Also re-assert the seeded assembly-platform-frontend client's
+      # redirectUris/webOrigins/post-logout URIs (derived from
+      # apisix.tls.publicHostname) on every upgrade -- the recurring drift
+      # that otherwise needs manual kcadm fixups on existing realms.
+      convergeSeedClients: true
+  temporal:
+    # bundled Temporal — Assembly-specific, no platform peer, keep true
+    enabled: true
+    # Temporal's web UI. OFF by default and never routed through APISIX — it carries no
+    # auth of its own, so exposing it exposes every workflow's inputs. Reach it with
+    # `kubectl port-forward svc/temporal-ui 8080:8080`. (demo runs one)
+    ui:
+      enabled: false
+      image: temporalio/ui:2.48.3
+      extraEnv: []
+      resources:
+        requests: { memory: 64Mi, cpu: 25m }
+        limits: { memory: 256Mi, cpu: 500m }
+    image: temporalio/auto-setup:1.29.6
+    splitImage: temporalio/server:1.30.4
+    adminToolsImage: temporalio/admin-tools:1.30.4
+    numHistoryShards: 512
+    namespaceRetention: 72h
+    mode: auto-setup
+    dynamicConfig:
+      enabled: true
+    resources:
+      requests: { memory: 512Mi, cpu: 50m }
+      limits: { memory: 2Gi, cpu: "2" }
+    split:
+      frontend:
+        replicas: 1
+        resources:
+          requests: { memory: 256Mi, cpu: 200m }
+          limits: { memory: 512Mi, cpu: "1" }
+      history:
+        replicas: 8
+        resources:
+          requests: { memory: 256Mi, cpu: 300m }
+          limits: { memory: 1Gi, cpu: "2" }
+      matching:
+        replicas: 2
+        resources:
+          requests: { memory: 256Mi, cpu: 200m }
+          limits: { memory: 512Mi, cpu: "1" }
+      worker:
+        replicas: 1
+        resources:
+          requests: { memory: 256Mi, cpu: 100m }
+          limits: { memory: 512Mi, cpu: 500m }
+      postgres:
+        # Keep maxIdleConns == maxConns: with idle < max, every burst beyond
+        # the idle cap pays connection setup/teardown churn against postgres.
+        # Measured on tierA (window 3): 40/10 pools made history's
+        # CreateWorkflowExecution average 262ms during a C=90 start burst
+        # (pool-wait, not SQL — statements run in 1-6ms); 80/80 brought raw
+        # StartWorkflowExecution p50 505ms -> 175ms and campaign p99 -35s -> 13s.
+        maxConns: 40
+        maxIdleConns: 40
+        visibility:
+          maxConns: 16
+          maxIdleConns: 16
+  postgresTemporal:
+    enabled: false
+    image: postgres:16-alpine
+    storage: 64Gi
+    storageClass: managed-csi-premium
+    # Password is intentionally NOT declared here (no empty default in config):
+    # templates fall back to infra.postgres.password via `| default`, which is
+    # `required` when infra.enabled=true. Set infra.postgresTemporal.password
+    # in an overlay only to give the Temporal Postgres a distinct password.
+    # Durable by default: synchronous_commit=off risks losing ACKED workflow
+    # state on a postgres crash. Perf overlays opt back in explicitly.
+    syncCommitOff: false
+    sharedBuffers: "2GB"
+    # Preload pg_stat_statements (requires restart to change). Run
+    # CREATE EXTENSION pg_stat_statements; once after enabling. Off by
+    # default; perf/diagnostic overlays opt in.
+    pgStatStatements: false
+    resources:
+      requests: { memory: 1Gi, cpu: 500m }
+      limits: { memory: 8Gi, cpu: "4" }
+    # Optional: pin postgres-temporal to a dedicated nodepool for I/O isolation.
+    # When set, this overrides infra.nodeSelector/tolerations for this pod only.
+    # Example (dedicated infra-pg nodepool):
+    #   nodeSelector: { workload: infra-pg }
+    #   tolerations: [{ key: workload, value: infra-pg, effect: NoSchedule }]
+    nodeSelector: {}
+    tolerations: []
+
+# ---------------------------------------------------------------------------
+# MinIO — in-cluster S3-compatible blob store for the file-search node and
+# resource file storage (assembly-core FILE_SEARCH_S3_* -> http://minio:9000).
+# Disabled by default; enable for self-contained installs. Point assembly-core
+# at managed object storage where available instead.
+# ---------------------------------------------------------------------------
+minio:
+  enabled: false
+  # Default :latest ON PURPOSE: pinning an older version here would DOWNGRADE existing
+  # :latest installs, and minio refuses to start on newer on-disk data (xl-meta). The
+  # values-scp overlay pins specific versions for FRESH SCP installs (no existing data),
+  # which is where the no-:latest rule applies.
+  image: minio/minio:latest
+  mcImage: minio/mc:latest
+  rootUser: minioadmin
+  rootPassword: minioadmin123         # override in non-dev; core rejects defaults when ENVIRONMENT=prod/staging
+  bucket: assembly-project-files      # must match assembly-core FILE_SEARCH_BUCKET
+  storageClass: managed-csi
+  storage: 20Gi
+  resources:
+    requests: { memory: 256Mi, cpu: 100m }
+    limits: { memory: 1Gi, cpu: "1" }
+
+# ---------------------------------------------------------------------------
+# External infrastructure — used when infra.enabled is false.
+# When infra.enabled is true, these are auto-populated.
+# ---------------------------------------------------------------------------
+externalInfra:
+  postgres:
+    url: ""
+  redis:
+    url: ""
+  keycloak:
+    serverUrl: ""
+    realm: assembly-platform
+    # SAME-REALM SHIM: the frontend image BAKES realm "assembly-platform" into
+    # its JS (Vite build-time env; the chart's runtime VITE_ vars are ignored by
+    # current images). To serve assembly from a DIFFERENT realm (e.g. the
+    # platform's shared realm), set frontendRealmShim to the baked realm name:
+    # apisix then rewrites /realms/<shim>/* -> /realms/<realm>/* so the baked
+    # paths land on the real realm. The real realm needs an
+    # "assembly-platform-frontend" public client with this host's redirect URIs.
+    # Empty = no shim (realm must equal the baked name).
+    frontendRealmShim: ""
+    publicUrl: "/auth"
+    # Expected token issuer (iss) override for an EXTERNAL Keycloak that pins its
+    # hostname. Upstream computes https://<apisix.tls.publicHostname>/realms/<realm>,
+    # which is right only for the bundled Keycloak (issuer follows the request
+    # host). A pinned external Keycloak issues iss=https://<its-own-host>/realms/…
+    # regardless of which host the login came through; set that full issuer URL
+    # here. Empty keeps the upstream computation. (Candidate to upstream.)
+    expectedIssuer: ""
+    clientId: assembly-platform-backend
+  temporal:
+    host: ""
+    namespace: default
+    agentBuilderHost: ""
+    agentBuilderNamespace: agent-builder
+
+# ---------------------------------------------------------------------------
+# Per-user workflow concurrency/daily quotas (Redis-backed). The CODE default
+# is true, which silently rate-limited every helm cluster to 10-concurrent /
+# 100-daily per standard user (429s that look like capacity problems).
+# Self-hosted default is OFF; multi-tenant deployments (e.g. demo) opt in.
+# ---------------------------------------------------------------------------
+workflowResourceLimits:
+  enabled: false
+
+# Run agent nodes as durable AgentNodeWorkflow child workflows (per-LLM-call/tool
+# retries with backoff, isolation). Default on; set false to force the monolithic
+# activity path. Iteration (while-loop) agent nodes always use the activity path
+# until AgentNodeWorkflow gains an iteration loop.
+agentNodeWorkflow:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Render-time values validation (templates/validate.yaml).
+# allowPlaceholders=true skips ALL checks — for render-only workflows
+# (helm template smoke tests, docs) against the committed values files,
+# which ship sanitized REDACTED_* placeholders. Never set it on a real
+# install/upgrade: deploying placeholders crashes services (fernet) and an
+# upgrade overwrites the cluster's real platform-secrets with them.
+# ---------------------------------------------------------------------------
+validation:
+  allowPlaceholders: false
+
+# ---------------------------------------------------------------------------
+# Secrets — inline or reference existing
+# ---------------------------------------------------------------------------
+secrets:
+  existingSecret: ""
+  name: platform-secrets
+  databaseUrl: ""
+  jwtSecret: ""
+  fernetKey: ""
+  internalServiceApiKey: ""
+  llmGateway:
+    userKeysInternalApiKey: ""
+    userKeysInternalApiKeyAgents: ""
+    userKeysInternalApiKeyUserProject: ""
+    userKeysInternalApiKeyAutonomousExecutor: ""
+    userKeysInternalApiKeyWorkspaceRuntimeApi: ""
+    adminKey: ""
+    adminKeyAutonomousExecutor: ""
+  sandboxInternalServiceApiKey: ""
+  workspaceManagerInternalServiceApiKey: ""
+  azureOpenai:
+    apiKey: ""
+    endpoint: ""
+  azureFoundry:
+    url: ""
+    apiKey: ""
+    # Separate Anthropic-compatible endpoint for serving Claude models via Azure Foundry.
+    # When set, the llm-gateway routes "claude*" models here (proxy.py) instead of the
+    # OpenAI-style azureFoundry.url. Leave blank if you don't serve Claude via Foundry.
+    anthropicEndpoint: ""
+  anthropicApiKey: ""
+  # Tavily API key for the agent-node built-in web_search tool (provider: tavily).
+  # Leave blank to disable web_search; when set it is injected as TAVILY_API_KEY
+  # on the engine + agent workers via aw.agentEnv.
+  # Confidential-client secret for KEYCLOAK_BACKEND_CLIENT_ID. Only needed when the
+  # backend client is confidential rather than public (demo's is).
+  keycloakBackendClientSecret: ""
+  # S3 credentials assembly-core uses for file-search/resource storage. Default to the
+  # bundled MinIO's root credentials when minio.enabled; set explicitly to point at an
+  # external S3/bucket instead.
+  fileSearch:
+    s3AccessKey: ""
+    s3SecretKey: ""
+  tavilyApiKey: ""
+  # Password of the InvHub flows-integration service user
+  # (infra.keycloak.flowsIntegration). MUST equal the password in InvHub's
+  # `flows` Secret -- it is a shared ROPC contract, so it is never generated
+  # here (an auto-generated value would silently diverge from InvHub's copy).
+  # Stored in the chart-managed keycloak-secret (NOT platform-secrets), so
+  # secrets.existingSecret users are unaffected. Required (fail-closed) when
+  # flowsIntegration.enabled=true.
+  invhubServiceUserPassword: ""
+
+# ---------------------------------------------------------------------------
+# Platform configuration
+# ---------------------------------------------------------------------------
+platform:
+  edition: workflows
+  authMode: keycloak
+  apiUrl: ""
+  features:
+    sandbox: true
+    workbench: false
+    workbenchAssistant: false
+    workflowDeployments: false
+  disabledWorkflowNodeTypes: "deploy_app,visual_verification"
+
+# ---------------------------------------------------------------------------
+# APISIX Gateway
+# ---------------------------------------------------------------------------
+# Single knob for long-running workflow SSE/WebSocket streams. Drives BOTH
+# the engine's ASSEMBLY_WORKFLOW_STREAM_TIMEOUT_SECONDS and the APISIX read
+# timeout on the /api/agents/* routes — the gateway must outlive the stream,
+# or long event gaps die at the proxy with a 504 while the engine keeps
+# streaming into the void.
+workflowStreamTimeoutSeconds: 900
+
+# ---------------------------------------------------------------------------
+# Agent-builder trace retention. The engine garbage-collects traces on ~1% of
+# start_trace calls (app/api/v1/traces/recording.py), deleting any trace older
+# than maxAgeHours and trimming to the newest maxCount rows. The CODE defaults
+# (24h / 1000) silently aged out traces after a day, surfacing as 404s in the
+# Traces UI. Traces are Postgres-backed, so longer retention only costs disk.
+# Read once at import — changes require an engine pod restart, not a rebuild.
+# ---------------------------------------------------------------------------
+traces:
+  maxAgeHours: 168   # 7 days
+  maxCount: 50000
+
+# Hard cap on a files resource's bytes when a workflow node resolves a
+# resource's `content` field. Enforced on the assembly-engine worker pods
+# (aw.agentEnv, below) against the actual downloaded blob — assembly-core's
+# /download-url never loads the bytes itself, so this is the only cap on
+# this path. Matches the code default (20 MiB); raise it if a deployment's
+# worker pods (agentsWorker/agentsCodeWorker/agentsSubflowWorker) have the
+# memory headroom for bigger files. Quoted: an unquoted 8-digit int here
+# gets unmarshaled as float64 and rendered in scientific notation
+# ("2.097152e+07") by `quote` in the template, which Python's int() cannot
+# parse.
+resourceFileContentMaxBytes: "20971520"  # 20 MiB
+
+# ---------------------------------------------------------------------------
+# SSRF-guard allowlist (assembly_shared.url_validation). This is NOT a general
+# allowlist: PUBLIC hosts already pass with no configuration. It only exempts
+# targets that resolve into private space -- in-cluster Services, and public
+# names with private addresses (a split-horizon zone that resolves to RFC1918
+# from inside the cluster) -- from the private/internal-IP block when api_request /
+# webhook nodes validate an outbound URL.
+#
+# Comma-separated, case-insensitive, ports NEVER part of the match. Two forms:
+#   api.dev-copilot.svc.cluster.local   exact hostname
+#   *.dev-assembly.svc.cluster.local    any subdomain -- but NOT the apex, and
+#                                       matching is on a label boundary, so
+#                                       evil-dev-assembly.svc.cluster.local
+#                                       does not match. `.suffix` is a synonym.
+# Prefer a wildcard over enumerating services: each new exact host otherwise
+# costs an edit plus a rollout of every consumer.
+#
+# A wildcard never opens the platform's OWN infrastructure (postgres, pgbouncer,
+# redis, keycloak, temporal, minio, apisix, frontend, the assembly-* services,
+# mcp-*) even when the suffix would match -- those are unauthenticated from
+# inside the namespace. Naming one exactly still works, as a deliberate
+# override. A bare "*" is refused (logged and ignored), so the widest grant is
+# always scoped to a domain.
+#
+# `allowHosts` is the committed baseline: it belongs in the overlay, where a PR
+# diff shows exactly which domains a cluster opens. `extraAllowHosts` is merged
+# with it (comma-joined) for entries that should NOT live in this repo -- a
+# customer's internal zone on an SCP install -- or that change without a release.
+# Point it at a 1Password reference and `vals eval` resolves it at deploy:
+#
+#   extraAllowHosts: ref+op://<vault>/Assembly/<section>/urlValidation__extraAllowHosts
+#
+# values-dev.yaml and values-invhub-dev.yaml already wire this (fields exist and
+# are empty -> resolve to "" -> no env, fail-closed). Opening a domain is then a
+# 1Password edit + re-run of deploy.yml. vals fails CLOSED on a MISSING field, so
+# create the field before wiring a new target's reference, and never delete one
+# while an overlay references it -- empty is the "off" state. See docs/deploy.md.
+#
+# Rendered once into ASSEMBLY_URL_VALIDATION_ALLOW_HOSTS via aw.urlValidationEnv
+# on the engine + all three workers (aw.agentEnv), plus mcp-hub and llm-gateway,
+# which call the same validator. Both empty = fail-closed AND no env emitted, so
+# the default render is unchanged. Do NOT also set this env via extraEnv -- a
+# duplicated env name in one container is rejected by server-side apply
+# (guarded by tests/test_no_duplicate_container_env.py).
+# ---------------------------------------------------------------------------
+urlValidation:
+  allowHosts: ""   # e.g. "*.<peer-namespace>.svc.cluster.local,*.<customer-internal-zone>"
+  # Merged with allowHosts. Same grammar; typically a ref+op:// reference.
+  extraAllowHosts: ""
+
+apisix:
+  replicas: 2
+  image: apache/apisix:3.8.0-debian
+  service:
+    type: ClusterIP
+    loadBalancerIP: ""
+    annotations: {}
+    # type LoadBalancer only — CIDRs allowed to reach the LB. Empty = unrestricted.
+    # For mode "ingress" use tls.ingress.ingressAllowList instead.
+    loadBalancerSourceRanges: []
+  tls:
+    # Master switch: is HTTPS terminated in front of the gateway at all? When
+    # false the gateway serves plain HTTP on :80 only (local / dev-without-TLS).
+    enabled: false
+    # How TLS is terminated when enabled:
+    #   apisix  — APISIX terminates TLS itself on :443. An init-container splices
+    #             `existingSecret`'s cert/key into APISIX's `ssls` list at pod
+    #             startup (APISIX rejects a handshake whose SNI isn't in `ssls`;
+    #             a cert at the default path is NOT enough) — so NO private key in
+    #             a ConfigMap and NO cluster lookup at render. For standalone
+    #             clusters with no shared ingress-nginx (our dev AKS, SCP), where
+    #             APISIX is the front door on its own LB.
+    #   ingress — an ingress-nginx Ingress (optionally cert-manager-issued)
+    #             terminates TLS and forwards plain HTTP to the gateway; APISIX
+    #             runs with TLS OFF behind it. For clusters that already run
+    #             ingress-nginx + cert-manager (assembly next to InvHub). This is
+    #             the standard k8s pattern and the way the InvHub cluster does TLS.
+    mode: apisix
+    # Public HTTPS hostname. Drives the Keycloak issuer + OIDC redirect URIs, the
+    # HTTP->HTTPS redirect (mode apisix), and the Ingress host (mode ingress).
+    # Required when enabled.
+    publicHostname: ""
+    # Name of the kubernetes.io/tls Secret (tls.crt / tls.key) holding the cert.
+    #   mode apisix  — mounted into the APISIX pod; the init-container splices it
+    #                  into `ssls` (APISIX won't serve a cert that isn't in ssls).
+    #   mode ingress — referenced by the Ingress `tls:` block. With
+    #                  ingress.clusterIssuer set, cert-manager's ingress-shim
+    #                  creates and renews it; otherwise it must already exist
+    #                  (e.g. a synced wildcard on SCP).
+    existingSecret: apisix-tls
+    # mode ingress only — the Ingress that fronts the gateway.
+    ingress:
+      className: nginx
+      # cert-manager ClusterIssuer to auto-issue `existingSecret` via the
+      # ingress-shim (the standard ingress-nginx + cert-manager path, as InvHub
+      # uses with letsencrypt-production). Empty = the Secret must already exist.
+      clusterIssuer: ""
+      # CIDRs allowed to reach the public endpoint; the two lists are merged into a
+      # whitelist-source-range annotation. Both empty = no allowlist.
+      ingressAllowList:
+        customerIPs: []
+        platformIPs: []
+      # Extra annotations for the Ingress (ssl-redirect is set on automatically);
+      # these take precedence over ingressAllowList.
+      annotations: {}
+  # Browser origins allowed by CORS, consumed by files/apisix-routes.yaml for
+  # BOTH the global cors plugin and the per-route cors blocks on the
+  # InvHub-facing routes (eureka-auth token + the two webhook compat proxies).
+  # Overriding this list in an overlay REPLACES it wholesale (helm lists never
+  # merge) -- restate these defaults if you still want them. Entries are
+  # emitted with squote, so they must not contain a single quote; the escaped
+  # dots (\.) require single-quoted YAML and must stay that way.
+  cors:
+    allowOriginsRegex:
+      - '^http://localhost(?::(?:80|3000|5173))?$'
+      - '^https://[^/]+\.app\.github\.dev$'
+  resources:
+    requests: { memory: 128Mi, cpu: 20m }
+    limits: { memory: 512Mi, cpu: 500m }
+
+# ---------------------------------------------------------------------------
+# Application services
+# ---------------------------------------------------------------------------
+agents:
+  replicas: 2
+  image: { repository: "", tag: "" }  # falls back to image.tag
+  # Base URL of the sandbox workflow-MANAGEMENT API (deploy / deployments /
+  # overview). Served only by the trigger pod in the split topology. Defaults
+  # to the in-cluster trigger Service; override if you rename/relocate it.
+  sandboxManagementUrl: ""  # empty = <release>-data-assembly-sandbox-trigger:8003 in-cluster
+  # Base URL of the sandbox code-EXECUTION API (/execute-code). Served only by the
+  # execute pods — the trigger pod 404s it. Applied to ALL engine deployments,
+  # because the agent node's `run_code` built-in tool executes on the general
+  # worker, not just the code-worker.
+  sandboxExecuteCodeUrl: ""  # empty = <release>-data-assembly-sandbox-execute:8003 in-cluster
+  resources:
+    requests: { memory: 512Mi, cpu: 25m }
+    limits: { memory: 2Gi, cpu: "2" }
+  temporal:
+    maxConcurrentWorkflowTasks: 50
+    maxConcurrentActivities: 50
+    maxCachedWorkflows: 1000
+  probes:
+    liveness:
+      # 1s timed out whenever the event loop was busy — pods got killed
+      # exactly during traffic spikes. 5s tolerates load; readiness stays
+      # tighter so a busy pod sheds traffic before it gets restarted.
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      timeoutSeconds: 2
+      failureThreshold: 3
+  # Default ON (unlike llm-gateway's opt-in HPA below) -- any real, non-perf-tier deploy of this
+  # chart runs this today. Live-validated 2026-07-04 on assembly-perf-small via a scoped
+  # kubectl-level HPA test targeting assembly-engine directly: confirmed real scale-up (1->3->4
+  # replicas under sustained >75% CPU) and scale-down back to minReplicas after the ~5min idle
+  # stabilization window, both working correctly. Perf-tier path disables this
+  # (values-prod-perf.yaml sets hpa.enabled=false) so tonight's perf work never exercised it.
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilization: 75
+  # Allow modest base64 images (issue #213) to travel in the workflow activity
+  # payload. Stay strictly < Temporal's ~2MiB ScheduleActivity attributes cap.
+  extraEnv:
+    # Single payload knob — warn (80%) and full-trace (75%) ceilings derive
+    # from it in code; the old per-limit envs still work as overrides.
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_HARD_LIMIT_BYTES
+      value: "1800000"
+
+# Batched trace ingestion (#507/#510). Trace writes ride a redis stream and a
+# per-process batch consumer instead of synchronous PG round-trips on every
+# run's completion — measured +28% runs/hr at C=1200 with zero lost traces
+# (sync fallback on enqueue failure; consumer acks only after a successful
+# write; poison entries dead-letter). "false" restores synchronous writes.
+traceAsyncIngest: "true"
+
+agentsWorker:
+  replicas: 2
+  image: { repository: "", tag: "" }  # falls back to image.tag
+  resources:
+    # 2Gi to back the default slot/cache config (400 activities + 300 WFT +
+    # 1024 cached workflows OOMed a 1Gi pod); no CPU limit — throttling a
+    # worker's event loop manufactures latency, the request reserves capacity.
+    requests: { memory: 512Mi, cpu: 250m }
+    limits: { memory: 2Gi }
+  temporal:
+    maxConcurrentActivities: 400
+    maxConcurrentWorkflowTasks: 300
+    # >=1024: 512 meant constant sticky-cache eviction -> full-history
+    # replays at sustained 500-concurrent (the measured FN P95 overhead
+    # locus). Backed by the 2Gi worker memory limit above.
+    maxCachedWorkflows: 1024
+    # Base-chart default is resource-based tuning (dynamic slot counts from
+    # live CPU/mem), but every known values file (dev/demo/perf-tierA/
+    # prod-perf) sets disableResourceTuner: true to get fixed, reproducible
+    # slot counts for comparable benchmark numbers -- not because
+    # resource-based mode is broken. Live-validated 2026-07-04 on
+    # assembly-perf-small (scoped, fully-reverted test): starts cleanly,
+    # real workflow execution confirmed via webhook_smoke.sh. If you're
+    # writing a NEW values file and skip disableResourceTuner, you get this
+    # (validated) dynamic mode, not a broken default.
+    disableResourceTuner: false
+    tunerMode: ""
+    # Worker Versioning is now chart-wide — see the top-level `workerVersioning`
+    # block. (Per-worker flag removed so all main-queue runners stay in lockstep.)
+    workerQueues: "main,subflow,aux"
+  # Image payload headroom (issue #213) — see engine block above.
+  extraEnv:
+    # Single payload knob — warn (80%) and full-trace (75%) ceilings derive
+    # from it in code; the old per-limit envs still work as overrides.
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_HARD_LIMIT_BYTES
+      value: "1800000"
+
+agentsCodeWorker:
+  replicas: 2
+  image: { repository: "", tag: "" }  # falls back to image.tag
+  # SECURITY + CORRECTNESS (#2086). Was `local-nsjail`, which:
+  #   1. appends --disable_clone_newnet whenever a custom_code node requests
+  #      network, keeping the pod netns — IMDS (169.254.169.254) and in-cluster
+  #      services become reachable from user-authored code; and
+  #   2. sets `privileged: true` on this worker (see the securityContext in
+  #      assembly-engine-code-worker.yaml, which keys off this very value); and
+  #   3. HARD-FAILS custom_code on a non-root code-worker anyway — see the note
+  #      at values-public-perf.yaml:27.
+  # Every overlay that worked had already overridden it, so the old default
+  # served no one. The SIZE overlays (small/medium/large) set neither key and
+  # inherited the broken, privileged variant.
+  codeExecutionTarget: sandbox-service
+  trustedCodeInprocess: false
+  resources:
+    requests: { memory: 768Mi, cpu: 500m }
+    limits: { memory: 2Gi, cpu: "2" }
+  temporal:
+    workerQueues: "code,parallel-code"
+    maxConcurrentWorkflowTasks: 100
+    maxConcurrentActivities: 200
+    maxCachedWorkflows: 500
+    tunerMode: fixed
+  # Image payload headroom (issue #213) — see engine block above. Custom-code
+  # nodes that emit a base64 image run on this worker.
+  extraEnv:
+    # Single payload knob — warn (80%) and full-trace (75%) ceilings derive
+    # from it in code; the old per-limit envs still work as overrides.
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_HARD_LIMIT_BYTES
+      value: "1800000"
+
+agentsSubflowWorker:
+  enabled: false
+  replicas: 2
+  image: { repository: "", tag: "" }  # falls back to image.tag
+  resources:
+    requests: { memory: 256Mi, cpu: 25m }
+    limits: { memory: 1Gi, cpu: "1" }
+  temporal:
+    workerQueues: subflow
+    maxConcurrentWorkflowTasks: 200
+    maxConcurrentActivities: 100
+    maxCachedWorkflows: ""
+    tunerMode: ""
+  extraEnv: []
+
+llmGateway:
+  # DEBUG is for short-lived diagnostic sessions only.
+  logLevel: INFO
+  replicas: 2
+  image: { repository: "", tag: "" }  # falls back to image.tag
+  targetApiBaseUrl: ""
+  # Platform-wide model list (comma-separated) written to gateway_config.available_models —
+  # the list every internal consumer reads. These must be real deployment names on the
+  # configured provider, so it is deployment-specific: point it at 1Password to change the
+  # exposed models without a code change or chart release, e.g.
+  #   availableModels: ref+op://<vault>/Assembly/<section>/llmGateway__availableModels
+  # Empty keeps the service's built-in default list. When set, the gateway CONVERGES the
+  # stored value on every start (so `helm upgrade` applies it); when empty, an existing
+  # list — e.g. edited in the admin UI — is left alone.
+  availableModels: ""
+  postgres:
+    poolSize: 30
+    maxOverflow: 60
+  resources:
+    requests: { memory: 256Mi, cpu: 15m }
+    limits: { memory: 512Mi, cpu: "1" }
+  extraEnv: []
+  # P3: optional CPU HPA (default off). Enable to auto-scale the (efficient-tier-leaned) llm-gateway under
+  # real LLM load. IMPORTANT: raise resources.requests.cpu to ~100m when enabling, or utilization% is
+  # meaningless at 15m (pins at maxReplicas). Mechanism live-validated 2026-07-04 on assembly-perf-small
+  # (kubectl-level CPU-pressure test, not a real LLM load, but confirms the K8s scale-up/down path itself
+  # works correctly): 2->8 replicas under sustained >70% CPU, back down to minReplicas=2 once idle for the
+  # default ~5min stabilization window. Real-LLM-traffic scale behavior still unconfirmed. See playbook 47 P3.
+  hpa:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilization: 70
+
+userProject:
+  replicas: 2
+  image: { repository: "", tag: "" }  # falls back to image.tag
+  migration:
+    enabled: true
+    resources:
+      requests: { memory: 128Mi, cpu: 50m }
+      limits: { memory: 256Mi, cpu: 200m }
+  # Number of PDF/DOCX/XLSX extractions assembly-core will run at once
+  # (DOCUMENT_EXTRACTION_CONCURRENCY). Each one is expensive in memory, so this
+  # multiplies the headroom the limit below has to provide. Raise it only
+  # together with limits.memory.
+  documentExtractionConcurrency: 1
+  resources:
+    requests: { memory: 128Mi, cpu: 20m }
+    # 1.5Gi, not the 256Mi this used to be, because
+    # GET /resources/{id}/content converts documents in-process (#1749) and
+    # markitdown's cost is set by the document's *content*, not its file size.
+    # Measured in the assembly-core image:
+    #   markitdown import (magika's ONNX model)        ~115 MiB, permanent
+    #   1.2 MB XLSX, 30k rows -> 5.7M chars            ~784 MiB peak
+    #   49 KB DOCX -> 13M chars                        ~257 MiB peak
+    # With a ~180 MiB idle RSS, one ordinary spreadsheet needs ~965 MiB. At
+    # 256Mi the cgroup SIGKILLed the pod mid-conversion, so every document read
+    # 502'd and took the whole service — and all in-flight requests — with it;
+    # Compose has no memory limit, which is why this only ever showed up on a
+    # cluster. Budget: idle + documentExtractionConcurrency x ~800 MiB.
+    #
+    # The CPU limit matters for the same reason: extraction is single-threaded
+    # and CPU-bound, and EXTRACTION_TIMEOUT_SECONDS is wall clock. At 300m,
+    # assembly-aks-dev reported 1167 of 1584 CPU periods throttled, and an 11 KB
+    # PDF took 18.4s on a cold replica — a hair inside the 30s budget, for a tiny
+    # document. 2 cores lets a conversion run at full speed. The request stays at
+    # 20m, so this is burst headroom, not a reservation.
+    limits: { memory: 1536Mi, cpu: "2" }
+  extraEnv: []
+
+frontend:
+  replicas: 2
+  image: { repository: "", tag: "" }  # falls back to image.tag
+  resources:
+    requests: { memory: 256Mi, cpu: 15m }
+    limits: { memory: 512Mi, cpu: 500m }
+  extraEnv: []
+
+sandboxExecute:
+  enabled: true
+  requireNsjail: false
+  replicas: 2
+  # Dedicated-nodepool pinning (privileged blast-radius compensating control).
+  # The sandbox-execute pod is privileged: true — it can see the node's real
+  # block devices (host /dev + all caps), so on a SHARED multi-tenant node a
+  # container/kernel escape reaches other tenants' data on that node. Set these
+  # to pin sandbox-execute onto a dedicated, tainted nodepool that runs nothing
+  # else, so an escape reaches only other stateless code-execution pods. Empty
+  # here = fall back to the common app-tier scheduling (aw.scheduling), so the
+  # chart default is unchanged. Example (paired with a nodepool created with
+  # --node-taints dedicated=sandbox:NoSchedule --labels workload=sandbox):
+  #   nodeSelector: { workload: sandbox }
+  #   tolerations:
+  #     - { key: dedicated, operator: Equal, value: sandbox, effect: NoSchedule }
+  # This reduces blast radius; it does NOT remove privileged (see rootless work).
+  nodeSelector: {}
+  tolerations: []
+  # DoNotSchedule (hard) by default — replicas bunched on one node measured
+  # 1.84 wf/s against 5.55 spread, a 3x swing (#2123). Set ScheduleAnyway only
+  # on shapes with too few nodes to place every replica, where a hard
+  # constraint would leave pods Pending instead of merely co-located. The
+  # The constraint skips tainted nodes (nodeTaintsPolicy: Honor), which is what
+  # keeps a node loss from leaving replacements Pending — see the template
+  # comment for the measured failure and fix.
+  topologySpreadWhenUnsatisfiable: DoNotSchedule
+  image: { repository: "", tag: "" }  # falls back to image.tag
+  resources:
+    # These limits only started being ENFORCED with #2118. The egress filter
+    # had put the service in a cgroup outside the kubelet hierarchy, where
+    # cpu.max/memory.max have no ancestor to inherit from — measured on dev,
+    # 516 core-seconds burned against a cap of 0.5 that applied to nothing.
+    # Nesting the tree back under the pod makes whatever is written here real,
+    # so values chosen while they were inert now have to be defensible.
+    #
+    # 1Gi/500m are not. This is the one service whose JOB is to run arbitrary
+    # user CPU and memory: a pandas frame or an lxml parse in a custom_code
+    # node, across 4 uvicorn workers. The last time sandbox-execute ran under a
+    # real cap it throttled — see values-small.yaml, where the limit was raised
+    # to 2 because sandbox-execute, not Postgres, became the ceiling while the
+    # code-worker idled at 0.08 cores. values-prod-perf already runs 3Gi/2.
+    #
+    # Only the LIMITS move. Requests stay put, so scheduling density and cost
+    # are unchanged; this buys burst headroom for a bursty workload and does
+    # not reserve capacity. A deployment that wants a tighter cap can still set
+    # one — it will now actually take effect, which is the point.
+    #
+    # 2 is a general-purpose default, NOT the right number for a sustained
+    # code-heavy workload. Measured on assembly-perf-medium (perf-codeheavy-10,
+    # 10 custom_code nodes, drive 8/s, 3 replicas one-per-node):
+    #
+    #   cpu 2 -> 99% of CFS periods throttled, throughput -59% vs unbounded
+    #   cpu 3 -> 54-65% throttled, -15%
+    #   cpu 4 -> 0% throttled, parity (-3.6%)
+    #
+    # Deliberately left at 2 rather than 4 because the chart cannot know the
+    # node size: on a 4-core node a limit of 4 lets ONE sandbox pod take the
+    # whole node, which is the co-tenancy problem #2118 was about — bounded and
+    # attributable now, but still able to crowd. Raise it per deployment when
+    # custom_code is a primary workload; values-prod-perf.yaml runs 4 and
+    # documents the full ladder.
+    #
+    # Raising REQUESTS is not the lever it looks like: at 99% throttling the
+    # tier is quota-bound, not weight-bound, so requests buy nothing until the
+    # quota is lifted first. Tried and measured — no change.
+    requests: { memory: 512Mi, cpu: 250m }
+    limits: { memory: 3Gi, cpu: "2" }
+  extraEnv: []
+  # Give custom_code nodes the public internet WITHOUT the pod network.
+  #
+  # Default OFF because it needs cgroup2 + iptables + a privileged container,
+  # and a filter that cannot install must never be assumed present. Where it is
+  # off, `allowNetworkAccess` code is refused (the safe behaviour).
+  #
+  # Turn it ON wherever users actually run networked code. On demo that is 338
+  # of 3238 custom_code executions (10.4%) across 140 traces -- check-detection,
+  # Name Screening, Citi L1/L2, the AML TM workflows -- all of which break
+  # without it.
+  #
+  # dnsIP MUST be the cluster resolver (`kubectl -n kube-system get svc kube-dns
+  # -o jsonpath='{.spec.clusterIP}'`, typically 10.0.0.10). The DNS exception is
+  # scoped to the jailed cgroup on udp/53; without it nothing resolves and the
+  # public egress the filter permits is unusable.
+  egressFilter:
+    enabled: false
+    dnsIP: ""
+    # Extra destinations jailed code must not reach, on top of the six private
+    # ranges the filter always denies. **Set this to your own public ingress.**
+    #
+    # The built-in denies enumerate PRIVATE space, but a cluster's public
+    # ingress IP is a public address, so `custom_code` could connect back to the
+    # platform's own front door. Measured on dev (#2131): a code node reached
+    # `/api/v1/health` (200), Keycloak's `openid-configuration` (200) and
+    # `/webhook/...` (405) over the public IP. App authn still held — protected
+    # routes returned 401 — so this is not RCE. What it defeats is any ingress
+    # IP-allowlist (user code arrives from the cluster's trusted SNAT address)
+    # and per-source-IP rate limiting on the token endpoint.
+    #
+    # NetworkPolicy cannot cover this: the destination is genuinely public.
+    #
+    # Accepts hostnames, bare IPs, and CIDRs. Hostnames are resolved to EVERY
+    # address they carry, at install time:
+    #   denyHosts: ["assembly.example.com", "51.132.165.237", "203.0.113.0/24"]
+    #
+    # Two consequences of resolving at install time, both deliberate:
+    #   * An entry that does not resolve FAILS THE INSTALL, so networked code
+    #     nodes stay refused. A typo is loud rather than quietly removing a
+    #     control you believe is in place.
+    #   * If the ingress address CHANGES, the rule is stale until the sandbox
+    #     restarts. Pin a CIDR instead if your LB address is not stable.
+    denyHosts: []
+
+sandboxTrigger:
+  enabled: true
+  replicas: 2
+  image: { repository: "", tag: "" }  # falls back to image.tag
+  resources:
+    requests: { memory: 384Mi, cpu: 100m }
+    limits: { memory: 1Gi, cpu: "1" }
+  probes:
+    liveness:
+      timeoutSeconds: 10
+      failureThreshold: 6
+    readiness:
+      timeoutSeconds: 10
+      failureThreshold: 6
+  # Resolve `/webhook/{workflow_id}/aliases/{tag}` to the deployment the alias
+  # currently points at, so an integration's URL survives a redeploy (see
+  # docs/webhook-aliases.md). Kill switch: set false to revert to treating the
+  # first path segment as the authoritative deployment id and ignoring the
+  # alias — i.e. the behaviour before aliases existed, with no rollback.
+  aliasResolutionEnabled: true
+  # Comma-separated emails/subs (Keycloak service users) allowed to invoke
+  # deployments they don't own on the /run + webhook path, with the run
+  # delegated to the deployment owner (InvHub drop-in; see
+  # docs/invhub-legacy-webhook.md). Empty = fail-closed (env not emitted; the
+  # code default keeps the cross-owner bypass off). Do NOT also set
+  # WEBHOOK_RUN_ALLOWLIST via extraEnv -- the duplicate env name breaks
+  # server-side apply.
+  webhookRunAllowlist: ""
+  extraEnv: []
+
+mcpHub:
+  # Publish a Service port per dynamically deployed MCP server. deployment_service
+  # allocates a listener inside the mcp-hub pod for each one, and a Service cannot
+  # express a range — every port is enumerated — so this is opt-in and bounded.
+  # Enabling 9000-9100 adds 101 ports to the Service. (demo publishes that range)
+  dynamicPorts:
+    enabled: false
+    from: 9000
+    to: 9100
+  enabled: true
+  # Process-mode MCP servers run as subprocesses inside a single pod and their
+  # workspaces live on a ReadWriteOnce PVC (see persistence below), so keep this
+  # at 1. Scaling >1 with persistence.enabled would leave replicas unable to
+  # attach the same disk.
+  replicas: 1
+  image: { repository: "", tag: "" }  # falls back to image.tag
+  resources:
+    requests: { memory: 256Mi, cpu: 20m }
+    limits: { memory: 1Gi, cpu: 500m }
+  allowedOrigins: []
+  debug: false
+  extraEnv: []
+  # Uploaded servers execute arbitrary code. Keep in-pod process execution off
+  # until an isolated per-server runner is deployed.
+  processDeployments:
+    enabled: false
+    autostart: false
+    # "process" runs uploaded servers as subprocesses in this pod; "docker" runs
+    # one container each but needs a Docker socket, which no cluster pod mounts.
+    # Overridable so a cluster can be moved off in-pod execution without editing
+    # the template.
+    runnerMode: process
+    # Per-process rlimits for uploaded code. Counterparts to docker mode's
+    # mem_limit/pids_limit, which process mode otherwise had no equivalent of.
+    # memoryMb is address space (not RSS), so it needs headroom over real usage.
+    limits:
+      memoryMb: 1024
+      maxProcs: 4096
+      maxFileSizeMb: 512
+      maxOpenFiles: 1024
+  # Persist uploaded process-mode server workspaces across pod restarts (#407).
+  # Without this they are written to ephemeral container storage and lost on
+  # every restart, breaking the server with a 500 on start.
+  persistence:
+    enabled: true
+    mountPath: /tmp/mcp-deployed   # must equal MCP_HUB_PROCESS_DEPLOY_ROOT
+    storageClass: managed-csi
+    size: 10Gi
+
+# ---------------------------------------------------------------------------
+# Scheduling
+# ---------------------------------------------------------------------------
+scheduling:
+  nodeSelector: {}
+  tolerations: []
+  priorityClasses:
+    enabled: false
+    # Default present even while disabled so overlays that flip `enabled: true` without also
+    # setting this don't crash the render (#1282 follow-up: `.platformServices.value` was
+    # previously undefined by default, so `enabled: true` alone hit a nil-pointer template error —
+    # this flag had never actually been exercised end-to-end before).
+    platformServices:
+      value: 100
+  # #1606: soft mutual anti-affinity for the singleton infra-tier pods (postgres, postgres-temporal,
+  # redis, keycloak, minio) so they spread across infra nodes instead of clumping onto whichever
+  # node happened to exist when each was first scheduled. Off by default; perf overlays opt in.
+  infraSingletonSpread:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# Network Policies & PDBs
+# ---------------------------------------------------------------------------
+networkPolicies:
+  # Gateway reachability needs no knob: `allow-apisix-public-ingress` renders
+  # unconditionally with this set and opens the apisix pod's 9080/9443 to any source
+  # (a request from the internet has no pod source, so no podSelector can match it).
+  # A gated duplicate of that rule used to live here; it could never admit anything
+  # the unconditional one did not, so it was removed rather than left as a knob that
+  # reads like it controls reachability.
+  #
+  # STILL UNVALIDATED on a shared cluster: default-deny + the same-namespace allow
+  # match only POD sources, so a kubelet health probe (from the node) and the LB path
+  # to NON-gateway pods remain uncovered — that is what took dev-assembly dark, and it
+  # is why the shared-cluster overlays keep this off.
+  enabled: true
+
+podDisruptionBudgets:
+  enabled: true

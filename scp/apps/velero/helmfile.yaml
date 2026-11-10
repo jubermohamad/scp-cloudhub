@@ -1,0 +1,172 @@
+# username is retrieved from the environment with the format SYMPHONYFS_USERNAME
+# password is retrieved from the environment with the format SYMPHONYFS_PASSWORD
+repositories:
+  - name: k8s-as-helm
+    url: https://ameijer.github.io/k8s-as-helm/
+  - name: csi-driver-nfs
+    url: https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
+  - name: netapp-trident
+    url: https://netapp.github.io/trident-helm-chart
+  - name: vmware-tanzu
+    url: https://vmware-tanzu.github.io/helm-charts
+
+helmDefaults:
+  timeout: 1500
+  wait: false  # 'true' will cause deadlock for NR with helm waiting for override-volume-claim indefinitely
+               # more: https://netreveal.atlassian.net/browse/FCENGX-3005
+  kubeContext: scp-prod-centralus-01
+
+---
+
+# The environments section to define the reusable variables
+environments:
+  default:
+    values:
+      - anf:
+          enabled: true  # set to true to enable Azure NetApp Files (ANF) backend which is typically required for 'production' clusters.
+          azure_serviceLevel: 'ultra'  # 'premium' or 'standard' are also valid options, but 'ultra' is recommended for 'production' clusters.
+          azure_location: 'centralus'  # Azure region for the ANF backend; this should match the region of the AKS cluster.
+          vnet_name: 'centralus-naf-vnet'
+          subnet_name: 'centralus-naf-subnet'
+          pool_name: 'centralus-naf-pool-ultra'
+          resource_group_name: 'scp-prod-centralus-01'
+          storage_resource_group_name: 'scp-prod-centralus-01-rg'
+          storage_account_id: 'velerocentralus1'
+          blob_name: 'velero'
+          replication:
+            enabled: false  # This is disabled ("false") by default for most clusters. Set to "true" only for production-grade, active-active/active-passive setups to enable cross-region replication for ANF volumes. Note: Enabling replication incurs additional cost - enable only if specifically included & budgeted. Note: Value must be lowercase (true/false), without quotes.
+      - appName: '{{ requiredEnv "APP_NAME" }}'
+      - helm_chart_version: '{{ env "CLOUDHUB_HELM_CHART_VERSION" }}'
+
+---
+
+releases:
+
+  - name: csi-driver-nfs
+    namespace: common-res
+    chart: csi-driver-nfs/csi-driver-nfs
+    version: 4.11.0
+    condition: anf.replication.enabled
+
+  - name: "trident-secret-regcred"
+    namespace: trident
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "regcred"
+      - type: "kubernetes.io/dockerconfigjson"
+      - secretData:
+          '.dockerconfigjson': '{{ env "CLOUDHUB_DOCKERHUB_AND_ACR__DOCKERCONFIGJSON" }}'
+
+  - name: trident-operator
+    namespace: trident
+    chart: netapp-trident/trident-operator
+    version: 23.04.0
+    condition: anf.enabled
+    values:
+      - imagePullSecrets: ["regcred"]
+    needs:
+      - "trident-secret-regcred"
+  
+  - name: trident-secret-backend-tbc-anf-secret
+    namespace: trident
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    condition: anf.enabled
+    values:
+      - nameOverride: "backend-tbc-anf-secret"
+      - type: "Opaque"
+      - secretData:
+          'clientID': '{{ env "CLOUDHUB_PRINCIPAL_ID" }}'
+          'clientSecret': '{{ env "CLOUDHUB_PRINCIPAL_SECRET" }}'
+
+  - name: trident-backend
+    namespace: trident
+    chart: ../../templated-overrides/raw-yaml-charts/trident-backend
+    condition: anf.enabled
+    values:
+      - azure:
+          subscriptionID: '{{ env "CLOUDHUB_SUBSCRIPTION_ID" }}'
+          tenantID: '{{ env "CLOUDHUB_TENANT_ID" }}'
+          location: '{{ .Values.anf.azure_location }}'
+          serviceLevel: '{{ .Values.anf.azure_serviceLevel }}'
+          vnet: '{{ .Values.anf.vnet_name }}'
+          subnet: '{{ .Values.anf.subnet_name }}'
+          capacityPool: '{{ .Values.anf.pool_name }}'
+    needs:
+      - trident-secret-regcred
+      - trident/trident-operator
+      - trident/trident-secret-backend-tbc-anf-secret
+
+  - name: "velero-secret-credentials"
+    namespace: velero
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "regcred"
+      - type: "kubernetes.io/dockerconfigjson"
+      - secretData:
+          '.dockerconfigjson': '{{ env "CLOUDHUB_DOCKERHUB_AND_ACR__DOCKERCONFIGJSON" }}'
+
+  - name: velero
+    namespace: velero
+    chart: vmware-tanzu/velero
+    version: "{{ .Values.helm_chart_version }}"
+    createNamespace: true
+    values:
+      - image:
+          imagePullSecrets: 
+           - regcred
+      - resources:
+          requests:
+            memory: "512Mi"
+          limits:
+            memory: "2Gi"
+      - deployNodeAgent: true
+      - nodeAgent:
+          resources:
+            requests:
+              memory: "512Mi"
+            limits:
+              memory: "2Gi"
+          imagePullSecrets: 
+           - regcred
+      - initContainers:
+          - name: velero-plugin-for-microsoft-azure
+            image: velero/velero-plugin-for-microsoft-azure:v1.13.1
+            volumeMounts:
+              - mountPath: /target
+                name: plugins
+      - configuration:
+          features: EnableCSI
+          backupStorageLocation:
+            - name: default
+              provider: azure
+              bucket: '{{ .Values.anf.blob_name }}'
+              config:
+                resourceGroup: '{{ .Values.anf.storage_resource_group_name }}'
+                storageAccount: '{{ .Values.anf.storage_account_id }}'
+                subscriptionId: '{{ env "CLOUDHUB_AZURE_SUBSCRIPTION_ID" }}'
+          volumeSnapshotLocation:
+            - name: default
+              provider: azure
+              config:
+                apiTimeout: 10m
+                resourceGroup: '{{ .Values.anf.resource_group_name }}'
+                subscriptionId: '{{ env "CLOUDHUB_AZURE_SUBSCRIPTION_ID" }}'
+        credentials:
+          useSecret: true
+          secretContents:
+            cloud: |
+              AZURE_SUBSCRIPTION_ID='{{ env "CLOUDHUB_AZURE_SUBSCRIPTION_ID" }}'
+              AZURE_TENANT_ID='{{ env "CLOUDHUB_AZURE_TENANT_ID" }}'
+              AZURE_CLIENT_ID='{{ env "CLOUDHUB_AZURE_CLIENT_ID" }}'
+              AZURE_CLIENT_SECRET='{{ env "CLOUDHUB_AZURE_CLIENT_SECRET" }}'
+              AZURE_CLOUD_NAME='{{ env "CLOUDHUB_AZURE_CLOUD_NAME" }}'
+              AZURE_RESOURCE_GROUP='{{ .Values.anf.resource_group_name }}'
+              AZURE_STORAGE_RESOURCE_GROUP='{{ .Values.anf.storage_resource_group_name }}'
+              AZURE_STORAGE_ACCOUNT_ID='{{ .Values.anf.storage_account_id }}'
+              BLOB_CONTAINER='{{ .Values.anf.blob_name }}'
+    needs:
+      - trident/trident-backend
+      - velero-secret-credentials

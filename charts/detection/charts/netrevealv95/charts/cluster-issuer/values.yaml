@@ -1,0 +1,5 @@
+issuer:
+  selfSigned:
+    certificate:
+      name: selfsigned-ca
+      secretName: root-ca

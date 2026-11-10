@@ -1,0 +1,140 @@
+name: plan-application
+
+# Helm equivalent of `terraform plan`: renders manifests and shows the diff
+# against what is currently installed, without changing anything in-cluster.
+# Triggered by the Backstage "Review" button on deploy-application.
+
+on:
+  workflow_dispatch:
+    inputs:
+      applicationName: { required: true }
+      businessUnit: { required: true }
+      environment: { required: true }
+      targetCluster: { required: true }
+      namespace: { required: true }
+      image: { required: true }
+      replicas: { required: false, default: '2' }
+      cpuRequest: { required: false, default: '100m' }
+      memoryRequest: { required: false, default: '128Mi' }
+      ingressEnabled: { required: false, default: 'false' }
+      ingressHost: { required: false, default: '' }
+      owner: { required: true }
+      costCenter: { required: true }
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Authenticate to AKS
+        run: |
+          rg=$(az aks list --query "[?name=='${{ inputs.targetCluster }}'].resourceGroup | [0]" -o tsv)
+          az aks get-credentials -g "$rg" -n "${{ inputs.targetCluster }}" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+
+      - uses: azure/setup-helm@v4
+        with: { version: v3.14.4 }
+
+      - name: Install helm-diff
+        run: helm plugin install https://github.com/databus23/helm-diff || true
+
+      - name: Common helm args
+        id: vars
+        run: |
+          IMG_REPO=$(echo '${{ inputs.image }}' | cut -d: -f1)
+          IMG_TAG=$(echo '${{ inputs.image }}' | cut -d: -f2-)
+          echo "imgRepo=$IMG_REPO" >> "$GITHUB_OUTPUT"
+          echo "imgTag=$IMG_TAG"   >> "$GITHUB_OUTPUT"
+
+      - name: Render namespace-bootstrap
+        run: |
+          {
+            echo "## namespace-bootstrap (rendered)"
+            echo '```yaml'
+            helm template "ns-${{ inputs.namespace }}" ./charts/namespace-bootstrap \
+              --namespace "${{ inputs.namespace }}" \
+              --set namespace="${{ inputs.namespace }}" \
+              --set application="${{ inputs.applicationName }}" \
+              --set businessUnit="${{ inputs.businessUnit }}" \
+              --set environment="${{ inputs.environment }}" \
+              --set owner="${{ inputs.owner }}" \
+              --set costCenter="${{ inputs.costCenter }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Render app-bootstrap
+        run: |
+          {
+            echo "## app-bootstrap (rendered)"
+            echo '```yaml'
+            helm template "${{ inputs.applicationName }}" ./charts/app-bootstrap \
+              --namespace "${{ inputs.namespace }}" \
+              --set application="${{ inputs.applicationName }}" \
+              --set namespace="${{ inputs.namespace }}" \
+              --set businessUnit="${{ inputs.businessUnit }}" \
+              --set environment="${{ inputs.environment }}" \
+              --set owner="${{ inputs.owner }}" \
+              --set costCenter="${{ inputs.costCenter }}" \
+              --set image.repository="${{ steps.vars.outputs.imgRepo }}" \
+              --set image.tag="${{ steps.vars.outputs.imgTag }}" \
+              --set replicas="${{ inputs.replicas }}" \
+              --set resources.requests.cpu="${{ inputs.cpuRequest }}" \
+              --set resources.requests.memory="${{ inputs.memoryRequest }}" \
+              --set ingress.enabled="${{ inputs.ingressEnabled }}" \
+              --set ingress.host="${{ inputs.ingressHost }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Diff against current release
+        run: |
+          {
+            echo "## helm diff — namespace-bootstrap"
+            echo '```diff'
+            helm diff upgrade --install --allow-unreleased \
+              "ns-${{ inputs.namespace }}" ./charts/namespace-bootstrap \
+              --namespace "${{ inputs.namespace }}" \
+              --set namespace="${{ inputs.namespace }}" \
+              --set application="${{ inputs.applicationName }}" \
+              --set businessUnit="${{ inputs.businessUnit }}" \
+              --set environment="${{ inputs.environment }}" \
+              --set owner="${{ inputs.owner }}" \
+              --set costCenter="${{ inputs.costCenter }}" || true
+            echo '```'
+            echo "## helm diff — app-bootstrap"
+            echo '```diff'
+            helm diff upgrade --install --allow-unreleased \
+              "${{ inputs.applicationName }}" ./charts/app-bootstrap \
+              --namespace "${{ inputs.namespace }}" \
+              --set application="${{ inputs.applicationName }}" \
+              --set namespace="${{ inputs.namespace }}" \
+              --set businessUnit="${{ inputs.businessUnit }}" \
+              --set environment="${{ inputs.environment }}" \
+              --set owner="${{ inputs.owner }}" \
+              --set costCenter="${{ inputs.costCenter }}" \
+              --set image.repository="${{ steps.vars.outputs.imgRepo }}" \
+              --set image.tag="${{ steps.vars.outputs.imgTag }}" \
+              --set replicas="${{ inputs.replicas }}" \
+              --set resources.requests.cpu="${{ inputs.cpuRequest }}" \
+              --set resources.requests.memory="${{ inputs.memoryRequest }}" \
+              --set ingress.enabled="${{ inputs.ingressEnabled }}" \
+              --set ingress.host="${{ inputs.ingressHost }}" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

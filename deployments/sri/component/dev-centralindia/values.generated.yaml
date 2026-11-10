@@ -1,0 +1,255 @@
+# SRI Investigation Component - Base Deployment Values
+# Stage 2: Component deployment for dev-centralindia environment
+# No tenant-specific settings (handled by Stage 3 overlays)
+
+# ============================================================================
+# Basic Configuration
+# ============================================================================
+
+environment: dev
+region: centralindia
+cluster: aks-scp-dev-itn-st-cms
+
+# ============================================================================
+# Replica Configuration
+# ============================================================================
+
+replicaCount: 2
+
+# ============================================================================
+# Image Configuration
+# ============================================================================
+
+image:
+  registry: symphonyai.azurecr.io
+  repository: sri-investigation
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: registry-credentials
+
+# ============================================================================
+# Resource Limits
+# ============================================================================
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 1000m
+    memory: 1Gi
+
+# ============================================================================
+# Deployment Strategy
+# ============================================================================
+
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# ============================================================================
+# Service Configuration
+# ============================================================================
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  annotations: {}
+
+# ============================================================================
+# Ingress Configuration
+# ============================================================================
+
+ingress:
+  enabled: false
+  ingressClassName: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: sri-dev.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: sri-dev-tls
+      hosts:
+        - sri-dev.example.com
+
+# ============================================================================
+# Component-Specific Configuration
+# ============================================================================
+
+config:
+  logLevel: info
+  enableMetrics: true
+  metricsPort: 9090
+  
+  # API Configuration
+  api:
+    port: 8080
+    timeout: 30s
+    
+  # Database Configuration (shared component level)
+  database:
+    host: postgres.default.svc.cluster.local
+    port: 5432
+    sslMode: disable
+    maxConnections: 20
+  
+  # Cache Configuration
+  cache:
+    enabled: true
+    ttl: 3600
+
+# ============================================================================
+# Health Checks
+# ============================================================================
+
+healthCheck:
+  liveness:
+    enabled: true
+    path: /health/live
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  readiness:
+    enabled: true
+    path: /health/ready
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+# ============================================================================
+# Affinity & Node Selection
+# ============================================================================
+
+nodeSelector:
+  kubernetes.io/os: linux
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - sri-investigation
+          topologyKey: kubernetes.io/hostname
+
+# ============================================================================
+# Volume Configuration
+# ============================================================================
+
+persistence:
+  enabled: false
+  storageClass: default
+  size: 10Gi
+  mountPath: /data
+
+# ============================================================================
+# Security Context
+# ============================================================================
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+# ============================================================================
+# Monitoring & Observability
+# ============================================================================
+
+monitoring:
+  enabled: true
+  prometheusPort: 9090
+  
+  alerts:
+    enabled: true
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_request_errors[5m]) > 0.05
+        
+      - alert: PodRestartingTooOften
+        expr: rate(kube_pod_container_status_restarts_total[15m]) > 0.1
+
+# ============================================================================
+# RBAC & Service Account
+# ============================================================================
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: sri-investigation
+
+rbac:
+  create: true
+
+# ============================================================================
+# ConfigMap & Secrets
+# ============================================================================
+
+configMap:
+  enabled: true
+  data:
+    APP_ENV: dev
+    LOG_LEVEL: info
+    METRICS_ENABLED: "true"
+
+# NOTE: Secrets are managed externally (no passwords in helmfile)
+# Stage 2 assumes secrets are already created in cluster
+
+# ============================================================================
+# Autoscaling
+# ============================================================================
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# ============================================================================
+# Environment Variables
+# ============================================================================
+
+env:
+  - name: ENVIRONMENT
+    value: dev
+  - name: REGION
+    value: centralindia
+  - name: CLUSTER
+    value: aks-scp-dev-itn-st-cms
+  - name: LOG_LEVEL
+    value: info
+
+# ============================================================================
+# NOTE: Customer/Tenant Customizations
+# ============================================================================
+# Customer-specific settings (branding, feature flags, etc.) are applied
+# in Stage 3 via overlay helmfiles. This ensures:
+# 
+# 1. Base component remains clean and reusable
+# 2. Multiple customers can share same component
+# 3. Customer customizations are independent
+# 4. Easy to add/remove customer overlays
+#
+# DO NOT add customer-specific settings here!
+# ============================================================================

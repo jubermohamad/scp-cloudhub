@@ -1,0 +1,16 @@
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: {{ .Release.Name }}-kafka-user
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    strimzi.io/cluster: {{ include "generate.name.with.release.name" (list $ . "kafka") | quote }}
+spec:
+  authentication:
+    type: tls
+  template:
+    secret:
+      metadata:
+        annotations:
+          reloader.stakater.com/match: "true"

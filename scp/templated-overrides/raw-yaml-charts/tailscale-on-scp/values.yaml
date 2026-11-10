@@ -1,0 +1,6 @@
+clusterName: ""
+lbIp: ""
+proxyClassName: "accept-routes"
+tailnets: []
+tags:
+  - "tag:k8s-scp"

@@ -1,0 +1,15 @@
+dependencies:
+- name: minio
+  repository: file://./charts/minio
+  version: 5.1.0
+- name: minio-provisioner
+  repository: file://./charts/minio-provisioner
+  version: 1.0.1
+- name: sensaai-sanctions-inference
+  repository: file://./charts/sensaai-sanctions-inference
+  version: 2.0.14
+- name: sensaai-sanctions-training
+  repository: file://./charts/sensaai-sanctions-training
+  version: 2.0.14
+digest: sha256:e91ef4e976656fb26985080773c15009638bca47b52dae6a5d6696bb456bb92c
+generated: "2026-07-30T13:58:30.144626+02:00"

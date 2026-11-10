@@ -1,0 +1,19 @@
+{{- if .Capabilities.APIVersions.Has "jaegertracing.io/v1/Jaeger" -}}
+apiVersion: jaegertracing.io/v1
+kind: Jaeger
+metadata:
+  name: jaeger
+spec:
+  strategy: production
+  query:
+    options:
+      query:
+        base-path: /jaeger
+  storage:
+    dependencies:
+      enabled: false
+    type: elasticsearch
+    options:
+      es:
+        server-urls: "{{ .Values.global.JAEGER_STORAGE_URL | default .Values.global.INVESTIGATION_HUB_OPEN_SEARCH_URL }}"
+{{- end }}

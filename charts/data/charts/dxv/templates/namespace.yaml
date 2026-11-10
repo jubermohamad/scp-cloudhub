@@ -1,0 +1,13 @@
+{{- /*
+dxv stamps its config resources into global.namespace (default dxv-sri).
+When global.createNamespace is true the chart owns that namespace too, so
+`helm install --create-namespace` needs no kubectl pre-step. Default false:
+org environments pre-create it. NOTE: helm uninstall then DELETES the
+namespace and everything in it.
+*/ -}}
+{{- if .Values.global.createNamespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.global.namespace }}
+{{- end }}

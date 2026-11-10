@@ -1,0 +1,99 @@
+name: plan-cluster
+
+# Speculative `terraform plan` for one cluster, identified by its tfvars file
+# basename (which is also the TFC workspace name).
+# Triggered by the Backstage "Review" button.
+
+on:
+  workflow_dispatch:
+    inputs:
+      workspace:
+        description: "Workspace / tfvars basename (e.g. aks-cloudhub-dev-cnc-freetier-scotia)"
+        required: true
+      ref:
+        description: "Git ref to plan against"
+        required: false
+        default: ""
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_WORKSPACE: ${{ inputs.workspace }}
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+jobs:
+  plan:
+    name: Plan ${{ inputs.workspace }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: azure-kubernetes-service
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Verify tfvars exists
+        run: test -f "values/${{ inputs.workspace }}.tfvars"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+          cli_config_credentials_token: ${{ secrets.TFC_TOKEN }}
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform init
+        run: terraform init -input=false
+
+      - name: terraform validate
+        run: terraform validate
+
+      - name: terraform plan
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color \
+            -var-file="values/${{ inputs.workspace }}.tfvars" \
+            -out=tfplan | tee plan.txt
+          terraform show -no-color tfplan > plan.full.txt
+
+      - name: Build review summary
+        run: |
+          {
+            echo "# Terraform Plan — ${{ inputs.workspace }}"
+            echo
+            echo "## Resource summary"
+            grep -E "Plan: " azure-kubernetes-service/plan.txt || echo "Plan: 0 to add, 0 to change, 0 to destroy."
+            echo
+            echo "## Resources to create"
+            grep -E "^  # .* will be created" azure-kubernetes-service/plan.full.txt || echo "_none_"
+            echo
+            echo "## Resources to change"
+            grep -E "^  # .* will be updated in-place" azure-kubernetes-service/plan.full.txt || echo "_none_"
+            echo
+            echo "## Resources to destroy"
+            grep -E "^  # .* will be destroyed" azure-kubernetes-service/plan.full.txt || echo "_none_"
+            echo
+            echo "<details><summary>Full plan</summary>"
+            echo
+            echo '```hcl'
+            cat azure-kubernetes-service/plan.full.txt
+            echo '```'
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+        working-directory: ${{ github.workspace }}
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.workspace }}
+          path: azure-kubernetes-service/tfplan

@@ -1,0 +1,86 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-database-access
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: In
+        values:
+          - {{ include "generate.name.with.release.name" (list $ . .Values.global.database.dbMainInstanceName) | quote }}
+          - {{ include "generate.name.with.release.name" (list $ . .Values.global.database.dbBackUpInstanceName) | quote }}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          job-name: nr-custom-metrics
+    - podSelector:
+        matchLabels:
+          app: rtde
+    - podSelector:
+        matchLabels:
+          app: smbd
+    - podSelector:
+        matchLabels:
+          app: aap-instance-pod
+    - podSelector:
+        matchLabels:
+          app: er-init
+    - podSelector:
+        matchLabels:
+          app: {{ .Release.Name }}-er-spark
+    - podSelector:
+        matchLabels:
+          app: {{ .Release.Name }}-nr-ui-instance-pod
+    - podSelector:
+        matchLabels:
+          app: {{ .Release.Name }}-standalone-instance-pod
+    - podSelector:
+        matchLabels:
+          app: {{ .Release.Name }}-wlm-igs-sa-instance-pod
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: keycloak
+    {{- if .Values.databaseAccess }}
+    {{- tpl (toYaml .Values.databaseAccess) . | nindent 4 }}
+    {{- end }}
+    ports:
+    - protocol: TCP
+      port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-database-access-from-cnpg
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: cnpg.io/cluster
+        operator: In
+        values:
+          - {{ include "generate.name.with.release.name" (list $ . .Values.global.database.dbMainInstanceName) | quote }}
+          - {{ include "generate.name.with.release.name" (list $ . .Values.global.database.dbBackUpInstanceName) | quote }}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchExpressions:
+          - key: kubernetes.io/metadata.name
+            operator: In
+            values:
+              {{- range .Values.global.cnpgOperatorNamespaces }}
+              - {{ . | quote }}
+              {{- end }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: cloudnative-pg
+    ports:
+    - protocol: TCP
+      port: 8000

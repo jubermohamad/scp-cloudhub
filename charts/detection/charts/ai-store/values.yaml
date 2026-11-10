@@ -1,0 +1,923 @@
+# =============================================================================
+# Reference catalog only — the chart does NOT read deploy.*. Documents the platform
+# defaults, environment inputs, and secret keys for docs / onboarding. Mirrors the
+# structure of values-scp.yaml. Actual values are set via the sections below and
+# environment/secret overlays.
+# =============================================================================
+deploy:
+  # Platform defaults (constant across environments).
+  platform:
+    secretName: <secret_name>              # Chart creates this when global.manageSecrets=true
+    imagePullSecret: <image_pull_secret_name>  # Chart creates this when global.manageImagePullSecrets=true
+    tlsSecret: <tls_secret_name>           # Must exist in namespace before deploy (wildcard cert)
+    minioService: minio
+    postgresService: postgres
+    redisService: redis
+    mlflowService: mlflow-tracking
+    mlflowBucket: mlflow-model-store
+    zotBucket: zot-oci
+    urlMinioCluster: "http://minio:9000"   # In-cluster MinIO; used by MLflow, not public ingress URL
+    acrHost: <acr_host>
+    acrUrl: "<acr_host>"
+    images:
+      backend: <acr_host>/modelhub-backend
+      frontend: <acr_host>/modelhub-frontend
+      mcpServer: <acr_host>/modelhub-mcp-server
+      trainingApi: <acr_host>/training-api/model-training-tool
+      trainingWorker: <acr_host>/training-api/model-training-tool-worker
+      monitoringApi: <acr_host>/monitoring-tool
+      monitoringWorker: <acr_host>/monitoring-package
+
+  # Environment inputs — filled by environment-specific overlays.
+  env:
+    namespace: ""
+    mcpRootDomain: ""                     # Base domain for MCP host validation
+    cookieDomain: ""                      # OAuth2 cookie scope, e.g. .fsai-symphonyai.com
+    aksClusterName: ""
+    aksContext: ""                        # kubectl context; often same as cluster name
+    hosts:
+      modelhub: ""                        # Main hub ingress hostname
+      mcp: ""
+      mlflow: ""
+      minio: ""
+      zot: ""
+      training: ""                        # model-training-tool API ingress
+      monitoring: ""                      # monitoring-tool API ingress
+    urls:
+      modelhub: ""                        # https://{modelhub host}
+      mlflow: ""
+      minio: ""
+      oauthCallback: ""                   # https://{modelhub}/oauth2/callback
+      dex: ""                             # https://{modelhub}/dex
+      dexCallback: ""                     # https://{modelhub}/dex/callback
+    mlflowAllowedHosts: ""                # Comma-separated; include public + in-cluster names
+
+  # Secret keys — filled by secret overlays (never commit real values).
+  secrets:
+    databaseUrl: ""                       # postgresql://user:pass@postgres:5432/db
+    acrUsername: ""
+    acrPassword: ""
+    postgresUser: ""
+    postgresPassword: ""
+    postgresDb: ""
+    mcpApiKey: ""
+    deploymentApiKey: ""
+    backendApiKey: ""
+    oauth2ProxyClientId: ""
+    oauth2ProxyClientSecret: ""
+    oauth2ProxyCookieSecret: ""           # base64-encoded 32-byte secret
+    oauth2ProxyEmailDomains: ""
+    dexStaticUserEmail: ""
+    dexStaticUserUsername: ""
+    dexOauth2ProxyClientId: ""
+    dexOauth2ProxyClientSecret: ""
+    dexMicrosoftClientId: ""
+    dexMicrosoftClientSecret: ""
+    dexMicrosoftDomainHint: ""
+    azureSubscriptionId: ""               # Required when backend.env.globalStoreEnabled=true
+    azureResourceGroup: ""
+    azureWorkspaceName: ""
+    azureRegistryName: ""
+    azureTenantId: ""
+    azureClientId: ""
+    azureClientSecret: ""
+    minioRootUser: ""                     # Stored in <secret_name> as aws-access-key-id
+    minioRootPassword: ""                 # Stored as aws-secret-access-key
+    mlflowAdminUser: ""
+    mlflowAdminPassword: ""
+    mlflowFlaskSecretKey: ""              # Optional; MLflow subchart generates one if empty
+    zotRegistryUser: ""
+    zotRegistryPassword: ""
+
+# Prefix for resource names (deployments, services, etc.). Empty = no prefix. E.g. "modelhub-" gives modelhub-backend, modelhub-celery, etc.
+# When set, database-url and redis-url in secrets must use <prefix>postgres and <prefix>redis as hostnames.
+namePrefix: ""
+
+# Per-component name overrides, applied under namePrefix (naming-migration seam — see
+# docs/NAMING-MIGRATION.md Step 2). Each key is the literal component name used at every
+# model-store.componentName call site; the value is what actually renders. Defaults below
+# equal today's bare names, so leaving this map alone is a no-op. A component not listed
+# here (postgres, redis, dex-config, …) falls back to its own literal.
+#
+# `oauth2-proxy-service` is a SECOND component string for the same workload: the
+# Deployment renders from "oauth2-proxy" and its Service from
+# "oauth2-proxy-service", which is why the two names disagree today. Both are in
+# the map so an installation can converge them onto one name.
+componentNames:
+  backend: backend
+  frontend: frontend
+  celery: celery
+  celery-beat: celery-beat
+  dex: dex
+  oauth2-proxy: oauth2-proxy
+  oauth2-proxy-service: oauth2-proxy-service
+  mcp-server: mcp-server
+
+# Placeholders (replace before deploy): <acr_host>, <modelhub_host>, <mcp_host>, <tls_secret_name>,
+# <image_pull_secret_name>, <secret_name>, <namespace>
+# First-party app images default to tag `latest` (the Build pipeline always pushes/overwrites
+# `:latest`); pin a specific build with --set <component>.image.tag=<tag> at deploy if needed.
+# Public dependency images use the ACR mirror (ai-store-services/*) with pinned versions.
+namespaceOverride: <namespace>
+
+# When true, chart creates ServiceAccount and RBAC for each deployment (namespace-scoped, no conflicts).
+rbac:
+  create: true
+
+domain:
+  modelhubHost: <modelhub_host>
+  mcpHost: <mcp_host>
+  # Optional: public host for model-training-tool ingress (/docs, /openapi.json, /mcp). Set when model_training_tool.ingress.enabled.
+  trainingServiceHost: ""
+  # Optional: public host for monitoring-tool ingress (/docs, /openapi.json, /mcp). Set when monitoring_tool.ingress.enabled.
+  monitoringServiceHost: ""
+  mlflowHost: ""  # e.g. helmtest-mlflow-modelhub.fsai-symphonyai.com (when internalServices.mlflow.enabled)
+  minioHost: ""   # e.g. helmtest-minio-modelhub.fsai-symphonyai.com (for MLFLOW_S3_ENDPOINT_URL from external)
+  # Public hostname for Zot (e.g. sri-store-registry.example.com). If set, ZOT_REGISTRY_URL uses it (HTTPS/443 when no port)
+  # and an Ingress is created so kubelet on cloud nodes pulls via normal DNS + TLS. TLS secret: modelhubTlsSecret (must cover this host).
+  # Leave empty to use in-cluster *.svc.cluster.local:5000 (often fails on node DNS).
+  zotRegistryHost: ""
+  # Preferred: single wildcard TLS secret used by all chart ingresses
+  tlsSecret: <tls_secret_name>
+
+oauth2Proxy:
+  enabled: true
+  # Comma-separated domains allowed in oauth2-proxy ?rd= after login. When the training tool uses a
+  # different hostname than the hub (auth on hub /oauth2/*), set a parent entry such as .example.com
+  # so redirects back to https://training-host/... are accepted (maps to OAUTH2_PROXY_WHITELIST_DOMAINS).
+  whitelistDomains: ""
+  # Set to a parent host with a leading dot (e.g. .example.com) so the oauth2-proxy session cookie is
+  # sent on every subdomain. Without this, auth-url on the hub sees no cookie for requests whose Host
+  # is the training hostname → nginx "401 Authorization Required" before traffic hits the training pod.
+  cookieDomain: ""
+  # Explicit SameSite avoids browser-dependent defaults on _oauth2_proxy (audit). Use "lax" for OIDC redirects.
+  # "none" requires Secure=true (HTTPS). With cookieDomain spanning subdomains, "lax" still sends the cookie on top-level navigations.
+  cookieSameSite: "lax"
+  # Explicit HttpOnly for audits (oauth2-proxy defaults to true).
+  cookieHttpOnly: true
+  # Optional; omit to use oauth2-proxy default for CSRF cookies. Set to match session when policies require it.
+  cookieCsrfSameSite: ""
+  image:
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/oauth2-proxy
+    # Pinned (was upstream `latest`) so the image is reproducible and mirrorable to the ACR.
+    tag: v7.15.3
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+# Internal vs external MLflow: enabled=true uses in-cluster MLflow; false uses global.secrets (external MLflow, Azure Blob)
+internalServices:
+  enabled: true
+  mlflow:
+    enabled: true
+    externalUrl: ""  # e.g. https://mlflow-helmtest.fsai-symphonyai.com (for model uploads)
+    # in-tree patch (naming migration): in-cluster tracking endpoint for
+    # modelhub-secrets' mlflow-tracking-uri. Empty =
+    # http://<mlflow.fullnameOverride>:5000, i.e. the bundled MLflow under
+    # whatever name it currently carries. Same seam as internalServices.minio.url.
+    url: ""
+  minio:
+    externalUrl: ""  # public host for MLFLOW_S3_ENDPOINT_URL_EXTERNAL (model uploads from outside)
+    # in-tree patch (P5): in-cluster S3 endpoint for every consumer
+    # (mlflow-s3-endpoint-url, zot's storageDriver, the zot bucket job).
+    # Empty = http://<minio.fullnameOverride>:9000, i.e. the bundled MinIO.
+    # Set this (namespace-qualified) when minio.enabled=false.
+    url: ""
+  # OCI registry (project-zot/zot). Needs an S3 endpoint — either the bundled
+  # MinIO or internalServices.minio.url.
+  zot:
+    enabled: true
+  secrets:
+    # Stored in <secret_name> as aws-access-key-id / aws-secret-access-key (used by MinIO + backend/celery)
+    minioRootUser: ""
+    minioRootPassword: ""
+    # MLflow basic auth (admin user/password) - used for UI and backend/celery API access
+    mlflowAdminUser: ""
+    mlflowAdminPassword: ""
+    mlflowFlaskSecretKey: ""  # Optional; CSRF secret for MLflow (default used if empty)
+    # Zot OCI registry htpasswd (secrets.values.yaml when zot.auth.enabled)
+    zotRegistryUser: ""
+    zotRegistryPassword: ""
+
+global:
+  # Subcharts (model-training-tool, …) read global.namePrefix for in-cluster backend DNS.
+  namePrefix: ""
+  # Mirrors the top-level componentNames map (Helm globals don't cross-reference sibling
+  # keys) so subcharts resolving cross-refs to ai-store components — e.g.
+  # model-training-tool's aistoreControlPlaneUrl, hardcoded to "backend" — stay in sync
+  # with a namePrefix/componentNames.backend override made at the parent.
+  componentNames:
+    backend: backend
+    frontend: frontend
+    celery: celery
+    celery-beat: celery-beat
+    dex: dex
+    oauth2-proxy: oauth2-proxy
+    oauth2-proxy-service: oauth2-proxy-service
+    mcp-server: mcp-server
+  # Subcharts (MinIO, MLflow, …) use toYaml on this list — each entry must be a LocalObjectReference: { name: "..." }.
+  imagePullSecrets:
+    - name: <image_pull_secret_name>
+  secretName: <secret_name>
+  # Bitnami chart may flag bitnamilegacy/* images; set true if deploy fails with "unrecognized images"
+  security:
+    allowInsecureImages: true
+  # When true, Helm creates <secret_name> from global.secrets below.
+  # Deployment will fail with clear errors if any required secret is missing.
+  # When false, the secret must be pre-created.
+  manageSecrets: false
+  # When true, Helm creates kubernetes.io/dockerconfigjson Secrets for each global.imagePullSecrets[]
+  # entry using global.secrets.acrUrl / acrUsername / acrPassword (also in modelsNamespace when it differs).
+  manageImagePullSecrets: false
+  # When true, chart adds pod annotations that change on every `helm upgrade` so workloads roll even when
+  # image.repository:tag is unchanged (e.g. :latest). Pair with imagePullPolicy: Always. Recommended for dev.
+  rolloutOnHelmUpgrade: false
+  # Fill in all required keys when manageSecrets is true.
+  # Recommended: copy global.secrets to a separate file (e.g. secrets.values.yaml, git-ignored)
+  # and use: helm upgrade --install ... -f values.yaml -f secrets.values.yaml --set global.manageSecrets=true
+  secrets:
+    # --- Core (always required when manageSecrets is true) ---
+    databaseUrl: ""  # postgresql://user:password@host:5432/dbname
+    redisUrl: ""     # redis://host:6379/0
+    # --- Azure ML (required only when backend.env.globalStoreEnabled is true) ---
+    azureSubscriptionId: ""   # Azure subscription UUID
+    azureResourceGroup: ""    # Azure ML resource group
+    azureWorkspaceName: ""    # Azure ML workspace name
+    azureRegistryName: ""     # Azure ML registry name
+    azureTenantId: ""         # Azure AD tenant UUID
+    azureClientId: ""         # Service principal / app registration client ID
+    azureClientSecret: ""     # Service principal client secret
+    # --- ACR (always required) ---
+    acrUrl: ""                # Container registry URL, e.g. myregistry.azurecr.io
+    acrUsername: ""           # ACR username (often registry name)
+    acrPassword: ""           # ACR password or token
+    mcpRootDomain: ""         # Root domain for MCP hosts, e.g. invhub.fseng.net
+    mcpApiKey: ""             # API key for MCP server auth
+    deploymentApiKey: ""       # API key for deployment API
+    backendApiKey: ""         # API key for backend API
+    externalApiKey: ""         # Optional distinct external API key; falls back to backendApiKey
+    aksClusterName: ""        # AKS cluster name
+    aksContext: ""            # kubectl context name (often same as cluster)
+    # Public hub ingress (hostname only, no scheme). If empty with aksIngressBaseUrl empty, AKS model
+    # deploys persist endpoint_url as http://<svc>.<ns>.svc.cluster.local (in-cluster only); deploy task
+    # skips update_ingress for /models/<name> paths. See helm/ai-store/README.md.
+    aksIngressHost: ""        # e.g. {namespace}-modelhub.{domain}; empty = cluster-local model URLs only
+    # Public base URL (https://...) for hub + path-based model ingress. Empty = same as aksIngressHost empty.
+    aksIngressBaseUrl: ""     # e.g. https://{namespace}-modelhub.{domain}
+    mcpTlsSecretName: ""      # TLS secret name for ingress (cert-manager)
+    modelsNamespace: ""      # Namespace for model deployments
+    mcpNamespace: ""           # Namespace for MCP deployments
+    agentsNamespace: ""       # Namespace for agent deployments
+    mlflowTrackingUri: ""     # https://mlflow-host/path or file://...
+    mlflowTrackingUsername: ""
+    mlflowTrackingPassword: ""
+    mlflowS3EndpointUrl: ""    # Optional; S3-compat endpoint for MLflow artifact store
+    azureStorageConnectionString: ""  # Azure Storage connection string for MLflow
+    # --- Postgres (required when postgres.enabled) ---
+    postgresUser: ""
+    postgresPassword: ""
+    postgresDb: ""            # e.g. modelhub
+    # --- OAuth2 Proxy (required when oauth2Proxy.enabled) ---
+    oauth2ProxyClientId: ""    # OIDC client ID for oauth2-proxy
+    oauth2ProxyClientSecret: ""
+    oauth2ProxyCookieSecret: ""   # base64-encoded 32-byte secret
+    oauth2ProxyEmailDomains: ""   # e.g. symphonyai.com,*
+    oauth2ProxyRedirectUrl: ""    # https://{host}/oauth2/callback
+    oauth2ProxyOidcIssuerUrl: ""  # https://{host}/dex
+    # --- Dex (required when dex.enabled) ---
+    dexIssuer: ""             # https://{host}/dex
+    dexStaticUserEmail: ""
+    dexStaticUserUsername: ""
+    dexOauth2ProxyClientId: ""    # Same as OAuth2 proxy client ID
+    dexOauth2ProxyClientSecret: ""
+    dexOauth2ProxyRedirectUri: "" # https://{host}/dex/callback
+    dexMicrosoftClientId: ""      # Entra ID app registration client ID
+    dexMicrosoftClientSecret: ""
+    dexMicrosoftRedirectUri: ""   # https://{host}/dex/callback
+    dexMicrosoftDomainHint: ""   # e.g. symphonyai.com
+
+singleNamespace:
+  enabled: true
+  defaultNamespace: <namespace>
+
+backend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: <acr_host>/modelhub-backend
+    tag: latest
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    prodDeploymentType: aks
+    modelStoreProvider: mlflow
+    globalStoreEnabled: false
+    # ingress-nginx is trusted forwarding hop for external API traffic.
+    externalApiTrustForwardedFor: true
+    # Runtime environment (dev | staging | prod). Controls whether OpenAPI docs
+    # (/docs, /openapi.json) are served: enabled ONLY in "dev". Defaults to prod
+    # so a deploy that omits it fails closed (docs hidden). See TM-14 / AC-439.
+    environment: prod
+
+celery:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: <acr_host>/modelhub-backend
+    tag: latest
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  workerConcurrency: 4
+  dind:
+    image: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/docker:24-dind
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+  exporter:
+    enabled: true
+    image: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/celery-exporter:0.9.1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+celeryBeat:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: <acr_host>/modelhub-backend
+    tag: latest
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+frontend:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: <acr_host>/modelhub-frontend
+    tag: latest
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+mcpServer:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: <acr_host>/modelhub-mcp-server
+    tag: latest
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  service:
+    type: ClusterIP
+    port: 8081
+  guard:
+    enabled: true
+    requestLimit: 60
+    requestWindowSeconds: 60
+    rowLimit: 1000000
+    rowWindowSeconds: 60
+    maxBodyBytes: "100m"
+    # ingress-nginx is the expected trusted forwarding hop in Kubernetes.
+    trustForwardedFor: true
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  # Response headers via nginx.ingress.kubernetes.io/add-headers → ConfigMaps (no configuration-snippet).
+  # Works when snippet annotations are disabled cluster-wide.
+  responseHeaders:
+    enabled: true
+    base:
+      X-Content-Type-Options: "nosniff"
+      Referrer-Policy: "strict-origin-when-cross-origin"
+      Permissions-Policy: "geolocation=(), microphone=(), camera=()"
+    # Optional extra headers merged with base for modelhub-auth-ingress only.
+    authExtra: {}
+    # Optional extra headers merged with base for models-mcp-ingress only.
+    mcpExtra: {}
+    # Merged with base for app, external API, and health Ingresses (typically CSP).
+    app:
+      Content-Security-Policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
+  # Optional nginx whitelist annotation value.
+  # Example: "10.0.0.0/8,192.168.0.0/16"
+  whitelistSourceRange: ""
+  authEnabled: true
+  externalApiPath: /external-api
+  # Per-source-IP rate limiting on the auth ingress (/oauth2 + /dex) — TM-6
+  # login-flow DoS guard. Empty value omits the annotation.
+  authLimitRps: "10"              # requests/sec per client IP
+  authLimitConnections: "20"      # concurrent connections per client IP
+  authLimitBurstMultiplier: "5"   # burst = authLimitRps * multiplier
+  authLimitWhitelist: ""          # CIDRs exempt (e.g. trusted NAT egress)
+  # Per-source-IP rate limiting applied to the dynamically-managed models-ingress
+  # (deployed-model predict path). Empty = annotation omitted (limit disabled).
+  limitRps: ""               # requests/sec per client IP
+  limitConnections: ""       # concurrent connections per client IP
+  limitBurstMultiplier: ""   # burst = limitRps * multiplier (nginx default 5)
+  limitWhitelist: ""         # CIDRs exempt from the limit, e.g. "10.0.0.0/8"
+  # Max predict request body accepted at ingress (413 above). 16Gi model pods
+  # absorb the parse; forces GB-scale batch jobs to chunk. "" = nginx default 1m.
+  # This is only the initial default: elevated users can override it at runtime from
+  # the Deployments page (persisted in app_settings, resolved DB-first by the backend
+  # and celery worker), which also re-patches the shared models ingress and refreshes
+  # running model deployments.
+  proxyBodySize: "100m"
+  # External MCP ingress protections. App-layer predict limits remain authoritative
+  # per caller+deployment and weighted rows; nginx adds broad per-source-IP shielding.
+  mcpProxyBodySize: "100m"
+  mcpLimitRps: "10"
+  mcpLimitConnections: "20"
+  mcpLimitBurstMultiplier: "5"
+  mcpLimitWhitelist: ""
+
+# HorizontalPodAutoscaler for model deployments. Requires metrics-server in-cluster.
+# On by default: HPA is the scaling mechanism since the replicas knob was removed (AC-467).
+hpa:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCpuUtilization: 70   # percent of pod CPU request
+
+dex:
+  enabled: true
+  # bcrypt hash for the static-user password ($2a$/$2b$; generate with
+  # `htpasswd -nbBC 12 "" "<pw>"`). Empty uses the chart's built-in hash.
+  staticPasswordHash: ""
+  # Microsoft (Azure AD) connector. Disable for a fully in-cluster, air-gapped DEX
+  # (static-password admin login only; no outbound login.microsoftonline.com dependency).
+  microsoft:
+    enabled: true
+  image:
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/dex
+    tag: v2.37.0
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  initImage:
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/alpine
+    tag: "3.20"
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+# NOTE: public dependency images below use the ACR mirror
+# (7378…azurecr.io/ai-store-services/*, see pipelines/mirror/acr-mirror-manifest.yaml).
+# Versions are pinned here and rarely change; values-scp.yaml inherits these (no per-image
+# overrides needed). For a different registry, override the repository in values.local.yaml.
+postgres:
+  enabled: true
+  image:
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/postgres
+    tag: "15"
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  storage:
+    size: 10Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+redis:
+  enabled: true
+  image:
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/redis
+    tag: 7-alpine
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Community MLflow chart (community-charts/helm-charts) + official MinIO chart (charts.min.io)
+# When internalServices.mlflow.enabled. Full names MUST match shared-secrets.
+mlflow:
+  fullnameOverride: "mlflow-tracking"
+  # Single-replica tracking server: Recreate avoids a second pod during RollingUpdate
+  # (chart default maxSurge 100% + maxUnavailable 0) while the new pod is still starting.
+  strategy:
+    type: Recreate
+  image:
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/mlflow
+    # ACR mirror of burakince/mlflow (chart appVersion 3.14.0); pinned so it is reproducible.
+    tag: "3.14.0"
+    pullPolicy: Always   # feeds the mlflow subchart, whose schema enums this field ("" is invalid)
+  initImages:
+    dbchecker:
+      repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/busybox
+      tag: "1.38.0"
+    mlflowDbMigration:
+      repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/mlflow
+      tag: "3.14.0"
+    iniFileInitializer:
+      repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/busybox
+      tag: "1.38.0"
+  service:
+    port: 5000
+    containerPort: 5000
+  postgresql:
+    enabled: false
+  mysql:
+    enabled: false
+  backendStore:
+    databaseMigration: true
+    postgres:
+      enabled: true
+      host: "<prefix>postgres"
+      port: 5432
+      database: "mlflow"
+      user: "postgres"
+    existingDatabaseSecret:
+      name: "<secret_name>"
+      usernameKey: "postgres-user"
+      passwordKey: "postgres-password"
+  artifactRoot:
+    s3:
+      enabled: true
+      bucket: "mlflow-model-store"
+      existingSecret:
+        name: "<secret_name>"
+        keyOfAccessKeyId: "aws-access-key-id"
+        keyOfSecretAccessKey: "aws-secret-access-key"
+  extraEnvVars:
+    MLFLOW_S3_ENDPOINT_URL: "http://minio:9000"
+    # MLflow 3.5+ (DNS rebinding protection): include your ingress hostname (domain.mlflowHost) and the tracking Service name.
+    # For non-80 HTTP, clients send Host as "hostname:port" — include both short names and :port (e.g. mlflow-tracking:5000).
+    # Example override: "my-mlflow.example.com,localhost,127.0.0.1,mlflow-tracking,mlflow-tracking:5000"
+    # Server-side only (MLflow tracking pod). Do not duplicate on backend/celery — clients use MLFLOW_TRACKING_URI only.
+    MLFLOW_SERVER_ALLOWED_HOSTS: "localhost,127.0.0.1,localhost:5000,127.0.0.1:5000,mlflow-tracking,mlflow-tracking:5000"
+    MLFLOW_SERVER_ENABLE_JOB_EXECUTION: "false" # Disable job execution due to vurnelability issues
+  auth:
+    enabled: true
+    existingAdminSecret:
+      name: "<secret_name>"
+      usernameKey: "admin-user"
+      passwordKey: "admin-password"
+    # MLflow 3.14 + uvicorn: SQLite auth DB fails in container (unable to open database file).
+    # Use mlflow_auth DB created by postgres-mlflow-init (see templates/postgres-mlflow-init-configmap.yaml).
+    postgres:
+      enabled: true
+      host: "<prefix>postgres"
+      port: 5432
+      database: mlflow_auth
+      existingSecret:
+        name: "<secret_name>"
+        usernameKey: postgres-user
+        passwordKey: postgres-password
+  log:
+    enabled: false    # chart/community fix: use uvicorn path, not gunicorn
+  extraArgs:
+    workers: "2"
+    uvicornOpts: "--timeout-keep-alive 600"
+  livenessProbe:
+    initialDelaySeconds: 60
+    timeoutSeconds: 10
+    failureThreshold: 6
+  readinessProbe:
+    initialDelaySeconds: 45
+    timeoutSeconds: 10
+    failureThreshold: 6
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 4Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    hosts:
+      - host: ""
+        paths:
+          - path: /
+            pathType: ImplementationSpecific
+    tls: []
+  # Ingress hostname, tls etc. set in values.local.yaml or environment-specific overrides
+minio:
+  # false = use an external/shared object store instead; then set
+  # internalServices.minio.url to its in-cluster S3 endpoint and make sure the
+  # buckets + the internalServices.secrets.minioRootUser/Password credentials
+  # exist there (SRI: common.platform-services minioTenants.<product>).
+  enabled: true
+  fullnameOverride: "minio"
+  mode: standalone
+  replicas: 1
+  # RWO PVC allows only one attachment at a time; RollingUpdate can spawn a second pod and hit Multi-Attach.
+  # Recreate tears down the old pod before starting the new one — data stays on the same PVC (persistence.enabled).
+  deploymentUpdate:
+    type: Recreate
+  image:
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/minio
+    tag: RELEASE.2024-12-18T13-15-44Z
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  # mc client used by the minio post-job and templates/zot-minio-bucket-job.yaml
+  mcImage:
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/mc
+    tag: RELEASE.2024-11-21T17-21-54Z
+  rootUser: ""
+  rootPassword: ""
+  existingSecret: "<secret_name>"
+  persistence:
+    enabled: true
+    size: 500Gi
+  service:
+    port: "9000"
+  buckets:
+    - name: mlflow-model-store # Model store for MLflow
+      policy: none
+      purge: false
+    - name: zot-oci # Zot OCI registry
+      policy: none
+      purge: false
+    - name: datasets # Datasets for model training and monitoring
+      policy: none
+      purge: false
+    - name: landing-zone # Landing zone for DH datasets
+      policy: none
+      purge: false
+  resources:
+    requests:
+      cpu: 2000m
+      memory: 4Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    path: /
+    hosts: []      # Set in values.local.yaml, e.g. [sri-store-minio-modelhub.fsai-symphonyai.com]
+    tls: []        # Set in values.local.yaml with secretName: modelhub-wildcard-tls
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+
+# Zot OCI registry (http://zotregistry.dev/helm-charts); enable with internalServices.zot.enabled.
+# ConfigMap {{ .Release.Name }}-config is rendered by templates/zot-configmap.yaml (Redis dedupe when redis.enabled).
+# configFiles: false skips the zot subchart’s empty ConfigMap so the parent-supplied CM is used.
+zot:
+  fullnameOverride: zot
+  # ACR-mirrored zot server + alpine test-hook image
+  image:
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/zot
+    tag: "v2.1.15"
+  test:
+    image:
+      repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/alpine
+      tag: "3.18"
+  # If set, forces ZOT_REGISTRY_URL (overrides domain.zotRegistryHost and cluster FQDN).
+  registryUrlOverride: ""
+  registryIngress:
+    enabled: true
+    className: ""
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+  # Must match MinIO chart buckets[].name and Zot storageDriver.bucket (see templates/_helpers.tpl).
+  s3Bucket: zot-oci
+  # Set false when a platform provisioner already creates the bucket and the
+  # MinIO user (see templates/zot-minio-bucket-job.yaml).
+  bucketJob:
+    enabled: true
+  # Start Zot after MinIO bucket hook (see templates/zot-minio-bucket-job.yaml) to avoid NoSuchBucket / dedupe spam.
+  deploymentAnnotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "25"
+    # in-tree patch: rendering a StatefulSet as a HOOK means Helm never tracks
+    # it in the release manifest — `helm uninstall` leaves it behind, and the
+    # next install dies with `StatefulSet "zot" ... cannot be imported into the
+    # current release`. Every other hook in this umbrella carries a delete
+    # policy; this one did not. before-hook-creation makes each install/upgrade
+    # replace the previous StatefulSet, which also cleans up an orphan from a
+    # prior uninstall. The PVC (sri-pvc-zot-N) is NOT touched by a StatefulSet
+    # delete, so registry data survives.
+    helm.sh/hook-delete-policy: before-hook-creation
+  service:
+    type: ClusterIP
+    port: 5000
+  persistence: true
+  mountConfig: true
+  configFiles: false
+  # HTTPS on Zot (same <tls_secret_name> as domain.tlsSecret / ingress). For HTTP-only Zot: tls.enabled false, httpGet.scheme HTTP, externalSecrets [].
+  httpGet:
+    scheme: HTTPS
+    port: 5000
+  externalSecrets:
+    - secretName: <tls_secret_name>
+      mountPath: /etc/zot/tls
+    # When zot.auth.enabled, add (htpasswd file is key htpasswd under mountPath):
+    - secretName: zot-auth
+      mountPath: /etc/zot/auth
+  # Basic auth on the OCI registry (htpasswd). Credentials: internalServices.secrets.zotRegistryUser /
+  # zotRegistryPassword in secrets.values.yaml (optional zot.auth.username / password overrides).
+  auth:
+    enabled: true
+    username: ""
+    password: ""
+    failDelay: 5
+    secretName: zot-auth
+    pullSecretName: zot-registry-pull
+    # Merge zot-registry-pull (and optional extras) onto the namespace default ServiceAccount
+    # via post-upgrade hook Job — Helm cannot adopt the cluster-created default SA.
+    serviceAccountPatch:
+      enabled: true
+      # Include acr-secret here too if the namespace default SA must pull both ACR and Zot images.
+      extraPullSecrets: []
+    htpasswd:
+      path: /etc/zot/auth/htpasswd
+  tls:
+    enabled: true
+    mountPath: /etc/zot/tls
+    certFile: tls.crt
+    keyFile: tls.key
+    certManager:
+      enabled: false
+      createCertificate: true
+      duration: 2160h
+      renewBefore: 360h
+      issuerRef:
+        kind: ClusterIssuer
+        name: ""
+    # pre-install Job: creates kubernetes.io/tls secret named modelhubTlsSecret if missing (skip when ingress secret already exists).
+    selfSignedJob:
+      enabled: false
+  env:
+    - name: AWS_ACCESS_KEY_ID
+      valueFrom:
+        secretKeyRef:
+          name: <secret_name>
+          key: aws-access-key-id
+    - name: AWS_SECRET_ACCESS_KEY
+      valueFrom:
+        secretKeyRef:
+          name: <secret_name>
+          key: aws-secret-access-key
+
+# Image used by the zot bootstrap helper Jobs (templates/zot-auth.yaml,
+# templates/zot-tls-bootstrap-job.yaml).
+zotBootstrap:
+  image:
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/ai-store-services/alpine
+    tag: "3.19"
+
+# Model Hub training API + MCP (see model_training_tool/ subchart). Requires internalServices + postgres when using in-cluster DB/MLflow/MinIO.
+# Unprefixed Service name (same convention as mlflow-tracking, minio, zot — not namePrefix-scoped).
+model_training_tool:
+  enabled: false
+  fullnameOverride: "model-training-tool"
+  replicaCount: 1
+  image:
+    repository: "<acr_host>/training-api/model-training-tool"
+    tag: latest
+    # If tag is :latest (or any mutable tag), set pullPolicy: Always and bump podAnnotations on each deploy.
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  podAnnotations: {}
+  workerImage:
+    repository: "<acr_host>/training-api/model-training-tool-worker"
+    tag: latest
+  uvProjectEnvironment: "/app/.venv"
+  ingress:
+    enabled: false
+    className: nginx
+    host: ""  # defaults to domain.trainingServiceHost when set via --set or secrets overlay
+    tlsSecretName: ""  # defaults to domain.tlsSecret / MCP TLS pattern in env-specific values
+    # TM-31 / AC-449: nginx per-source-IP edge rate limits for the training
+    # host (throttles POST /train bursts). Empty => no limit for that key.
+    limitRps: "10"
+    limitConnections: "20"
+    limitBurstMultiplier: "5"
+    limitWhitelist: ""
+
+# Model Hub monitoring API + MCP (see monitoring_tool/ subchart). Requires internalServices + postgres when using in-cluster DB/MLflow/MinIO.
+monitoring_tool:
+  enabled: false
+  fullnameOverride: "monitoring-tool"
+  replicaCount: 1
+  image:
+    repository: "<acr_host>/monitoring-tool"
+    tag: latest
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  podAnnotations: {}
+  workerImage:
+    repository: "<acr_host>/monitoring-package"
+    tag: latest
+  uvProjectEnvironment: "/app/.venv"
+  ociRegistryUrl: ""
+  aiStoreApiUrl: ""
+  ingress:
+    enabled: false
+    className: nginx
+    host: ""
+    tlsSecretName: ""
+    # TM-31 / AC-449: nginx per-source-IP edge rate limits for the monitoring host.
+    limitRps: "10"
+    limitConnections: "20"
+    limitBurstMultiplier: "5"
+    limitWhitelist: ""
+
+# Cross-repo E2E journey suite run as a `helm test` hook (see
+# templates/tests/e2e-journey.yaml and the e2e/ directory). Verifies a chart
+# install end to end: MTT train -> register -> ai-store cache sync -> deploy ->
+# monitoring -> inference -> teardown.
+#
+#   helm test <release> --logs --timeout 90m
+#
+# OFF by default: it trains a real model and, in full scope, builds and deploys
+# one. Requires model_training_tool.enabled and monitoring_tool.enabled.
+e2e:
+  enabled: false
+  image:
+    # Concrete host + pinned tag on purpose: the suite is a first-party image
+    # published by this repo's pipeline, and `helm test` must not need a --set to
+    # resolve it (a placeholder here surfaces as ImagePullBackOff minutes into
+    # the hook, not as a render error). Pinning also records WHICH suite version
+    # produced a result. Floating dev build: --set e2e.image.tag=latest.
+    repository: 7378dd5789674408aa20f503170fcb4b.azurecr.io/modelhub-e2e
+    tag: v1.2.4
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  # Defaults to global.imagePullSecrets when empty.
+  imagePullSecrets: []
+  # core = MTT <-> ai-store journey only (~15 min)
+  # full = + deploy, monitoring, inference, archive (set helm test --timeout to match)
+  scope: core
+  # Must map to an RBAC tier permitted to archive models; unknown emails fall
+  # back to the lowest tier and the archive stage legitimately returns 403.
+  # admin@symphonyai.com is seeded at T1 by alembic migration 019, so it is the
+  # one identity guaranteed to exist with archive rights in every install.
+  userEmail: "admin@symphonyai.com"
+  # Pod is killed after this long regardless of the helm test timeout.
+  activeDeadlineSeconds: 5400
+  minio:
+    # In-cluster MinIO from the internal stack; override for external S3.
+    endpoint: "minio:9000"
+    secure: false
+    # Default: global.secretName with the internal-MinIO key names.
+    secretName: ""
+    accessKeyKey: "aws-access-key-id"
+    secretKeyKey: "aws-secret-access-key"
+  deploy:
+    # dev_local_k8s | prod_aks | prod_container_apps | prod_managed_endpoint
+    target: prod_aks
+    # Defaults to the release's models namespace.
+    namespace: ""
+    # Seconds before the deferred safety re-delete (the async build pipeline can
+    # re-create k8s resources after the primary DELETE). Applied ONLY when the
+    # deployment never reached a terminal state, so green runs are not delayed.
+    cleanupDelaySeconds: 320
+    # Force a full BentoML rebuild rather than reusing an existing image. Keep
+    # true: image reuse is keyed by model NAME (no version), so a reused image
+    # can predate the version the run just registered, making the inference
+    # assertions validate a stale model. false = fast smoke of the deploy path.
+    forceRebuild: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  # Extra env vars appended verbatim (list of {name, value} / {name, valueFrom}).
+  extraEnv: []

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cn-postgres
+description: A Helm chart for cloudnative postgres
+type: application
+version: 0.28.0
+appVersion: v2026.07.1

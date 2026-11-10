@@ -1,0 +1,68 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.clusterName }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  instances: {{ .Values.instances }}
+  imageName: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+  primaryUpdateStrategy: {{ .Values.primaryUpdateStrategy | default "unsupervised" }}
+  {{- if .Values.superuserSecret}}
+  superuserSecret:
+    name:  {{ .Values.superuserSecret }}
+  {{- end }}
+  {{- with .Values.postgresql }}
+  postgresql:
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if .Values.backupConfig.enabled }}
+  {{- with .Values.backupConfig.backup }}
+  backup:
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.bootstrap.enabled}}
+  {{- if and .Values.bootstrap.config .Values.bootstrap.config.bootstrap .Values.bootstrap.config.bootstrap.recovery }}
+  bootstrap:
+    recovery:
+      {{- toYaml .Values.bootstrap.config.bootstrap.recovery | nindent 6 }}
+  {{- else if and .Values.bootstrap.config .Values.bootstrap.config.bootstrap .Values.bootstrap.config.bootstrap.pg_basebackup }}
+  bootstrap:
+    pg_basebackup:
+      {{- toYaml .Values.bootstrap.config.bootstrap.pg_basebackup | nindent 6 }}
+  {{- else if and .Values.bootstrap.config .Values.bootstrap.config.bootstrap .Values.bootstrap.config.bootstrap.initdb }}
+  bootstrap:
+    initdb:
+      {{- toYaml .Values.bootstrap.config.bootstrap.initdb | nindent 6 }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.storage }}
+  storage:
+  {{- toYaml .Values.storage | nindent 4 }}
+  {{- else }}
+  storage:
+    size: 50Gi
+  {{- end }}
+  {{- with .Values.resources }}
+  resources:
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if .Values.bootstrap.enabled }}
+  {{- with .Values.bootstrap.source  }}
+  {{ toYaml . | nindent 2}}
+  {{- end }}
+  {{- end }}
+  monitoring:
+    enablePodMonitor: {{ and .Values.monitoring.enabled .Values.monitoring.podMonitor.enabled }}
+    {{- if not (empty .Values.monitoring.customQueries) }}
+    customQueriesConfigMap:
+      - name: {{ include "cluster.fullname" . }}-monitoring
+        key: custom-queries
+    {{- end }}

@@ -1,0 +1,24 @@
+apiVersion: v1
+name: dxv
+appVersion: "1.0.0.0"
+description: A Helm chart for dxv server for sri platform
+version: 1.0.1
+type: application
+dependencies:
+  - name: network-policies
+    version: "3.1.1"
+    repository: file://./charts/network-policies
+    condition: global.nrSubChartSwitches.enableNetworkPolicies
+  - name: nrodsftp
+    version: 0.0.7
+    repository: file://./charts/nrodsftp
+  # The bundled MinIO had NO condition, so it rendered unconditionally and
+  # `minio.enabled: false` was silently inert. The condition is what lets the
+  # platform fold this instance into the shared store `sri-dev-minio` while a
+  # STANDALONE dxv install keeps its own copy — exactly how the bundled
+  # kafka/redis/postgres copies were disabled. Chart default stays `true`
+  # (values.yaml), so this is render-neutral on its own.
+  - name: minio
+    version: 0.1.1
+    repository: file://./charts/minio
+    condition: minio.enabled

@@ -1,0 +1,40 @@
+{{- if and (default false .Values.internalServices.zot.enabled) (include "model-store.zotPublicRegistryHostname" . | trim) (default true .Values.zot.registryIngress.enabled) }}
+{{- $host := include "model-store.zotPublicRegistryHostname" . | trim }}
+{{- $svc := .Values.zot.fullnameOverride | default "zot" }}
+{{- $port := .Values.zot.service.port | default 5000 }}
+{{- $class := .Values.zot.registryIngress.className | default .Values.ingress.className }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "model-store.componentName" (list . "zot-registry") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app.kubernetes.io/component: zot-registry
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- if .Values.zot.tls.enabled }}
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/proxy-ssl-verify: "false"
+    {{- end }}
+    {{- with .Values.zot.registryIngress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $class | quote }}
+  tls:
+    - hosts:
+        - {{ $host | quote }}
+      secretName: {{ include "model-store.modelhubTlsSecret" . }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $svc }}
+                port:
+                  number: {{ $port | int }}
+{{- end }}

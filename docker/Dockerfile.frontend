@@ -1,0 +1,87 @@
+#FROM docker/dockerfile:1.7
+FROM node:22-bookworm-slim AS base
+
+ENV NODE_ENV=production
+WORKDIR /app
+RUN corepack enable
+
+# Root manifests only (cache-stable)
+COPY --chown=node:node \
+    package.json \
+    yarn.lock \
+    .yarnrc.yml \
+    backstage.json \
+    ./
+COPY --chown=node:node .yarn ./.yarn
+
+# Create dirs + copy ONLY the package.json files needed for the app workspace graph
+RUN mkdir -p packages plugins
+COPY --chown=node:node packages/app/package.json packages/app/
+# Add every other packages/*/package.json and plugins/*/package.json that the
+# root workspaces field (or app’s dependencies) actually references.
+# Keep this list minimal – extra backend-only plugins are not needed here.
+COPY --chown=node:node plugins/platform-common/package.json plugins/platform-common/
+COPY --chown=node:node plugins/platform-home/package.json plugins/platform-home/
+COPY --chown=node:node plugins/platform-registry/package.json plugins/platform-registry/
+COPY --chown=node:node plugins/platform-deployment/package.json plugins/platform-deployment/
+COPY --chown=node:node plugins/cluster-registry/package.json plugins/cluster-registry/
+COPY --chown=node:node plugins/aks-health/package.json plugins/aks-health/
+COPY --chown=node:node plugins/observability/package.json plugins/observability/
+COPY --chown=node:node plugins/tenant-registry/package.json plugins/tenant-registry/
+COPY --chown=node:node plugins/tenant-overlay-manager/package.json plugins/tenant-overlay-manager/
+COPY --chown=node:node plugins/infrastructure-provisioning/package.json plugins/infrastructure-provisioning/
+COPY --chown=node:node plugins/data-export-hub/package.json plugins/data-export-hub/
+# Every workspace in yarn.lock must be present for `yarn install --immutable`.
+COPY --chown=node:node plugins/data-export-hub-backend/package.json plugins/data-export-hub-backend/
+COPY --chown=node:node plugins/data-export-scheduler/package.json plugins/data-export-scheduler/
+COPY --chown=node:node services/data-export-agent/package.json services/data-export-agent/
+# …add any others that `yarn workspaces focus app` requires
+
+FROM base AS deps
+RUN yarn workspaces focus app
+
+FROM deps AS builder
+# Source comes AFTER the install so code changes do not bust the deps cache
+COPY --chown=node:node packages ./packages
+COPY --chown=node:node plugins ./plugins
+COPY --chown=node:node app-config.yaml app-config.production.yaml tsconfig.json ./
+
+# Refresh install-state after source lands
+RUN YARN_ENABLE_SCRIPTS=0 yarn install --immutable
+
+ARG APP_BASE_URL=https://cloudhub.symphonyai.cloud
+ARG BACKEND_BASE_URL=https://cloudhub.symphonyai.cloud
+ARG AUTH_ENVIRONMENT=production
+ARG CLOUDHUB_VERSION=dev
+ENV APP_BASE_URL=${APP_BASE_URL}
+ENV BACKEND_BASE_URL=${BACKEND_BASE_URL}
+ENV APP_CONFIG_app_title=CloudHub
+ENV APP_CONFIG_app_baseUrl=${APP_BASE_URL}
+ENV APP_CONFIG_backend_baseUrl=${BACKEND_BASE_URL}
+ENV APP_CONFIG_auth_environment=${AUTH_ENVIRONMENT}
+ENV CLOUDHUB_VERSION=${CLOUDHUB_VERSION}
+
+RUN set -eu; \
+        normalize_url() { \
+            value="$1"; \
+            if [ -z "$value" ]; then exit 1; fi; \
+            case "$value" in \
+                http://*|https://*) ;; \
+                *) value="https://${value}" ;; \
+            esac; \
+            printf '%s' "$value"; \
+        }; \
+        APP_BASE_URL="$(normalize_url "$APP_BASE_URL")" \
+        BACKEND_BASE_URL="$(normalize_url "$BACKEND_BASE_URL")" \
+        yarn workspace app build
+
+FROM nginx:alpine
+ENV BACKEND_ORIGIN=http://backend:7007
+ARG CLOUDHUB_VERSION=dev
+ENV CLOUDHUB_VERSION=${CLOUDHUB_VERSION}
+
+COPY docker/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=builder /app/packages/app/dist /usr/share/nginx/html
+
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]

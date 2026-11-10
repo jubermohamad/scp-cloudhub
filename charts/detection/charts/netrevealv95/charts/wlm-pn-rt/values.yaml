@@ -1,0 +1,165 @@
+pod:
+  wlmPnRtDockerImage: "nri-nrod-k8s-wlm-pn-rt:s1-c9.4.0.0__r9.4.0.0__v9.4.0.35-20260312061440"
+  replicas: 1
+  java:
+    wlmpnrtMaxHeap: "6144m"
+    wlmpnrtMinHeap: "2048m"
+    wlmpnrtMaxRam: "13g"
+    extraJavaOpts: ""
+    wlmpnrtSwitchOnDebug: false
+  # soft: preferredDuringSchedulingIgnoredDuringExecution
+  # hard: requiredDuringSchedulingIgnoredDuringExecution
+  # custom: custom affinity rules defined with affinityRules
+  antiAffinity: "soft"
+  customAffinityRules: {}
+  dbPoolSize:
+    min: 10
+    max: 30
+  wildfly:
+    httpsListener:
+      maxParameters: "2000"
+      # maxPostSize is in bytes
+      maxPostSize: "104857600"
+    threadPool:
+      maxThreads: "10"
+  livenessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    successThreshold: 1
+    timeoutSeconds: 5
+  # readinessProbe:
+  #   failureThreshold: 20
+  #   initialDelaySeconds: 60
+  #   periodSeconds: 10
+  #   successThreshold: 1
+  #   timeoutSeconds: 5
+  startupProbe:
+    failureThreshold: 20
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  resources:
+    requests:
+      memory: "10Gi"
+      cpu: "250m"
+    limits:
+      memory: "13Gi"
+      cpu: "500m"
+pvc:
+  serverLogsStorage: 10Gi
+  serverConfigurationHistoryStorage: 10Gi
+  serverDeploymentsStorage: 10Gi
+  applicationLogsStorage: 10Gi
+  confWlmStorage: 10Gi
+  hsqldbStorage: 10Gi
+pv:
+  hostPath: "/var/nfs_k8s/wlmpnrt"
+  hostPathMinikube: "/opt/netreveal/wlmpnrt"
+
+log4j2:
+  functionstatsLogLevel: "debug"
+  messagestatsLogLevel: "debug"
+  overrideLog4j2: ""
+
+baseConfigProperties:
+  # filtering.build.indexes.onstartup
+  filteringBuildIndexesOnStartup: "true"
+# filtering.editable
+  filteringEditable: "false"
+# filtering.editablelists
+  filteringEditableLists: "true"
+# filtering.db.statement.batch.size
+  filteringDbStatementBatchSize: "100"
+# filtering.kafka.consumer.max.poll.interval.ms
+  filteringKafkaConsumerMaxPollIntervalMs: "1800000"
+# filtering.kafka.consumer.max.poll.records
+  filteringKafkaConsumerMaxPollRecords: "1"
+# filtering.kafka.consumer.session.timeout.ms
+  filteringKafkaConsumerSessionTimeoutMs: "300000"
+# filtering.batch.processing.kafka.node.count
+  filteringBatchProcessingKafkaNodeCount: "4"
+# filtering.batch.processing.kafka.consumer.count
+  filteringBatchProcessingKafkaConsumerCount: "5"
+# filtering.batch.transformation.kafka.consumer.count
+  filteringBatchTransformationKafkaConsumerCount: "1"
+# filtering.batch.transformation.kafka.retries
+  filteringBatchTransformationKafkaRetries: "3"
+# filtering.list.import.kafka.consumer.count
+  filteringListImportKafkaConsumerCount: "1"
+# filtering.24x7.ags.backup.recovery.interval
+  filtering24x7AgsBackupRecorveryInterval: "300000"
+# filtering.24x7.wlm.igs.write.sleep.time
+  filtering24x7WlmProcWriteSleepTime: "1000"
+# filtering.24x7.wlm.proc.read.sleep.time
+  filtering24x7WlmProcReadSleepTime: "60000"
+# filtering.24x7.processing.group.name
+  filtering24x7ProcessingGroupName: "WLM Processing Group"
+# filtering.24x7.processing.node.registration.start.delay
+  filtering24x7ProcessingNodeRegistrationStartDelay: "60000"
+# filtering.24x7.processing.node.registration.retry.interval
+  filtering24x7ProcessingNodeRegistrationRetryInterval: "600000"
+# filtering.24x7.processing.node.registration.request.timeout
+  filtering24x7ProcessingNodeRegistrationRequestTimeout: "5"
+# filtering.24x7.processing.node.swift.mt.linking.job.enable
+  filtering24x7ProcessingNodeSwiftMtLinkingJobEnable: "true"
+# filtering.24x7.processing.node.swift.mt.linking.job.retry.interval
+  filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval: "15000"
+# filtering.24x7.processing.node.swift.mt.linking.job.start.delay
+  filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay: "120000"
+# filtering.24x7.processing.node.swift.mt.linking.consumer.poll.timeout
+  filtering24x7ProcessingNodeSwiftMtLinkingConsumerPollTimeout: "1000"
+# filtering.24x7.processing.node.swift.mt.linking.records.processing.limit
+  filtering24x7ProcessingNodeSwiftMtLinkingRecordsProcessingLimit: "10000"
+  kafka:
+    producer:
+# kafka.producer.EIM-Default-Producer.interceptor.enabled
+      EIMDefaultProducer:
+        interceptorEnabled: "false"
+# kafka.producer.EIM-Default-Producer.metrics.interval
+        metricsInterval: "1200"
+    consumers:
+      bypass:
+        node:
+          registration:
+            # kafka.consumers.bypass.node.registration.list
+            # Keep this value empty to not define this parameter in the base_config.properties file
+            # https://netreveal.atlassian.net/wiki/spaces/Eng/pages/266469706/WLMX-1514+-+Services+Manager+in+WLM+RT-PROC+Node+is+initialized+before+WLM+Core+is+ready+causing+loss+of+processing
+            list: ""
+
+  # Project specific base_config.properties parameters. When it is defined as empty string then no new parameters are added into this file.
+  # To define new parameters please define it as follows:
+  # extraParameters: |
+  #   param1=value1
+  #   param2="value2"
+  #   param3=value3
+  extraParameters: ""
+
+service:
+  type: ClusterIP
+  port: 8443
+
+ingress:
+  enabled: true
+  ingressAllowList:
+    customerIPs: []
+    platformIPs: []
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: wlm-pn-rt.local
+      paths:
+        - path: /netreveal
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local

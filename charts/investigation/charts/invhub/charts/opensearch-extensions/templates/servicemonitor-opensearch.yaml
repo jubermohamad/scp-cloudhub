@@ -1,0 +1,37 @@
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor" -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.clusterName }}-servicemonitor
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpoints:
+    - port: http  # The port exposed by your OpenSearch service for metrics
+      path: /_prometheus/metrics  # The path where metrics are available
+      scheme: https
+      basicAuth:
+        username:
+          # Name of the secret containing the username
+          name: opensearch-basic-auth
+          key: INVESTIGATION_HUB_OPEN_SEARCH_USER
+        password:
+          # Name of the secret containing the password
+          name: opensearch-basic-auth
+          key: INVESTIGATION_HUB_OPEN_SEARCH_PASSWORD
+      interval: 10s  # Frequency of scraping metrics
+      tlsConfig:
+        serverName: {{ printf "%s-%s" .Values.clusterName .Values.nodeGroup | quote }}
+        ca:
+          secret:
+            name: {{ printf "%s-certs" .Values.clusterName | quote }}
+            key: ca.crt
+        insecureSkipVerify: {{ .Values.global.allowInsecureDefaults | default false }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: {{ .Values.clusterName }}-{{ .Values.nodeGroup }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: opensearch
+{{- end }}

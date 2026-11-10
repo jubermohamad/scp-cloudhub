@@ -1,0 +1,36 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: aap
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "common.helm.metadata.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Release.Name }}-cert-aap
+  duration: {{ .Values.global.certificate.duration }}
+  renewBefore: {{ .Values.global.certificate.renewBefore }}
+  dnsNames:
+  - localhost
+  - {{ .Release.Name }}-aap.{{ .Values.global.namespace }}.svc.cluster.local
+{{- range $i := until (int .Values.pod.replicas) }}
+  - {{ $.Release.Name }}-aap-{{ $i }}.{{ $.Release.Name }}-aap.{{ $.Values.global.namespace }}.svc.cluster.local
+  - {{ $.Release.Name }}-aap-{{ $i }}
+{{- end }}
+  subject:
+    organizations: {{ .Values.global.certificate.subject.organizations }}
+    countries: {{ .Values.global.certificate.subject.countries }}
+    organizationalUnits: {{ .Values.global.certificate.subject.organizationalUnits }}
+    localities: {{ .Values.global.certificate.subject.localities }}
+    provinces: {{ .Values.global.certificate.subject.provinces }}
+  issuerRef:
+    name: {{ .Values.global.issuer.ca.name }}
+  keystores:
+    pkcs12:
+      create: true
+      passwordSecretRef:
+        name: {{ .Release.Name }}-jks-password
+        key: password
+  secretTemplate:
+      annotations:
+        reloader.stakater.com/match: "true"

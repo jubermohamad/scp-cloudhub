@@ -1,0 +1,6 @@
+apiVersion: v2
+name: backups
+description: A Helm chart for resources required for backups
+type: application
+version: 0.27.0
+appVersion: v2026.07.1

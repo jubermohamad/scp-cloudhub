@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haproxy-egress
+  namespace: {{ .Release.Namespace }}
+
+spec:
+  replicas: {{ .Values.replicaCount }}
+
+  selector:
+    matchLabels:
+      app: haproxy-egress
+
+  template:
+    metadata:
+      labels:
+        app: haproxy-egress
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/mtls-secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+        checksum/api-secret: {{ include (print $.Template.BasePath "/api-key-secrets.yaml") . | sha256sum }}
+
+    spec:
+      containers:
+        - name: haproxy
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+
+          args:
+            - "-f"
+            - "/usr/local/etc/haproxy/haproxy.cfg"
+            - "-db"
+
+          ports:
+            - containerPort: {{ .Values.service.port }}
+
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          env:
+{{- range .Values.mtls.domains }}
+
+            - name: API_KEY_{{ upper .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: api-auth-{{ .name }}
+                  key: api-key
+
+            - name: BASIC_AUTH_{{ upper .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: api-auth-{{ .name }}
+                  key: basic-auth
+
+{{- end }}
+
+          volumeMounts:
+            - name: config
+              mountPath: /usr/local/etc/haproxy/haproxy.cfg
+              subPath: haproxy.cfg
+
+{{- range .Values.mtls.domains }}
+            - name: mtls-{{ .name }}
+              mountPath: {{ $.Values.mtls.certPath }}/{{ .name }}
+              readOnly: true
+{{- end }}
+
+      volumes:
+        - name: config
+          configMap:
+            name: haproxy-config
+
+{{- range .Values.mtls.domains }}
+        - name: mtls-{{ .name }}
+          secret:
+            secretName: mtls-{{ .name }}
+{{- end }}

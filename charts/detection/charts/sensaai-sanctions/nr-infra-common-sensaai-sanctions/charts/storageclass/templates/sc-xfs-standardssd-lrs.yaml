@@ -1,0 +1,13 @@
+{{- if and (eq .Values.global.clusterType "aks") .Values.storageClass.enable.scXfsStandardssdLrs }}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: managed-csi-xfs-standardssd-lrs
+parameters:
+  skuname: StandardSSD_LRS
+  fsType: xfs
+provisioner: disk.csi.azure.com
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+{{- end }}

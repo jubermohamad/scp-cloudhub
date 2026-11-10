@@ -1,0 +1,105 @@
+replicaCount: 1
+
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/invhub-reporting-poc
+  # When empty, omit imagePullPolicy and use the Kubernetes default.
+  pullPolicy: ""
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets:
+  - name: "regcred"
+
+nameOverride: ""
+fullnameOverride: "reporting-dashboard"
+
+extraEnv:
+  []
+  # - name: ADDITIONAL_VAR
+  #   value: "additional-value"
+
+extraSecretEnv:
+  []
+  # - name: POSTGRE_PASS
+  #   secretName: postgres-credential-copilot-cn
+  #   key: password
+
+global:
+  imagePullPolicy: Always   # platform default; the umbrella global overrides it
+  BASENAME: "invhub"
+  DOMAIN: "example.com"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 3001
+
+livenessProbe:
+  {}
+  # httpGet:
+  #   path: /
+  #   port: http
+
+readinessProbe:
+  {}
+  # httpGet:
+  #   path: /
+  #   port: http
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 50m
+    memory: 128Mi
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

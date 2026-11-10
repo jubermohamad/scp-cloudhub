@@ -1,0 +1,114 @@
+name: sridata-dev deployment
+
+# Continuous deployment of Keycloak to the sridata-dev-centralindia-aks
+# cluster, namespace sri-dev-keycloak. Manual only for now (workflow_dispatch)
+# since this is a new cluster/namespace target.
+#
+# Deploys via sri-gh-workflows' reusable sri-helm-deployment.yaml, using its
+# chart_source_mode: local (this repo's own chart at its root — merged in
+# https://github.com/SymphonySensa/sri-gh-workflows/pull/11, pinned to a
+# specific commit below). This repo doubles as its own "config_repository":
+# sridata-dev/deployment.properties + values.overrides.yaml supply the
+# environment config the reusable workflow expects.
+#
+# Required repo secrets (see README/DEPLOYMENT.md for how to share/verify):
+#   - INVHUB_AZURE_CREDENTIALS  (Azure/login SP creds JSON; also used directly
+#     by the "Prepare secrets" job below)
+#   - INVHUB_DOCKERCONFIGJSON   (image pull secret content; prepare_env=true
+#     creates "regcred" from it if missing)
+#   - SENSABOT_PAT_TOKEN        (required unconditionally by sri-helm-deployment
+#     .yaml's ghcr.io login step, even in local mode)
+#   - SRI_KEYCLOAK_GPG_PRIVATE_KEY / SRI_KEYCLOAK_GPG_PASSPHRASE (dedicated
+#     keypair decrypting sridata-dev/values.secrets.yaml.gpg, which supplies
+#     externalDatabase.password — the keycloak Postgres role's own password)
+#
+# Prerequisites this workflow does NOT provision (fails fast otherwise):
+#   - The common-res chart installed on this cluster with cert-manager.
+#     enabled=true and cluster-issuers.enabled=true (ClusterIssuer
+#     "letsencrypt-production"). Already installed as of 2026-07-16.
+#   - The "common-postgres" CNPG cluster in the "postgres" namespace, with
+#     enableSuperuserAccess=true (so common-postgres-superuser exists).
+#     Already recreated with this setting as of 2026-07-16.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Helm mode"
+        required: false
+        default: "upgrade"
+        type: choice
+        options:
+          - upgrade
+          - diff
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  KC_NAMESPACE: "sri-dev-keycloak"
+  CLUSTER_NAME: "sridata-dev-centralindia-aks"
+  CLUSTER_RESOURCE_GROUP: "sridata-dev-centralindia-rg"
+
+jobs:
+  prepare-secrets:
+    name: Prepare namespace + admin secret
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@15650b3ad78fff148532a140b8a4c821796b2d7b # v5.0.0
+        with:
+          version: v1.32.0
+
+      - name: Azure login
+        uses: Azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
+        with:
+          creds: ${{ secrets.INVHUB_AZURE_CREDENTIALS }}
+
+      - name: Get AKS credentials
+        uses: Azure/aks-set-context@60623acbdcbbdcf799ad50a1adf8703874339f8b # v5.0.0
+        with:
+          resource-group: ${{ env.CLUSTER_RESOURCE_GROUP }}
+          cluster-name: ${{ env.CLUSTER_NAME }}
+
+      - name: Ensure target namespace exists
+        run: kubectl create namespace "$KC_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Copy common-postgres admin credentials into the keycloak namespace
+        # common-postgres-superuser lives in the "postgres" namespace (secrets
+        # are namespace-scoped); copied fresh every run. Used only by the
+        # chart's external-db-bootstrap Job, never by Keycloak itself.
+        run: |
+          set -euo pipefail
+          kubectl get secret common-postgres-superuser -n postgres -o json \
+            | jq 'del(.metadata.namespace, .metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.ownerReferences, .metadata.managedFields) | .metadata.name="common-postgres-admin"' \
+            | kubectl apply -n "$KC_NAMESPACE" -f -
+
+  deploy:
+    name: keycloak (sridata-dev)
+    needs: prepare-secrets
+    # sri-gh-workflows main tip, after PR #11 (chart_source_mode) merged.
+    # GitHub Actions requires `uses:` to be a literal string (no expressions),
+    # so this SHA must be updated by hand in both places below if it changes.
+    uses: SymphonySensa/sri-gh-workflows/.github/workflows/sri-helm-deployment.yaml@82ca7567008d3cdca8bc371503906c3fd371ee96
+    with:
+      shared_workflows_ref: 82ca7567008d3cdca8bc371503906c3fd371ee96
+      config_repository: SymphonySensa/sri-keycloak
+      config_ref: ${{ github.sha }}
+      environment: sridata-dev
+      chart: keycloak
+      chart_source_mode: local
+      chart_path: "."
+      mode: ${{ inputs.mode }}
+      prepare_env: true
+      gpg_private_key_secret_name: SRI_KEYCLOAK_GPG_PRIVATE_KEY
+      gpg_passphrase_secret_name: SRI_KEYCLOAK_GPG_PASSPHRASE
+    secrets: inherit

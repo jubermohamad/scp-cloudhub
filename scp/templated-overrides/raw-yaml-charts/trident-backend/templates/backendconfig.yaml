@@ -1,0 +1,21 @@
+apiVersion: trident.netapp.io/v1
+kind: TridentBackendConfig
+metadata:
+  name: backend-tbc-anf
+  namespace: trident
+spec:
+  version: 1
+  storageDriverName: azure-netapp-files
+  subscriptionID: {{ .Values.azure.subscriptionID }}
+  tenantID: {{ .Values.azure.tenantID }}
+  location: {{ .Values.azure.location }}
+  virtualnetwork: {{ .Values.azure.vnet }}
+  subnet: {{ .Values.azure.subnet }}
+  serviceLevel: {{ .Values.azure.serviceLevel }}
+  capacityPools:
+    - {{ .Values.azure.capacityPool }}
+  credentials:
+    name: backend-tbc-anf-secret
+  networkFeatures: Standard
+  defaults:
+    exportRule: 0.0.0.0/0

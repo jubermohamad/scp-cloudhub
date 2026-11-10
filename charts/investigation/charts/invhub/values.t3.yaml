@@ -1,0 +1,279 @@
+---
+# Production / T3 environment resource overrides.
+#
+# Apply on top of the default values.yaml which is sized for dev environments:
+#   helm install invhub ./invhub -f invhub/values.yaml -f invhub/values.t3.yaml
+
+# --- API ---
+# Perf load (7 pods): per-pod avg 660m / 540Mi, max 2917m / 4524Mi
+# Perf quiet (6 pods): per-pod avg 440m / 380Mi, outlier pod 2098m / 1448Mi
+api:
+  replicaCount: 6
+  resources:
+    requests:
+      cpu: "800m"
+      memory: "512Mi"
+      # quiet: cpu 500m, memory 512Mi
+    limits:
+      cpu: "2500m"
+      memory: "1.5Gi"
+      # quiet: cpu 2500m, memory 1.5Gi
+
+# --- Separate API responsibilities (when tags.separate-api-responsibilities=true) ---
+# Not used in perf benchmarks (which uses unified api).
+# Scale proportionally from the unified api values.
+api-for-ui:
+  resources:
+    requests:
+      cpu: "750m"
+      memory: "768Mi"
+    limits:
+      cpu: "2500m"
+      memory: "4Gi"
+api-data-ingestion:
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+event-data-ingestion:
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+search-indexing:
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+
+# --- PostgreSQL: main database (cn-postgres) ---
+# Perf load: primary avg 151m / 9840Mi, replicas up to 74m / 6434Mi
+# Perf quiet: primary avg 60m / 8075Mi, replicas 46m / 6200Mi
+cn-postgres:
+  instances: 3
+  storage:
+    size: "1000Gi"
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "8Gi"
+      # quiet: cpu 100m, memory 8Gi
+    limits:
+      cpu: "2000m"
+      memory: "16Gi"
+      # quiet: cpu 500m, memory 10Gi
+  postgresql:
+    parameters:
+      shared_buffers: "4GB"
+      max_connections: "500"
+      effective_cache_size: "12GB"
+      maintenance_work_mem: "2048MB"
+      work_mem: "14MB"
+      min_wal_size: "1024MB"
+      max_wal_size: "4096MB"
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: all
+
+# Same sizing as cn-postgres since it serves the same role in migrated environments
+cn-postgres-invhub:
+  instances: 3
+  storage:
+    size: "1000Gi"
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "8Gi"
+    limits:
+      cpu: "2000m"
+      memory: "16Gi"
+  postgresql:
+    parameters:
+      shared_buffers: "4GB"
+      max_connections: "500"
+      effective_cache_size: "12GB"
+      maintenance_work_mem: "2048MB"
+      work_mem: "14MB"
+      min_wal_size: "1024MB"
+      max_wal_size: "4096MB"
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: all
+
+# --- PostgreSQL: copilot ---
+# Perf load: per pod avg 24m / 59Mi, max 312m / 179Mi
+# Perf quiet: per pod avg 23m / 62Mi
+cn-postgres-copilot:
+  instances: 3
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "128Mi"
+      # quiet: cpu 50m, memory 128Mi
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+      # quiet: cpu 250m, memory 512Mi
+
+# --- PostgreSQL: copilotv2 ---
+# Perf load: per pod avg 14m / 69Mi
+# Perf quiet: per pod avg 14m / 81Mi
+cn-postgres-copilotv2:
+  instances: 3
+  resources:
+    requests:
+      cpu: "25m"
+      memory: "128Mi"
+    limits:
+      cpu: "250m"
+      memory: "256Mi"
+
+# --- PostgreSQL: copilot-data-adapter ---
+# Perf load: per pod avg 14m / 69Mi
+# Perf quiet: per pod avg 14m / 83Mi
+cn-postgres-copilot-data-adapter:
+  instances: 3
+  resources:
+    requests:
+      cpu: "25m"
+      memory: "128Mi"
+    limits:
+      cpu: "250m"
+      memory: "256Mi"
+
+# --- PostgreSQL: langfuse ---
+cn-postgres-langfuse:
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "2Gi"
+    limits:
+      cpu: "500m"
+      memory: "4Gi"
+
+# --- PostgreSQL: transactions ---
+cn-postgres-transactions:
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "512Mi"
+    limits:
+      cpu: "500m"
+      memory: "2Gi"
+
+# --- OpenSearch ---
+# Perf load per node: avg 88m CPU / 2856Mi mem, max 1014m / 3691Mi
+# Perf quiet per node: avg 13m / 2774Mi
+opensearch:
+  replicas: 3
+  persistence:
+    size: "100Gi"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "3Gi"
+      # quiet: cpu 250m, memory 3Gi
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+      # quiet: cpu 1000m, memory 4Gi
+
+# --- Kafka ---
+# Perf load per broker: avg 354m CPU / 7517Mi mem, max 1005m / 7659Mi
+# Perf quiet per broker: avg 27m / 6070Mi
+kafka-cluster:
+  replicas: 3
+  kafka:
+    storage:
+      size: "1000Gi"
+      type: persistent-claim
+    resources:
+      requests:
+        cpu: "1400m"
+        memory: "4Gi"
+        # quiet: cpu 100m, memory 4Gi
+      limits:
+        cpu: "2000m"
+        memory: "8Gi"
+        # quiet: cpu 500m, memory 8Gi
+  # Perf load per node: avg 12m CPU / 1443Mi mem
+  # Perf quiet per node: avg 12m / 1208Mi
+  zookeeper:
+    replicas: 3
+    storage:
+      size: "500Gi"
+      type: persistent-claim
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "4Gi"
+        # quiet: cpu 50m, memory 1536Mi
+      limits:
+        cpu: "1000m"
+        memory: "8Gi"
+        # quiet: cpu 250m, memory 2Gi
+
+# --- CDC (Kafka Connect) ---
+# Perf load: avg 7m CPU / 1061Mi mem (steady)
+# Perf quiet: avg 7m / 1061Mi
+cdc:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "1280Mi"
+      # quiet: cpu 50m, memory 1280Mi
+    limits:
+      cpu: "250m"
+      memory: "1536Mi"
+      # quiet: cpu 250m, memory 1536Mi
+
+# --- Redis ---
+# Perf load: master avg 46m / 41Mi, replicas avg 29m / 43Mi
+# Perf quiet: master avg 18m / 41Mi, replicas avg 23m / 39Mi
+redis:
+  master:
+    resources:
+      requests:
+        cpu: "750m"
+        memory: "12Gi"
+      limits:
+        cpu: "1500m"
+        memory: "20Gi"
+  replica:
+    replicaCount: 3
+    resources:
+      requests:
+        cpu: "750m"
+        memory: "12Gi"
+      limits:
+        cpu: "900m"
+        memory: "15Gi"
+
+# --- MinIO ---
+# Perf load per pod: avg 528m CPU / 3297Mi mem, max 889m / 3689Mi
+# Perf quiet per pod: avg 554m / 3489Mi
+minioop:
+  tenant:
+    pools:
+      # NOTE: pools is an array; overrides must restate the full pool item.
+      - servers: 4
+        volumesPerServer: 2
+        name: pool-main
+        storageClassName: managed-csi-xfs-standardssd-lrs
+        size: 1000G
+        resources:
+          requests:
+            cpu: "1400m"
+            memory: "2Gi"
+            # quiet: cpu 500m, memory 2Gi
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+            # quiet: cpu 1000m, memory 4Gi

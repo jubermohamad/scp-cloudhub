@@ -1,0 +1,84 @@
+<smart>
+
+	<topics>
+		<topic name="nr-cdd_alerts" format="JSON" type="kafka">
+			<fields>
+				<field name="AlertKey" type="string"/>
+				<field name="Priority" type="double"/>
+				<field name="AlertScore" type="double"/>
+				<field name="CreationTimestamp" type="timestamp"/>
+				<field name="DomainCode" type="string"/>
+				<field name="LatestActionTimestamp" type="timestamp"/>
+				<field name="OrgunitCode" type="string"/>
+				<field name="DueTimestamp" type="timestamp"/>
+				<field name="StatusCode" type="string"/>
+				<field name="CustomerId" type="string"/>
+				<field name="CustomerRiskLevel" type="string"/>
+				<field name="CustomerSanctionedFlag" type="string"/>
+				<field name="CustomerDisclosureCount" type="double"/>
+				<field name="CustomerOnOtherWatchListFlag" type="string"/>
+				<field name="CustomerWlmActiveAlertsFlag" type="string"/>
+				<field name="CustomerWlmBoOpenAlertsFlag" type="string"/>
+			</fields>
+		</topic>
+	</topics>
+
+	<filters>
+		<filter name="alertsTriagedFiltering">
+			<field name="AlertKey"/>
+			<field name="Priority"/>
+			<field name="DomainCode"/>
+			<field name="OrgunitCode"/>
+			<field name="StatusCode"/>
+			<field name="CustomerId"/>
+			<field name="RecommendToReject_score"/>
+			<field name="RecommendToReject_score_info"/>
+			<field name="RecommendToAccept_score"/>
+			<field name="RecommendToAccept_score_info"/>
+		</filter>	
+	</filters>
+
+	<mappings>
+		<mapping name="alertsTriagedMapping">
+			<field name="Alert_AlertKey" alias="AlertKey"/>
+			<field name="Alert_Priority" alias="Priority"/>
+			<field name="Alert_DomainCode" alias="DomainCode"/>
+			<field name="Alert_OrgunitCode" alias="OrgunitCode"/>
+			<field name="Alert_StatusCode" alias="StatusCode"/>
+			<field name="Alert_CustomerId" alias="CustomerId"/>
+			<field name="RecommendToReject_score" alias="RecommendToRejectScore"/>
+			<field name="RecommendToReject_score_info" alias="RecommendToRejectInfo"/>
+			<field name="RecommendToAccept_score" alias="RecommendToAcceptScore"/>
+			<field name="RecommendToAccept_score_info" alias="RecommendToAcceptInfo"/>
+		</mapping>
+	</mappings>
+	
+    <combiners>
+    </combiners>	
+
+	<processes>
+		<process name="RTDE_CDDAAT" dataSource="Alert" trigger="CONTINUOUS" intervalSeconds="10" outputMode="append">
+			<inputTopics>
+				<inputTopic name="nr-cdd_alerts"/>
+			</inputTopics>
+			<services>
+				<service type="parse"/>
+				<service type="datalabel">
+					<apply name="*"/>
+				</service>
+				<service type="detect"/>
+				<service type="score"/>
+				<service type="filter_columns">
+					<apply name="alertsTriagedFiltering"/>
+				</service>
+				<service type="map_columns_names">
+					<apply name="alertsTriagedMapping"/>
+				</service>
+			</services>
+			<outputTopics>
+				<outputTopic name="nr-cdd_alerts_triaged" rootName="AlertTriaged"/>
+			</outputTopics>
+		</process>
+	</processes>
+
+</smart>

@@ -1,0 +1,11 @@
+# CloudHub Native defaults for Tailscale on SCP clusters.
+# OAuth client credentials come from the platform external-secrets store.
+tailscale-operator:
+  enabled: true
+  oauth:
+    clientId: ""
+    clientSecret: ""
+  operatorConfig:
+    hostname: ""
+tailscale-on-scp:
+  enabled: true

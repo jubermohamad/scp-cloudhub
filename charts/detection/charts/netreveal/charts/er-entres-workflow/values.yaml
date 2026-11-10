@@ -1,0 +1,73 @@
+cronSchedule: "0 20 * * *"  # every day at 8 PM
+concurrencyPolicy: "Forbid" # if there is another, it may be one that's still running
+startingDeadlineSeconds: 0
+entresSpark:
+  image:
+    imageRepository: "nri-nrod-k8s-er-spark-apps"
+    imageTag: 9.4.9-IA
+
+  restartPolicy: OnFailure
+  imagePullPolicy: IfNotPresent
+entresConfigJar:
+  image:
+    imageRepository: "nri-nrod-k8s-er-batch-config"
+    imageTag: 9.4.9-IA
+
+  restartPolicy: OnFailure
+  imagePullPolicy: IfNotPresent
+argoCli:
+  image:
+    imageRepository: "nri-nrod-k8s-er-argocli"
+    imageTag: 9.4.9-IA
+  restartPolicy: OnFailure
+  imagePullPolicy: IfNotPresent
+
+monitoring:
+  exposeDriverMetrics: true
+  exposeExecutorMetrics: true
+  prometheus:
+    jmxExporterJar: "/opt/entresSparkRoot/lib/jmx_prometheus_javaagent.jar"
+    port: 8090
+
+spark:
+  driver:
+    cores: 1
+    memory: "1024m"
+    annotations:
+      ad.datadoghq.com/spark-kubernetes-driver.logs: |
+        [
+          {
+            "source": "entity-resolution",
+            "service": "{{inputs.parameters.name}}-driver",
+            "log_processing_rules": [
+              {
+                "type": "multi_line",
+                "name": "java_log_format",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}"
+              }
+            ]
+          }
+        ]
+  executor:
+    cores: 1
+    instances: 1
+    memory: "1024m"
+    memoryOverhead: "256m"
+    annotations:
+      ad.datadoghq.com/spark-kubernetes-executor.logs: |
+        [
+          {
+            "source": "entity-resolution",
+            "service": "{{inputs.parameters.name}}-executor",
+            "log_processing_rules": [
+              {
+                "type": "multi_line",
+                "name": "java_log_format",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}\\.\\d{3}"
+              }
+            ]
+          }
+        ]
+  properties:
+    numPartitionsDefault: 48
+    numPartitionsDeltaProcessing: 48

@@ -1,0 +1,132 @@
+{{- if .Values.infra.neo4j.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "prism.fullname" . }}-neo4j
+  labels:
+    app: prism-neo4j
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: prism-neo4j
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 7474
+      targetPort: http
+    - name: bolt
+      port: 7687
+      targetPort: bolt
+---
+# Headless service: the StatefulSet's governing service, and what a bolt client
+# uses to address the pod directly rather than through the ClusterIP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "prism.fullname" . }}-neo4j-headless
+  labels:
+    app: prism-neo4j
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app: prism-neo4j
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: bolt
+      port: 7687
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "prism.fullname" . }}-neo4j
+  labels:
+    app: prism-neo4j
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "prism.fullname" . }}-neo4j-headless
+  # Community Edition: single instance, no clustering. Do not raise.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prism-neo4j
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: prism-neo4j
+        {{- include "prism.labels" . | nindent 8 }}
+    spec:
+      # Neo4j reads NEO4J_* env vars as configuration. Kubernetes' service
+      # links inject <SERVICE>_PORT-style vars for every service in the
+      # namespace, and any that collide are read as config — so this stays off.
+      enableServiceLinks: false
+      {{- include "prism.scheduling" . | nindent 6 }}
+      containers:
+        - name: neo4j
+          image: "{{ .Values.infra.neo4j.image.repository }}:{{ .Values.infra.neo4j.image.tag }}"
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.infra.neo4j.image.pullPolicy) }}
+          ports:
+            - name: http
+              containerPort: 7474
+            - name: bolt
+              containerPort: 7687
+          env:
+            # "neo4j/<password>" — the image's own credential format.
+            - name: NEO4J_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.neo4jAuthExisting | default .Values.secrets.neo4jAuth }}
+                  key: NEO4J_AUTH
+            - name: NEO4J_PLUGINS
+              value: {{ .Values.infra.neo4j.plugins | quote }}
+            # Heap and page cache pinned so the JVM does not size itself from
+            # the node's memory and overshoot limits.memory — see values.yaml.
+            - name: NEO4J_server_memory_heap_initial__size
+              value: {{ .Values.infra.neo4j.heapInitial | quote }}
+            - name: NEO4J_server_memory_heap_max__size
+              value: {{ .Values.infra.neo4j.heapMax | quote }}
+            - name: NEO4J_server_memory_pagecache_size
+              value: {{ .Values.infra.neo4j.pageCache | quote }}
+          resources:
+            {{- toYaml .Values.infra.neo4j.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          # EVERY PROBE GATES ON BOLT, because bolt is what the apps speak.
+          #
+          # The HTTP endpoint answers while the bolt connector is still coming up,
+          # so an httpGet readiness marks this pod Ready early, the Service gets
+          # an endpoint, and prism-api connects into nothing and dies with
+          # "ServiceUnavailable: Couldn't connect ... Connect call failed". The
+          # old liveness comment already said exactly this — it just was not
+          # applied to the probe that decides when traffic starts arriving.
+          #
+          # A cold start replays the transaction log and can take minutes, and
+          # bolt opens only after that replay, so the startup probe carries the
+          # whole wait (10 min at this period and threshold) and keeps liveness
+          # from killing the pod mid-recovery.
+          startupProbe:
+            tcpSocket:
+              port: bolt
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            tcpSocket:
+              port: bolt
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: bolt
+            periodSeconds: 20
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        storageClassName: {{ .Values.infra.neo4j.persistence.storageClass }}
+        accessModes: {{ toYaml .Values.infra.neo4j.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.infra.neo4j.persistence.size }}
+{{- end }}

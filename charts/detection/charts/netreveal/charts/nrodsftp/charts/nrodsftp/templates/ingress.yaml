@@ -1,0 +1,44 @@
+{{- $root := . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-ingress
+  annotations:
+    {{- if .Values.ingress.annotations }}
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    {{- $customerIPs := .Values.ingress.ingressAllowList.customerIPs }}
+    {{- $platformIPs := .Values.ingress.ingressAllowList.platformIPs }}
+    {{- $allIPs := concat $customerIPs $platformIPs | uniq | compact }}
+    {{- if and $allIPs (gt (len $allIPs) 0) }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ join ", " $allIPs | quote }}
+    {{- end }}
+spec:
+  ingressClassName: "nginx"
+  tls:
+  - hosts:
+    - {{ tpl .Values.global.MINIO_INGRESS_HOST . }}
+    - {{ tpl .Values.global.MINIOUI_INGRESS_HOST . }}
+    secretName: {{ .Values.global.SSL_SECRETS }}
+  rules:
+  - host: {{ tpl .Values.global.MINIO_INGRESS_HOST . }}
+    http:
+      paths:
+      - pathType: Prefix
+        path: "/"
+        backend:
+          service:
+            name: minio
+            port:
+              number: 9000
+  - host: {{ tpl .Values.global.MINIOUI_INGRESS_HOST . }}
+    http:
+      paths:
+      - pathType: Prefix
+        path: "/"
+        backend:
+          service:
+            name: minio-console
+            port:
+              number: 9001

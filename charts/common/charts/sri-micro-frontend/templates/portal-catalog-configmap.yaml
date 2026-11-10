@@ -1,0 +1,23 @@
+{{- /*
+The platform-map seed SQL, mounted by ensure-portal-catalog.yaml. A hook itself
+(weight 4, one before the Job) so it exists when the Job runs and is refreshed
+on every upgrade.
+*/}}
+{{- if and .Values.catalog.database.enabled .Values.portalCatalog.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-portal-catalog" (include "sri-micro-frontend.fullname" .) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "sri-micro-frontend.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ensure-portal-catalog
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "4"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  # rendered as a TEMPLATE: `enabled` per row comes from the same values that
+  # decide what is installed, so the portal menu is a map of THIS installation
+  platform-catalog.sql: |
+{{ tpl (.Files.Get "files/portal-catalog-platform.sql") . | indent 4 }}
+{{- end }}

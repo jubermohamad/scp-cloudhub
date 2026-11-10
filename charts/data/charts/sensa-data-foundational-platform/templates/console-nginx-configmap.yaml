@@ -1,0 +1,42 @@
+{{- if and .Values.console.enabled .Values.console.overrideNginxConf }}
+# The console image bakes /etc/nginx/conf.d/default.conf (deploy/remote/nginx.conf)
+# which proxies to the BARE service names `prism-api` and `chat-backend`. This
+# chart gives every Service a release-scoped name, so the baked file cannot
+# resolve them — it is replaced by this rendered copy, whose upstreams come from
+# the same helpers everything else uses.
+#
+# Its own file, not part of console.yaml, so the Deployment can checksum it
+# without a template including itself (that recursion is a lint failure).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "prism.fullname" . }}-console-nginx
+  labels:
+    app: prism-console
+    {{- include "prism.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+      listen {{ .Values.console.port }};
+      root /usr/share/nginx/html;
+    {{- if .Values.api.enabled }}
+      location /rigraph/ {
+        proxy_pass http://{{ include "prism.fullname" . }}-api:{{ .Values.api.port }}/console/;
+        proxy_set_header Host $host;
+      }
+    {{- end }}
+    {{- if .Values.chatBackend.enabled }}
+      # The assistant streams SSE: buffering it would hold the whole answer back
+      # until the stream closed, so the panel would sit silent and then dump.
+      location /chat/ {
+        proxy_pass http://{{ include "prism.fullname" . }}-chat-backend:{{ .Values.chatBackend.port }}/;
+        proxy_set_header Host $host;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+      }
+    {{- end }}
+      location / { try_files $uri /index.html; }
+    }
+{{- end }}

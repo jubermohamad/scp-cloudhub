@@ -1,0 +1,300 @@
+# Default values for api.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 2
+
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/invhub-api
+  # When empty, omit imagePullPolicy and use the Kubernetes default.
+  pullPolicy: ""
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets:
+  - name: "regcred"
+
+nameOverride: ""
+fullnameOverride: "api"
+
+flowsConfigMapName: "flows"
+flowsSecretName: "flows"
+
+skipInit: false
+
+# Migration Job Configuration
+migrations:
+  # Disabled by default — the migration Job is owned by the parent invhub chart.
+  # Set to true only for standalone api subchart installs that manage their own migrations.
+  enabled: false
+  backoffLimit: 3
+  timeout: 600
+  ttlSecondsAfterFinished: 86400
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+# Wait for Strimzi / CNPG / OpenSearch operator TLS secrets before mounts (avoids transient FailedMount).
+waitForTlsSecrets:
+  enabled: true
+  image: docker.io/curlimages/curl:8.11.1
+  imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+  timeoutSeconds: 900
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi
+
+# Wait for migration job completion before starting API server containers.
+waitForMigrations:
+  enabled: true
+  # When true, this subchart creates the migrations-state ConfigMap. Set to false
+  # when a parent chart owns the ConfigMap (e.g. invhub with separate-api-responsibilities)
+  # to avoid duplicate resource errors on first install.
+  createStateConfigMap: true
+  image: docker.io/curlimages/curl:8.11.1
+  imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+  timeoutSeconds: 1200
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi
+
+# Wait for infrastructure dependency endpoints before starting API server containers.
+waitForDependencies:
+  enabled: true
+  image: docker.io/curlimages/curl:8.11.1
+  imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+  timeoutSeconds: 1200
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi
+  postgres:
+    enabled: true
+    service: "" # leave empty to use global.services.postgresRw
+    port: 5432
+  kafka:
+    enabled: true
+    service: "" # leave empty to use global.services.kafkaBootstrap
+    port: 9093
+  opensearch:
+    enabled: true
+    service: "" # leave empty to use global.services.opensearchMaster
+    port: 9200
+  minio:
+    enabled: true
+    service: "" # leave empty to use global.services.minio
+    port: 9000
+  redis:
+    enabled: true
+    service: "" # leave empty to use global.services.redisMaster
+    port: 6379
+
+initContainer:
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations:
+  configmap.reloader.stakater.com/reload: "flows"
+  secret.reloader.stakater.com/reload: "opensearch-cluster-certs,sensa-global-secrets"
+
+podSecurityContext:
+  fsGroup: 10001
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  ports:
+    - name: api
+      port: 3001
+      protocol: TCP
+    - name: notific-ws
+      port: 3003
+      protocol: TCP
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 50m
+    memory: 128Mi
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+livenessProbe:
+  httpGet:
+    path: /v1/health/liveness
+    port: api
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /v1/health/readiness
+    port: api
+  initialDelaySeconds: 15
+  periodSeconds: 20
+  timeoutSeconds: 15
+  successThreshold: 1
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - api
+          topologyKey: "topology.kubernetes.io/zone"
+
+dbRootCert:
+  secretName: "cn-postgres-ca"
+  mountPath: "/pg-ca-cert"
+  key: "ca.crt"
+kafkaRootCert:
+  secretName: "invhub-clients-ca-cert"
+  mountPath: "/kafka-ca-cert"
+  key: "ca.crt"
+osRootCert:
+  secretName: "opensearch-cluster-certs"
+  mountPath: "/os-ca-cert"
+  key: "ca.crt"
+
+calicoNetworkPolicy:
+  enabled: false
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source: {}
+      destination:
+        ports:
+          - 3001
+          - 3003
+  egress:
+    - action: Allow
+# kube-prometheus-stack:
+#   prometheus-node-exporter:
+#     hostRootFsMount: false
+
+# neo4j-standalone:
+#   volumes:
+#     data:
+#       mode: defaultStorageClass
+
+# prometheus-redis-exporter:
+#  redisAddress: redis://myredis:6379
+
+# prometheus-postgresql-exporter:
+#  config:
+#    datasource:
+#      # Specify one of both datasource or datasourceSecret
+#      host:
+#      user: postgres
+#      # Only one of password and passwordSecret can be specified
+#      password:
+#      # Specify passwordSecret if DB password is stored in secret.
+#      passwordSecret: {}
+#      # Secret name
+#      #  name:
+#      # Password key inside secret
+#      #  key:
+#      port: "5432"
+#      database: 'postgres'
+#      sslmode: disable
+
+global:
+  imagePullPolicy: Always   # platform default; the umbrella global overrides it
+  SENSA_KAFKA_BOOTSTRAP: "invhub-kafka-bootstrap:9093"
+  INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH: true
+  SENSA_KAFKA_SSL: "true"
+  SENSA_KAFKA_MAX_BYTES: "10485880"
+  SENSA_KAFKA_SSL_CA_PATH: "/kafka-ca-cert/ca.crt"
+  SENSA_KAFKA_INITIAL_RETRY_TIME: 5000
+  SENSA_KAFKA_RETRIES: 3
+  SENSA_KAFKA_SESSION_TIMEOUT: 45000
+  SENSA_KAFKA_HEARTBEAT_INTERVAL: 15000
+  SENSA_PROMETHEUS_URL: "http://prometheus:9090"
+  ENTITY_RESOLUTION_URL: ""
+  SENSA_REDIS_URL: "redis://redis-master:6379"
+  INVESTIGATION_HUB_OPEN_SEARCH_URL: "https://opensearch-cluster-master:9200"
+  MINIO_SSL_CA_PATH: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  NODE_ENV: "production"
+  SENSA_API_DOCS: true
+  SENSA_SERVICE_USER: "service@symphony.ai"
+  SENSA_THROTTLE_LIMIT: 100
+  AGENT_BATCH_MAX_CONCURRENT_REQUESTS: 15
+  AGENT_REQUESTS_BATCH_CRON: "*/3 * * * *"
+  SENSA_THROTTLE_TTL: 60
+  SENSA_LOG_LEVEL: info
+  KAFKA_CONNECTOR_URL: http://cdc-connect-api:8083
+  SENSA_JWT_EXPIRESIN: 300
+  SENSA_JWT_REFRESH_EXPIRESIN: 3600
+  EVENT_SCHEDULER_CRON: "0 0-23/12 * * *"

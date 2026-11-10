@@ -1,0 +1,510 @@
+api:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 3001
+            - 3003
+    egress:
+      - action: Allow
+        protocol: UDP
+        destination:
+          ports:
+            - 53
+      - action: Allow
+        metadata:
+          annotations:
+            from: api
+            to: web
+        protocol: TCP
+        destination:
+          ports:
+            - 80
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 587
+      - action: Allow
+        metadata:
+          annotations:
+            from: api
+            to: postgres
+        protocol: TCP
+        destination:
+          ports:
+            - 5432
+      - action: Allow
+        metadata:
+          annotations:
+            from: api
+            to: kafka
+        protocol: TCP
+        destination:
+          ports:
+            - 9092
+            - 9093
+      - action: Allow
+        metadata:
+          annotations:
+            from: api
+            to: opensearch
+        protocol: TCP
+        destination:
+          ports:
+            - 9200
+      - action: Allow
+        metadata:
+          annotations:
+            from: api
+            to: redis
+        protocol: TCP
+        destination:
+          ports:
+            - 6379
+      - action: Allow
+        metadata:
+          annotations:
+            from: api
+            to: copilot
+        protocol: TCP
+        destination:
+          ports:
+            - 8001
+      - action: Allow
+        metadata:
+          annotations:
+            from: api
+            to: clamav
+        protocol: TCP
+        destination:
+          ports:
+            - 3310
+      - action: Allow
+        metadata:
+          annotations:
+            from: api
+            to: minio
+        protocol: TCP
+        destination:
+          ports:
+            - 9000
+
+web:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 80
+    egress:
+      - action: Allow
+        metadata:
+          annotations:
+            from: web
+            to: api
+        protocol: TCP
+        destination:
+          ports:
+            - 3001
+      - action: Allow
+        metadata:
+          annotations:
+            from: web
+            to: interaction-engine
+        protocol: TCP
+        destination:
+          ports:
+            - 8001
+
+clamavd:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 80
+    egress:
+      - action: Allow
+
+redis:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 9121
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: app.kubernetes.io/name == 'api'
+        destination:
+          ports:
+            - 6379
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: app.kubernetes.io/name == 'redis'
+        destination:
+          ports:
+            - 6379
+    egress:
+      - action: Allow
+        protocol: UDP
+        destination:
+          ports:
+            - 53
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 6379
+
+mockserver:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 3005
+
+help:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 80
+
+graphql-api-docs:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 80
+
+prompt-engine:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 8001
+
+interaction-engine:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 8001
+
+context-engine:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 8001
+    egress:
+      - action: Allow
+
+websearch:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 8001
+    egress:
+      - action: Allow
+
+minioop:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 9000
+            - 9090
+    egress:
+      - action: Allow
+        protocol: UDP
+        destination:
+          ports:
+            - 53
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 443
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 9000
+
+cn-postgres:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 8000 # status
+            - 9187 # metrics
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: app.kubernetes.io/name == 'api'
+        destination:
+          ports:
+            - 5432
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: cnpg.io/cluster == 'cn-postgres'
+        destination:
+          ports:
+            - 5432
+    egress:
+      - action: Allow
+        protocol: UDP
+        destination:
+          ports:
+            - 53
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 443
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 5432
+            - 8000
+
+cn-postgres-invhub:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 8000 # status
+            - 9187 # metrics
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: app.kubernetes.io/name == 'api'
+        destination:
+          ports:
+            - 5432
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: cnpg.io/cluster == 'cn-postgres'
+        destination:
+          ports:
+            - 5432
+    egress:
+      - action: Allow
+        protocol: UDP
+        destination:
+          ports:
+            - 53
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 443
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 5432
+            - 8000
+
+cn-postgres-copilot:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 8000 # status
+            - 9187 # metrics
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: app.kubernetes.io/name == 'context-engine'
+        destination:
+          ports:
+            - 5432
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: cnpg.io/cluster == 'cn-postgres-copilot'
+        destination:
+          ports:
+            - 5432
+    egress:
+      - action: Allow
+        protocol: UDP
+        destination:
+          ports:
+            - 53
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 443
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 5432
+            - 8000
+
+cn-postgres-keycloak:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 8000 # status
+            - 9187 # metrics
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: app.kubernetes.io/name == 'keycloak'
+        destination:
+          ports:
+            - 5432
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: cnpg.io/cluster == 'cn-postgres-keycloak'
+        destination:
+          ports:
+            - 5432
+    egress:
+      - action: Allow
+        protocol: UDP
+        destination:
+          ports:
+            - 53
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 443
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 5432
+            - 8000
+
+keycloak:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 8080
+            - 7800
+    egress:
+      - action: Allow
+        protocol: UDP
+        destination:
+          ports:
+            - 53
+      - action: Allow
+        protocol: TCP
+        destination:
+          ports:
+            - 5432
+
+opensearch:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: app.kubernetes.io/name == 'api'
+        destination:
+          ports:
+            - 9200
+      - action: Allow
+        protocol: TCP
+        source:
+          selector: app.kubernetes.io/name == 'opensearch'
+        destination:
+          ports:
+            - 9300
+    egress:
+      - action: Allow
+
+kafka-ui:
+  calicoNetworkPolicy:
+    enabled: false
+    ingress:
+      - action: Allow
+        protocol: TCP
+        source: {}
+        destination:
+          ports:
+            - 8080

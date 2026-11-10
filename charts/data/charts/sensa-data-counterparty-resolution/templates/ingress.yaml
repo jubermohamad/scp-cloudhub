@@ -1,0 +1,46 @@
+{{- if .Values.ingress.enabled }}
+{{- $web := include "cpr.web.fullname" . -}}
+{{- $tls := .Values.ingress.tls -}}
+{{- $tlsSecret := default (printf "%s-tls" (include "cpr.fullname" .)) $tls.secretName -}}
+# Single host: the React UI at / (nginx inside the web pod reverse-proxies /api/ to the API service,
+# so only the web Service is exposed). TLS is toggled by ingress.tls.enabled and supports two paths:
+#   • cert-manager — set ingress.tls.issuer to a ClusterIssuer; the cert-manager.io/cluster-issuer
+#     annotation + the tls block below make cert-manager issue + store the cert in $tlsSecret.
+#   • AKS app-routing / pre-provisioned cert — leave issuer empty, point tls.secretName at the TLS
+#     secret app-routing manages (add any app-routing annotations via ingress.annotations).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "cpr.fullname" . }}
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+  {{- if or .Values.ingress.annotations (and $tls.enabled $tls.issuer) }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if and $tls.enabled $tls.issuer }}
+    cert-manager.io/cluster-issuer: {{ $tls.issuer | quote }}
+    {{- end }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if $tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ $tlsSecret | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $web }}
+                port:
+                  number: {{ .Values.web.service.port }}
+{{- end }}

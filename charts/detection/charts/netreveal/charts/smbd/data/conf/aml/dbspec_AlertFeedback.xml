@@ -1,0 +1,48 @@
+<dbspec name="AlertFeedback" comments="Alerts from V_SM_ALERTS">
+
+    <!-- Read Alerts data from ALERT_HEADER table -->
+    <source-query>
+	SELECT *
+	FROM (
+		SELECT 
+		   ALERT_ID as AlertId,
+		   RUN_DATE as RunDate,
+		   ACCOUNT_ID as AccountID,
+		   CUSTOMER_ID as CustomerID,
+		   CUSTOMER_SEGMENT as CustomerSegment,
+		   ORGANISATIONAL_UNIT as OrganisationalUnit,
+		   CHECK_NAME as CheckName,
+		   ALERT_WEIGHT as AlertWeight,
+		   ALERT_INFO  as AlertInfo
+		 FROM V_SM_ALERTS
+	 ) V_SM_ALERTS	 
+	 WHERE @WHERE@
+    </source-query>
+    <tablename> V_SM_ALERTS  </tablename>
+    <!--bad-tablename>NONE</bad-tablename-->
+
+    <!-- Source Limit Fields  -->
+    <!-- Not Supported
+	<limit-field name="RunDate"     operator="between"/>
+    -->
+	<!--limit-field name="RunDate" operator="equals"/-->
+
+    <!-- Navigation Fields -->
+    <timefield>RunDate</timefield>
+    <!--timefieldIncludeTime>false</timefieldIncludeTime-->
+    <!-- Not Supported
+	<keyfield>AlertId</keyfield>
+ 	--> 
+	<column fieldname="RunDate" dataType="DATE" columnname="RunDate"/>
+	<!-- Not Supported
+	<column fieldname="AlertId" dataType="NUMBER" columnname="ALERT_ID"/>
+	<column fieldname="RunDate" dataType="DATE" columnname="RUN_DATE"/>
+	<column fieldname="AccountID" dataType="DBTEXT" columnname="ACCOUNT_ID"/>
+	<column fieldname="CustomerID" dataType="DBTEXT" columnname="CUSTOMER_ID"/>
+	<column fieldname="CustomerSegment" dataType="DBTEXT" columnname="CUSTOMER_SEGMENT"/>
+	<column fieldname="OrganisationalUnit" dataType="ORGANISATIONAL_UNIT" columnname="ORGANISATIONAL_UNIT"/>	
+	<column fieldname="CheckName" dataType="DBTEXT" columnname="CHECK_NAME"/>
+	<column fieldname="AlertWeight" dataType="DBAMOUNT" columnname="ALERT_WEIGHT"/>
+	<column fieldname="AlertInfo" dataType="DBTEXT" columnname="ALERT_INFO"/>
+	-->
+</dbspec>

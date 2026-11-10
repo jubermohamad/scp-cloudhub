@@ -1,0 +1,134 @@
+{{- define "invhub.pgadminServerDefinitionsJson" -}}
+{{- $cnpg := index .Values "cn-postgres" }}
+{{- $cnpgInvhub := index .Values "cn-postgres-invhub" }}
+{{- $cnpgTransactions := index .Values "cn-postgres-transactions" }}
+{{- $cnpgKeycloak := index .Values "cn-postgres-keycloak" }}
+{{- $cnpgAIDocCentre := index .Values "cn-postgres-ai-doc-centre" }}
+{{- $cnpgCopilot := index .Values "cn-postgres-copilot" }}
+{{- $cnpgCopilotV2 := index .Values "cn-postgres-copilotv2" }}
+{{- $cnpgCopilotDataAdapter := index .Values "cn-postgres-copilot-data-adapter" }}
+{{- $cnpgLangfuse := index .Values "cn-postgres-langfuse" }}
+{{- $featureToggles := default (dict) .Values.pgadmin4.featureToggles }}
+{{- $invhubMigrationEnabled := default false (index $featureToggles "invhub-db-migration") }}
+{{- $servers := dict }}
+{{- if not $invhubMigrationEnabled }}
+{{- $_ := set $servers "Invhub" (dict
+  "Name" "INVHUB_DB"
+  "Group" "Servers"
+  "Port" 5432
+  "Username" $cnpg.bootstrap.config.bootstrap.initdb.owner
+  "Host" (printf "%s-rw" $cnpg.clusterName)
+  "SSLMode" "verify-full"
+  "SSLRootCert" "pg-ca-cert/ca.crt"
+  "MaintenanceDB" "postgres"
+) }}
+{{- end }}
+{{- if $invhubMigrationEnabled }}
+{{- $_ := set $servers "InvhubMigration" (dict
+  "Name" "INVHUB_MIGRATION_DB"
+  "Group" "Servers"
+  "Port" 5432
+  "Username" $cnpgInvhub.bootstrap.config.bootstrap.initdb.owner
+  "Host" (printf "%s-rw" $cnpgInvhub.clusterName)
+  "SSLMode" "verify-full"
+  "SSLRootCert" "pg-invhub-migration-ca/ca.crt"
+  "MaintenanceDB" $cnpgInvhub.bootstrap.config.bootstrap.initdb.database
+) }}
+{{- end }}
+{{- if (default false (index $featureToggles "transactions-api")) }}
+{{- $_ := set $servers "Transactions" (dict
+  "Name" "TRANSACTIONS_DB"
+  "Group" "Servers"
+  "Port" 5432
+  "Username" $cnpgTransactions.bootstrap.config.bootstrap.initdb.owner
+  "Host" (printf "%s-rw" $cnpgTransactions.clusterName)
+  "SSLMode" "verify-full"
+  "SSLRootCert" "pg-transactions-ca/ca.crt"
+  "MaintenanceDB" $cnpgTransactions.bootstrap.config.bootstrap.initdb.database
+) }}
+{{- end }}
+{{- if (default false (index $featureToggles "keycloak")) }}
+{{- $_ := set $servers "Keycloak" (dict
+  "Name" "KEYCLOAK_DB"
+  "Group" "Servers"
+  "Port" 5432
+  "Username" $cnpgKeycloak.bootstrap.config.bootstrap.initdb.owner
+  "Host" (printf "%s-rw" $cnpgKeycloak.clusterName)
+  "SSLMode" "verify-full"
+  "SSLRootCert" "pg-keycloak-ca/ca.crt"
+  "MaintenanceDB" $cnpgKeycloak.bootstrap.config.bootstrap.initdb.database
+) }}
+{{- end }}
+{{- if (default false (index $featureToggles "ai-doc-centre")) }}
+{{- $_ := set $servers "AIDocCentre" (dict
+  "Name" "AI_DOC_CENTRE_DB"
+  "Group" "Servers"
+  "Port" 5432
+  "Username" $cnpgAIDocCentre.bootstrap.config.bootstrap.initdb.owner
+  "Host" (printf "%s-rw" $cnpgAIDocCentre.clusterName)
+  "SSLMode" "verify-full"
+  "SSLRootCert" "pg-ai-doc-centre-ca/ca.crt"
+  "MaintenanceDB" $cnpgAIDocCentre.bootstrap.config.bootstrap.initdb.database
+) }}
+{{- end }}
+{{- if (default false (index $featureToggles "copilot")) }}
+{{- $_ := set $servers "Copilot" (dict
+  "Name" "COPILOT_DB"
+  "Group" "Servers"
+  "Port" 5432
+  "Username" $cnpgCopilot.bootstrap.config.bootstrap.initdb.owner
+  "Host" (printf "%s-rw" $cnpgCopilot.clusterName)
+  "SSLMode" "verify-full"
+  "SSLRootCert" "pg-copilot-ca/ca.crt"
+  "MaintenanceDB" $cnpgCopilot.bootstrap.config.bootstrap.initdb.database
+) }}
+{{- end }}
+{{- if (default false (index $featureToggles "copilotv2")) }}
+{{- $_ := set $servers "CopilotV2" (dict
+  "Name" "COPILOT_V2_DB"
+  "Group" "Servers"
+  "Port" 5432
+  "Username" $cnpgCopilotV2.bootstrap.config.bootstrap.initdb.owner
+  "Host" (printf "%s-rw" $cnpgCopilotV2.clusterName)
+  "SSLMode" "verify-full"
+  "SSLRootCert" "pg-copilotv2-ca/ca.crt"
+  "MaintenanceDB" $cnpgCopilotV2.bootstrap.config.bootstrap.initdb.database
+) }}
+{{- $_ := set $servers "CopilotDataAdapter" (dict
+  "Name" "COPILOT_DATA_ADAPTER_DB"
+  "Group" "Servers"
+  "Port" 5432
+  "Username" $cnpgCopilotDataAdapter.bootstrap.config.bootstrap.initdb.owner
+  "Host" (printf "%s-rw" $cnpgCopilotDataAdapter.clusterName)
+  "SSLMode" "verify-full"
+  "SSLRootCert" "pg-copilot-data-adapter-ca/ca.crt"
+  "MaintenanceDB" $cnpgCopilotDataAdapter.bootstrap.config.bootstrap.initdb.database
+) }}
+{{- end }}
+{{- if (default false (index $featureToggles "langfuse")) }}
+{{- $_ := set $servers "Langfuse" (dict
+  "Name" "LANGFUSE_DB"
+  "Group" "Servers"
+  "Port" 5432
+  "Username" $cnpgLangfuse.bootstrap.config.bootstrap.initdb.owner
+  "Host" (printf "%s-rw" $cnpgLangfuse.clusterName)
+  "SSLMode" "verify-full"
+  "SSLRootCert" "pg-langfuse-ca/ca.crt"
+  "MaintenanceDB" $cnpgLangfuse.bootstrap.config.bootstrap.initdb.database
+) }}
+{{- end }}
+{{- dict "Servers" $servers | toPrettyJson -}}
+{{- end }}
+{{- if and .Values.infra.enabled .Values.pgadmin4.serverDefinitions.enabled (eq (default "" .Values.pgadmin4.serverDefinitions.existingConfigmap) "pgadmin-server-definitions") }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.pgadmin4.serverDefinitions.existingConfigmap }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/name: pgadmin4
+data:
+  servers.json: |-
+    {{- include "invhub.pgadminServerDefinitionsJson" . | nindent 4 }}
+{{- end }}

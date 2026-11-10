@@ -1,0 +1,9 @@
+dependencies:
+- name: spark-operator
+  repository: https://kubeflow.github.io/spark-operator/
+  version: 2.5.1
+- name: cloudnative-pg
+  repository: https://cloudnative-pg.github.io/charts
+  version: 0.26.1
+digest: sha256:cf7f8a298b3ae977071611e2718c72f357dc8ad6cb1cf03949adbca8d47dc909
+generated: "2026-07-20T16:05:40.680872657+01:00"

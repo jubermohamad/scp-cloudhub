@@ -1,0 +1,8 @@
+azure:
+  subscriptionID: ""
+  tenantID: ""
+  location: ""
+  vnet: ""
+  subnet: ""
+  serviceLevel: ""
+  capacityPool: ""

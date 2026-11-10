@@ -1,0 +1,138 @@
+{{- $root := . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "disc-web.fullname" . }}
+  labels:
+    {{- include "disc-web.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "disc-web.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "disc-web.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "disc-web.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: copy-web-assets
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          resources:
+            limits:
+              cpu: 50m
+              memory: 64Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          command:
+            - sh
+            - -c
+            - |-
+              set -eu
+              cp -R /usr/share/nginx/html/. /workdir/
+          volumeMounts:
+            - name: nginx-html
+              mountPath: /workdir
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: nginx-html
+              mountPath: /usr/share/nginx/html
+            - name: sensasecrets-volume
+              mountPath: /sensasecrets-volume
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+             {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+             {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.flowsConfigMapName }}
+            - secretRef:
+                name: {{ .Values.flowsSecretName }}
+          env:
+            - name: FLOWS_INVHUB_BASE_URL
+              value: "{{ include "global.basename" . }}.{{ include "global.domain" . }}"
+            - name: VITE_LOCAL_SERVICE_DISCOVERY
+              value: "{{ .Values.global.VITE_LOCAL_SERVICE_DISCOVERY }}"         
+            - name: VITE_API_URL
+              value: {{ include "global.externalHttpsOrigin" . | quote }}
+            - name: VITE_DISC_API_URL
+              value: {{ printf "%s/v1/disclosures" (include "global.externalHttpsOrigin" .) | quote }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: nginx-cache
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: nginx-run
+          emptyDir:
+            sizeLimit: 48Mi
+        - name: nginx-html
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: sensasecrets-volume
+          secret:
+            secretName: sensa-global-secrets
+        # - name: https-certs
+        #   secret:
+        #     secretName: https-certs
+      {{- if .Values.topologySpreadConstraints.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpreadConstraints.maxSkew | default 1 }}
+          topologyKey: {{ .Values.topologySpreadConstraints.topologyKey | default "kubernetes.io/hostname" }}
+          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.whenUnsatisfiable | default "ScheduleAnyway" }}
+          labelSelector:
+            matchLabels:
+              {{- include "disc-web.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,7 @@
+Monitoring tool release "{{ include "monitoring-tool.fullname" . }}".
+
+API port: {{ .Values.service.httpPort }} (Service name http)
+MCP port: {{ .Values.service.mcpPort }} (Service name mcp)
+
+Port-forward:
+  kubectl port-forward svc/{{ include "monitoring-tool.fullname" . }} 9000:http 8002:mcp -n {{ .Release.Namespace }}

@@ -1,0 +1,72 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+image:
+  repository: quay.io/keycloak/keycloak
+  tag: "26.2.0"
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+replicaCount: 1
+
+args:
+  - start
+  - --http-enabled=true
+  - --http-port=8080
+  - --import-realm
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: ""
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  ingressAllowList:
+    customerIPs: []
+    platformIPs: []
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "200m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+probes:
+  startup:
+    enabled: true
+    path: /
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    failureThreshold: 30
+    timeoutSeconds: 5
+  readiness:
+    enabled: true
+    path: /realms/master
+    initialDelaySeconds: 45
+    periodSeconds: 10
+    failureThreshold: 6
+    timeoutSeconds: 5
+  liveness:
+    enabled: true
+    path: /realms/master
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    failureThreshold: 3
+    timeoutSeconds: 5
+
+initContainers: []
+
+extraEnvRaw: []
+extraVolumes: []
+extraVolumeMounts: []

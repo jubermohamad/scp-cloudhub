@@ -1,0 +1,68 @@
+{{- if .Values.celeryBeat.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "model-store.componentName" (list . "celery-beat") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: celery-beat
+    {{- include "model-store.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.celeryBeat.replicaCount }}
+  selector:
+    matchLabels:
+      app: celery-beat
+  template:
+    metadata:
+      labels:
+        app: celery-beat
+        {{- include "model-store.labels" . | nindent 8 }}
+      {{- $roll := include "model-store.helmRolloutPodAnnotations" . | trim }}
+      {{- if $roll }}
+      annotations:
+        {{- $roll | nindent 8 }}
+      {{- end }}
+    spec:
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      containers:
+        - name: celery-beat
+          image: "{{ .Values.celeryBeat.image.repository }}:{{ .Values.celeryBeat.image.tag }}"
+          imagePullPolicy: {{ .Values.celeryBeat.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - celery
+            - -A
+            - tasks.worker
+            - beat
+            - --loglevel=info
+            - -s
+            - /tmp/celerybeat-schedule
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: database-url
+            - name: REDIS_URL
+              value: {{ include "model-store.redisUrl" . }}
+            - name: CELERY_BROKER_URL
+              value: {{ include "model-store.redisUrl" . }}
+            - name: CELERY_RESULT_BACKEND
+              value: {{ include "model-store.redisUrl" . }}
+            - name: MODEL_STORE_PROVIDER
+              value: {{ .Values.backend.env.modelStoreProvider | quote }}
+            - name: SINGLE_NAMESPACE_MODE
+              value: {{ .Values.singleNamespace.enabled | quote }}
+            - name: DEFAULT_NAMESPACE
+              value: {{ include "model-store.defaultNamespace" . | quote }}
+            - name: MODELS_NAMESPACE
+              value: {{ include "model-store.defaultNamespace" . | quote }}
+            - name: MCP_NAMESPACE
+              value: {{ include "model-store.defaultNamespace" . | quote }}
+            - name: AGENTS_NAMESPACE
+              value: {{ include "model-store.defaultNamespace" . | quote }}
+          resources:
+            {{- toYaml .Values.celeryBeat.resources | nindent 12 }}
+{{- end }}

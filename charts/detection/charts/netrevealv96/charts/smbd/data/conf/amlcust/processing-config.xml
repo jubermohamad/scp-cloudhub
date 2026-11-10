@@ -1,0 +1,30 @@
+<processing>
+    <profilings>
+        <profiling name="Transaction_profiling" profilePeriod="all" outputMode="parquet"/>
+         <profiling name="compound_profiler" profilePeriod="all" outputMode="parquet"/>
+    </profilings>
+
+    <detections>
+        <detection name="Transaction_detection" timeBase="all"/>
+    </detections>
+
+    <processes>
+     <process name="AMLCUST_Processing" domain="AMLCUST">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection"/>
+                </service>
+                <service type="compound" dataSource="Transaction" entity="" onError="continue">
+                    <apply name="compound_profiler"/>
+                </service>
+                <service type="profile_export" onError="continue">
+                   <apply name="profileExporter"/>
+                </service>
+            </services>
+        </process>
+    </processes>
+</processing>

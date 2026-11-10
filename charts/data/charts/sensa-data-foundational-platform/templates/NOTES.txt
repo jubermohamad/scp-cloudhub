@@ -1,0 +1,34 @@
+Prism ({{ .Chart.Name }}-{{ .Chart.Version }}, images {{ .Values.api.image.tag }}) installed as {{ include "prism.fullname" . }}.
+
+Components:
+  API        {{ if .Values.api.enabled }}{{ include "prism.fullname" . }}-api:{{ .Values.api.port }}{{ else }}disabled{{ end }}
+  Console    {{ if .Values.console.enabled }}{{ include "prism.fullname" . }}-console:{{ .Values.console.port }}{{ else }}disabled{{ end }}
+  Assistant  {{ if .Values.chatBackend.enabled }}{{ include "prism.fullname" . }}-chat-backend:{{ .Values.chatBackend.port }}{{ else }}disabled{{ end }}
+  Graph      {{ include "prism.neo4jUri" . }}{{ if not .Values.infra.neo4j.enabled }} (external){{ end }}
+  Ledger     {{ include "prism.ledgerHost" . }}/{{ include "prism.ledgerDatabase" . }}{{ if not .Values.infra.ledgerPostgres.enabled }} (external){{ end }}
+  Warehouse  {{ include "prism.warehouseHost" . }}{{ if not .Values.infra.warehousePostgres.enabled }} (external){{ end }}
+
+Reach the console:
+{{- if .Values.ingress.enabled }}
+  https://{{ .Values.ingress.host }}/
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "prism.fullname" . }}-console 8080:{{ .Values.console.port }}
+  # then http://localhost:8080/  (/rigraph/ -> API, /chat/ -> assistant)
+{{- end }}
+
+Secrets this release READS (it never creates them — see README § Prerequisites):
+  {{ .Values.secrets.neo4jAuth }} (NEO4J_AUTH, password), {{ .Values.secrets.ledgerPg }} (password),
+  {{ .Values.secrets.warehousePg }} (password), {{ .Values.secrets.anthropicAuth }} (api_key, optional)
+
+{{ if not (or .Values.jobs.reproject.enabled .Values.jobs.restoreWarehouses.enabled .Values.jobs.rebuildWarehouse.enabled .Values.jobs.resetWorld.enabled) -}}
+No operational job is enabled. A fresh warehouse needs one:
+  helm upgrade ... --set jobs.restoreWarehouses.enabled=true
+then set it back to false once the Job completes.
+{{- else -}}
+OPERATIONAL JOBS ENABLED — set them back to false after they complete, or the
+next upgrade re-runs them:
+{{ if .Values.jobs.reproject.enabled }}  - reproject (rebuilds projections; truth untouched)
+{{ end }}{{ if .Values.jobs.restoreWarehouses.enabled }}  - restore-warehouses (skip-if-exists)
+{{ end }}{{ if .Values.jobs.rebuildWarehouse.enabled }}  - rebuild-warehouse (DROPs {{ .Values.jobs.rebuildWarehouse.database }})
+{{ end }}{{ if .Values.jobs.resetWorld.enabled }}  - reset-world (DESTROYS this environment's ledger)
+{{ end }}{{- end }}

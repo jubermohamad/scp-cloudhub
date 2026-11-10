@@ -1,0 +1,110 @@
+{{- if .Values.appsSchemaImportJob.job.enableJob }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: "{{ include "cron.job.apps-schema-import.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+spec:
+  schedule: "{{ .Values.appsSchemaImportJob.job.schedule }}"
+  {{- if .Values.global.timeZone }}
+  timeZone: "{{ .Values.global.timeZone }}"
+  {{- end }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.appsSchemaImportJob.job.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.appsSchemaImportJob.job.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: {{ .Values.appsSchemaImportJob.job.ttlSecondsAfterFinished }}
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: "{{ .Release.Name }}-apps-schema-import"
+            {{- include "common.helm.metadata.labels" . | nindent 12 }}
+        spec:
+          securityContext:
+            runAsUser: 200
+            runAsGroup: 200
+          initContainers:
+          - name: wait-for-postgresql-db-job
+            image: "{{- include "standalone.docker.image" . -}}"
+            securityContext:
+              runAsNonRoot: true
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+            imagePullPolicy: IfNotPresent
+            command:
+              - /bin/bash
+              - -c
+              - |
+                /wait-for-it/wait-for-it.sh {{ include "db.url" . }} --timeout=500
+                timeout {{ .Values.global.standalone.dbInit.dbJobFileFlagTimeout }} bash -c 'while [ ! -f /opt/WLM/db_job_completed.flag ]; do echo "Wait for the db init job to complete"; sleep 2; done'
+            volumeMounts:
+            - name: {{ .Release.Name }}-wlm-indexes
+              mountPath: /opt/WLM
+          containers:
+          - name: apps-schema-import
+            image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.psqlDockerImage }}"
+            securityContext:
+              runAsNonRoot: true
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+            {{- if eq .Values.global.useResourceConstraints "true" }}
+            resources:
+              requests:
+                memory: "{{ .Values.appsSchemaImportJob.job.pod.resources.requests.memory }}"
+                cpu: "{{ .Values.appsSchemaImportJob.job.pod.resources.requests.cpu }}"
+              limits:
+                memory: "{{ .Values.appsSchemaImportJob.job.pod.resources.limits.memory }}"
+                cpu: "{{ .Values.appsSchemaImportJob.job.pod.resources.limits.cpu }}"
+            {{- end }}
+            command:
+              - /bin/bash
+              - -c
+              - |
+                /opt/netreveal/standaloneHome/apps-schema-import-scripts/apps-schema-importer.sh
+            volumeMounts:
+              {{ include "postgres.server.secret-mount" . | nindent 14 }}
+              - name: "{{ include "secret.standalone.apps-schema-import.script.name" . }}"
+                mountPath: /opt/netreveal/standaloneHome/apps-schema-import-scripts
+              - name: {{ .Release.Name }}-standalone-apps-schema-import-tmp
+                mountPath: /opt/netreveal/standaloneHome/tmp
+              - name: mc-tmp-config
+                mountPath: /mc-config/.mc
+            env:
+              - name: PGPASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: postgres-credential-apps-import-user-cnpg
+                    key: password
+              - name: APPS_SCHEMA_IMPORT_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: postgres-credential-apps-import-user-cnpg
+                    key: username
+              - name: MINIO_URL
+                value: "{{ include "minio.url" . }}"
+            envFrom:
+              - secretRef:
+                  name: "minio-sftp-creds"
+          restartPolicy: Never
+          volumes:
+            {{ include "postgres.server.secret-volume" . | nindent 12 }}
+            - name: "{{ include "secret.standalone.apps-schema-import.script.name" . }}"
+              secret:
+                secretName: "{{ include "secret.standalone.apps-schema-import.script.name" . }}"
+                defaultMode: 493
+            - name: postgres-credential-apps-import-user-cnpg
+              secret:
+                secretName: postgres-credential-apps-import-user-cnpg
+            - name: {{ .Release.Name }}-wlm-indexes
+              persistentVolumeClaim:
+                claimName: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+            - name: {{ .Release.Name }}-standalone-apps-schema-import-tmp
+              emptyDir: {}
+            - name: mc-tmp-config
+              emptyDir: {}
+
+{{- include "image.pull.secrets" . | nindent 10 }}
+
+{{- end }}

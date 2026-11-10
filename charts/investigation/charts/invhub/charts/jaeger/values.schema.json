@@ -1,0 +1,14 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "global": {
+            "type": "object",
+            "properties": {
+                "JAEGER_STORAGE_URL": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

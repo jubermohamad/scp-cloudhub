@@ -1,0 +1,28 @@
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PodMonitor" -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: minio-tenant
+  labels:
+    app: minio
+  namespace: {{ .Release.Namespace }}
+spec:  
+  selector:
+    matchLabels:
+      app: minio
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  podMetricsEndpoints:
+    - targetPort: 9000
+      scheme: https
+      path: /minio/v2/metrics/cluster
+      tlsConfig:
+        serverName: "minio"
+        ca:
+          secret:
+            name: "minio-tls"
+            key: public.crt
+        insecureSkipVerify: {{ .Values.global.allowInsecureDefaults | default false }}
+{{- end }}
+        

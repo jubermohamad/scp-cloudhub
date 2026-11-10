@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy-config
+  namespace: {{ .Release.Namespace }}
+
+data:
+  haproxy.cfg: |
+    global
+      log stdout format raw daemon
+      maxconn 4096
+
+    defaults
+      log global
+      mode http
+      timeout connect 10s
+      timeout client 60s
+      timeout server 60s
+      option httplog
+      retries 3
+
+    resolvers dns
+      nameserver kube-dns kube-dns.kube-system.svc.cluster.local:53
+      hold valid 10s
+
+    frontend http_front
+      bind *:{{ .Values.service.port }}
+      log global
+
+      capture request header Host len 100
+      capture request header Content-Type len 100
+      capture request header Authorization len 200
+      capture request header x-api-key len 200
+
+      acl is_health_check path /health
+      use_backend health_check if is_health_check
+      
+
+{{- range .Values.mtls.domains }}
+      acl host_{{ .name }} hdr_dom(host) -i haproxy-egress
+      use_backend be_{{ .name }} if host_{{ .name }}
+{{- end }}
+
+      default_backend default_backend
+
+    backend health_check
+      http-request return status 200 content-type text/plain lf-string "OK\n"
+
+    backend default_backend
+      http-request return status 503 content-type text/plain lf-string "No backend matched\n"
+
+{{- range .Values.mtls.domains }}
+
+    backend be_{{ .name }}
+
+      http-request set-header Host {{ .host }}
+      http-request set-header x-api-key %[env(API_KEY_{{ upper .name }})]
+      http-request set-header Authorization "Basic %[env(BASIC_AUTH_{{ upper .name }})]"
+
+      server target {{ .host }}:{{ .port }} ssl verify required crt {{ $.Values.mtls.certPath }}/{{ .name }}/client-combined.pem ca-file {{ $.Values.mtls.certPath }}/{{ .name }}/ca-bundle.crt sni str({{ .host }}) alpn h2,http/1.1 resolvers dns resolve-prefer ipv4
+
+{{- end }}

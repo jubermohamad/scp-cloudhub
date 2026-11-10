@@ -1,0 +1,370 @@
+{{- $solution := "wlm-igs-sa" -}}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "generate.name.with.release.name" (list $ . "wlm-igs-sa") | quote }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-wlm-igs-sa-instance"
+  annotations:
+    ad.datadoghq.com/wlm-igs-sa.logs: |
+      [
+          {
+              "source": "nri-{{ .Release.Name }}-k8s-wlm-igs-sa",
+              "service": "nri-{{ .Release.Name }}-k8s-wlm-igs-sa",
+              "log_processing_rules": [
+                  {
+                      "type": "multi_line",
+                      "name": "java_log_format",
+                      "pattern": "(app)\\s-\\s(\\d{2}-[A-Za-z]{3}-\\d{4}\\s\\d{2}:\\d{2}:\\d{2},\\d{3})\\s+-\\s+-\\s+(\\w+)\\s+([A-Za-z]+:\\d+)"
+                  }
+              ]
+          },
+          {
+              "source": "nri-{{ .Release.Name }}-k8s-wlm-igs-sa",
+              "service": "nri-{{ .Release.Name }}-k8s-wlm-igs-sa",
+              "log_processing_rules": [
+                  {
+                      "type": "multi_line",
+                      "name": "java_stats_log_format",
+                      "pattern": "((appmsg)|(appfunc))\\s-\\s(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}),+(.*)"
+                  }
+              ]
+          }
+      ]
+    reloader.stakater.com/search: "true"
+    configmap.reloader.stakater.com/reload: "{{ .Release.Name }}-wlm-igs-sa-base-config-property"
+  {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.standaloneVersions.configuration .Values.global.override.chartEnable.standaloneVersions.database) }}
+    app.override.image: "{{ .Values.global.override.overrideDockerImageName }}"
+    {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.configuration }}
+    app.override.configuration: "{{ .Values.global.override.chartEnable.standaloneVersions.configuration | toString }}"
+    {{- end }}
+    {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.database }}
+    app.override.databse: "{{ .Values.global.override.chartEnable.standaloneVersions.database | toString }}"
+    {{- end }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-wlm-igs-sa-instance-pod
+  serviceName: {{ .Release.Name }}-wlm-igs-sa
+  replicas: {{ .Values.pod.replicas }}
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      namespace: {{ .Values.global.namespace }}
+      labels:
+        app: {{ .Release.Name }}-wlm-igs-sa-instance-pod
+      {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.standaloneVersions.configuration .Values.global.override.chartEnable.standaloneVersions.database) }}
+      annotations:
+        app.override.image: "{{ .Values.global.override.overrideDockerImageName }}"
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.configuration }}
+        app.override.configuration: "{{ .Values.global.override.chartEnable.standaloneVersions.configuration | toString }}"
+        {{- end }}
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.database }}
+        app.override.databse: "{{ .Values.global.override.chartEnable.standaloneVersions.database | toString }}"
+        {{- end }}
+      {{- end }}
+    spec:
+      terminationGracePeriodSeconds: 1
+      securityContext:
+        runAsUser: 200
+        runAsGroup: 200
+        fsGroup: 200
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+      - name: wait-for-nr-ui
+        imagePullPolicy: IfNotPresent
+        image: "{{- include "wlm.igs.docker.image" . -}}"
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            /wait-for-it/wait-for-it.sh {{ .Release.Name }}-nr-ui.{{ .Values.global.namespace }}.svc.cluster.local:8443 --timeout=1100
+      - name: init-igs-standalone
+        image: "{{- include "wlm.igs.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          {{- if .Values.global.useRootAccountForInit }}
+          runAsUser: 0
+          {{- end }}
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          {{- if not .Values.global.useRootAccountForInit }}
+          runAsNonRoot: true
+          {{- end }}
+        volumeMounts:
+        - name: {{ include "generate.name.with.release.name" (list $ . "wlm-igs-sa-logs") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/logs
+        - name: {{ .Release.Name }}-wlm-igs-sa-java-tmp
+          mountPath: /opt/netreveal/standaloneHome/java
+        - name: {{ include "generate.name.with.release.name" (list $ . "wlm-igs-sa-conf-wlm") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/conf/wlm
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.wlmIgsSa }}
+        - name: {{ .Release.Name }}-wlm-igs-sa-conf-override
+          mountPath: /opt/conf-override
+        - name: {{ .Release.Name }}-wlm-igs-sa-lib-override
+          mountPath: /opt/lib-override
+        {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            {{- if .Values.global.useRootAccountForInit }}
+            echo "Enable 'chown' for the standalone container."
+            export RUN_CHOWN="true"
+            {{- else }}
+            echo "Disable 'chown' for the standalone container."
+            export RUN_CHOWN="false"
+            {{- end }}
+            echo "Run the initApplication.sh script."
+            /opt/docker/initApplication.sh
+            {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.wlmIgsSa }}
+            echo "Prepare override 'conf' directory."
+            cp -r /opt/netreveal/standaloneHome/conf/. /opt/conf-override
+            echo "Prepare override 'lib' directory."
+            cp -r /opt/netreveal/standaloneHome/lib/. /opt/lib-override
+            {{- if .Values.global.useRootAccountForInit }}
+            echo "Change the owner of the 'conf' directory."
+            chown -R 200:200 /opt/conf-override
+            chown -R 200:200 /opt/lib-override
+            {{- end }}
+            {{- end }}
+
+      {{- include "init-container.kafka.jks" (merge (dict "solution" $solution) . ) | nindent 6 }}
+      ##############################
+      # NROD OVERRIDE
+      ##############################
+      {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.wlmIgsSa }}
+      - name: nrod-override
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        volumeMounts:
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-igs-sa-conf-wlm") | quote }}
+            mountPath: /opt/netreveal/standaloneHome/conf/wlm
+          - name: {{ .Release.Name }}-wlm-igs-sa-conf-override
+            mountPath: /opt/conf-override
+          - name: {{ .Release.Name }}-wlm-igs-sa-lib-override
+            mountPath: /opt/lib-override
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            if [ -f /opt/override/override_version.properties ]; then
+              echo "Override version file exists. Copy it to the 'conf-override' directory."
+              cp /opt/override/override_version.properties /opt/conf-override
+            fi
+            if [ -d /opt/override/conf/wlm-igs ]; then
+              echo "Override 'conf' directory exists. Copy it to the 'conf-override' directory."
+              echo ">>>>"
+              find /opt/override/conf/wlm-igs
+              echo "<<<<"
+              cp -r /opt/override/conf/wlm-igs/. /opt/conf-override
+            fi
+            if [ -d /opt/override/conf/wlm-igs/wlm ]; then
+              echo "Override 'conf/wlm' directory exists. Copy it to the 'conf/wlm' directory."
+              echo ">>>>"
+              find /opt/override/conf/wlm-igs/wlm
+              echo "<<<<"
+              cp -r /opt/override/conf/wlm-igs/wlm/. /opt/netreveal/standaloneHome/conf/wlm
+            fi
+            # base_config.properties cannot be overwritten.
+            if [ -f /opt/conf-override/base_config.properties ]; then
+              echo "Override 'base_config.properties' file exists. Remove it."
+              rm -f /opt/conf-override/base_config.properties
+            fi
+
+            # lib directory override
+            if [ -d /opt/override/customcode/common/lib ]; then
+              countFiles=$(find /opt/override/customcode/common/lib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/common/lib to /opt/lib-override"
+                cp -r /opt/override/customcode/common/lib/. /opt/lib-override
+                echo ">>>>"
+                find /opt/override/customcode/common/lib -type f ! -name ".*"
+                echo "<<<<"
+              else
+                echo "No files found in /opt/override/customcode/common/lib"
+              fi
+            fi
+
+            if [ -d /opt/override/customcode/wlm-igs ]; then
+              countFiles=$(find /opt/override/customcode/wlm-igs -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/wlm-igs to /opt/lib-override"
+                cp -r /opt/override/customcode/wlm-igs/. /opt/lib-override
+                echo ">>>>"
+                find /opt/override/customcode/wlm-igs -type f ! -name ".*"
+                echo "<<<<"
+              else
+                echo "No files found in /opt/override/customcode/wlm-igs"
+              fi
+            fi
+      {{- end }}
+
+{{- include "image.pull.secrets" . | nindent 6 }}
+
+      containers:
+      - name: wlm-igs-sa
+        image: "{{- include "wlm.igs.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        {{- if eq .Values.global.useResourceConstraints "true" }}
+        resources:
+          requests:
+            memory: {{ .Values.pod.resources.requests.memory }}
+            cpu: {{ .Values.pod.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.pod.resources.limits.memory }}
+            cpu: {{ .Values.pod.resources.limits.cpu }}
+        {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            /opt/netreveal/standaloneHome/standalone-start.sh
+        env:
+        - name: SCHEDULE_RUNNER_HEAP_MAX
+          value: {{ .Values.pod.java.scheduleRunnerHeapMax }}
+        - name: SCHEDULE_RUNNER_HEAP_MIN
+          value: {{ .Values.pod.java.scheduleRunnerHeapMin }}
+        - name: IMPORT_EXPORT_HEAP_MAX
+          value: {{ .Values.pod.java.importExportHeapMax }}
+        - name: IMPORT_EXPORT_HEAP_MIN
+          value: {{ .Values.pod.java.importExportHeapMin }}
+        - name: JAVA_OPTS
+          {{- if eq .Values.pod.java.switchOnDebug true }}
+          value: " {{ .Values.pod.java.extraJavaOpts }} -XX:MaxRAM={{ .Values.pod.java.standaloneMaxRam }} -Djava.io.tmpdir=/opt/netreveal/standaloneHome/java/tmp -Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=0.0.0.0:8788 "
+          {{- else }}
+          value: " {{ .Values.pod.java.extraJavaOpts }} -XX:MaxRAM={{ .Values.pod.java.standaloneMaxRam }} -Djava.io.tmpdir=/opt/netreveal/standaloneHome/java/tmp "
+          {{- end }}
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        {{- if eq .Values.pod.java.switchOnDebug true }}
+        ports:
+        - containerPort:  8788
+        {{- end }}
+        volumeMounts:
+        {{ include "postgres.server.secret-mount" . | nindent 8 }}
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.wlmIgsSa }}
+        - name: {{ .Release.Name }}-wlm-igs-sa-conf-override
+          mountPath: /opt/netreveal/standaloneHome/conf
+        - name: {{ .Release.Name }}-wlm-igs-sa-lib-override
+          mountPath: /opt/netreveal/standaloneHome/lib
+        {{- end }}
+        - name: {{ include "generate.name.with.release.name" (list $ . "wlm-igs-sa-logs") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/logs
+        - name: {{ .Release.Name }}-wlm-igs-sa-java-tmp
+          mountPath: /opt/netreveal/standaloneHome/java
+        - name: {{ .Release.Name }}-wlm-igs-sa-temp-reports
+          mountPath: /opt/netreveal/standaloneHome/temp/reports
+        - name: {{ .Release.Name }}-wlm-igs-sa-conf-temp
+          mountPath: /opt/netreveal/standaloneHome/conf/temp
+        - name: {{ include "generate.name.with.release.name" (list $ . "wlm-igs-sa-conf-wlm") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/conf/wlm
+        - name: {{ .Release.Name }}-wlm-igs-sa-base-config-properties
+          mountPath: /opt/netreveal/standaloneHome/conf/base_config.properties
+          subPath: base_config.properties
+        {{- include "wlm.igs.sa.log4j2.volume.mount" . | indent 8 }}
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+        {{- if ne $.Values.global.baseConfigProperties.kafka.securityProtocol "PLAINTEXT" }}
+        - name: {{ .Release.Name }}-kafka-wlm-igs-sa-jks-volume
+          mountPath: /opt/netreveal/standaloneHome/conf/keys/kafka.keystore.jks
+          subPath: kafka.keystore.jks
+          readOnly: true
+        - name: {{ .Release.Name }}-kafka-wlm-igs-sa-jks-volume
+          mountPath: /opt/netreveal/standaloneHome/conf/keys/kafka.truststore.jks
+          subPath: kafka.truststore.jks
+          readOnly: true
+        {{- end }}
+        {{- if .Values.pod.livenessProbe }}
+        livenessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - '-c'
+              - ps -ef | grep -E '[s]cheduleRunner|[s]tartScenarioEngineRunner' && exit 0 || exit 1
+          {{- toYaml .Values.pod.livenessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.readinessProbe }}
+        readinessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - '-c'
+              - ps -ef | grep -E '[s]cheduleRunner|[s]tartScenarioEngineRunner' && exit 0 || exit 1
+          {{- toYaml .Values.pod.readinessProbe | nindent 10 }}
+        {{- end }}
+      volumes:
+        {{ include "secret-volumes.kafka.jks" (merge (dict "solution" $solution ) . ) | nindent 8 }}
+        {{ include "postgres.server.secret-volume" . | nindent 8 }}
+        - name: {{ .Release.Name }}-wlm-igs-sa-java-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-igs-sa-temp-reports
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-igs-sa-conf-temp
+          emptyDir: {}
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.wlmIgsSa }}
+        - name: {{ .Release.Name }}-wlm-igs-sa-conf-override
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-igs-sa-lib-override
+          emptyDir: {}
+        {{- end }}
+        - name: {{ .Release.Name }}-wlm-indexes
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+        - name: {{ .Release.Name }}-wlm-igs-sa-base-config-properties
+          configMap:
+            name: {{ .Release.Name }}-wlm-igs-sa-base-config-property
+            items:
+            - key: base_config.properties
+              path: base_config.properties
+        {{- include "wlm.igs.sa.log4j2.volume" . | indent 8 }}
+      restartPolicy: Always
+  volumeClaimTemplates:
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "wlm-igs-sa-logs") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "wlmIgsSa.pvcApplicationLogsStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "wlm-igs-sa-conf-wlm") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "wlmIgsSa.pvcConfWlmStorage" . }}

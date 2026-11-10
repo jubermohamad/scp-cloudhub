@@ -1,0 +1,102 @@
+# Default values for ares.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/invhub-disc-web
+  # When empty, omit imagePullPolicy and use the Kubernetes default.
+  pullPolicy: ""
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets:
+  - name: "regcred"
+
+nameOverride: ""
+fullnameOverride: "disc-web"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations:
+  configmap.reloader.stakater.com/reload: "flows"
+
+flowsConfigMapName: "flows"
+flowsSecretName: "flows"
+
+podSecurityContext:
+  # The image currently binds to privileged port 80 and starts nginx with a
+  # root master process. Enforcing `runAsNonRoot: true` / `runAsUser: 10001`
+  # will break until the image is updated to use an unprivileged port (e.g.
+  # 8080) and run fully as non-root.
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  # readOnlyRootFilesystem is enabled via init-container + emptyDir volumes
+  # for /usr/share/nginx/html (the env-disc-config.sh entrypoint writes the
+  # runtime JS config into the writable emptyDir).
+  # Full non-root hardening depends on an image change; see podSecurityContext.
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+
+service:
+  type: ClusterIP
+  # Note: this image currently listens on privileged port 80 (Trivy AVD-KSV-0117). We'll fix it in the image.
+  port: 80
+
+tls:
+  enabled: true
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 20m
+    memory: 64Mi
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+global:
+  imagePullPolicy: Always   # platform default; the umbrella global overrides it
+  VITE_LOCAL_SERVICE_DISCOVERY: "false"

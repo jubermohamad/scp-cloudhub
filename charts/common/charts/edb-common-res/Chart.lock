@@ -1,0 +1,45 @@
+dependencies:
+- name: cert-manager
+  repository: https://charts.jetstack.io
+  version: v1.19.4
+- name: strimzi-kafka-operator
+  repository: oci://quay.io/strimzi-helm
+  version: 0.50.1
+- name: storageclass
+  repository: file://./charts/storageclass
+  version: 1.0.2
+- name: reloader
+  repository: https://stakater.github.io/stakater-charts
+  version: 2.2.8
+- name: ingress-nginx
+  repository: https://kubernetes.github.io/ingress-nginx
+  version: 4.14.3
+- name: cloudnative-pg
+  repository: https://cloudnative-pg.github.io/charts
+  version: 0.27.1
+- name: edb-postgres-distributed-for-kubernetes
+  repository: https://enterprisedb.github.io/edb-postgres-for-kubernetes-charts/
+  version: 1.2.0
+- name: operator
+  repository: https://operator.min.io/
+  version: 5.0.18
+- name: argo-workflows
+  repository: https://argoproj.github.io/argo-helm
+  version: 0.47.4
+- name: cluster-issuers
+  repository: file://./charts/cluster-issuers
+  version: 1.0.0
+- name: opentelemetry-operator
+  repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+  version: 0.40.0
+- name: jaeger-operator
+  repository: https://jaegertracing.github.io/helm-charts
+  version: 2.49.0
+- name: kube-prometheus
+  repository: https://charts.bitnami.com/bitnami
+  version: 8.30.1
+- name: scupper-operator
+  repository: file://./charts/scupper-operator
+  version: 2.1.3
+digest: sha256:304e6107a1fa42cf131d53fc839056fe8140c67afdbb7ef275705190d28b361f
+generated: "2026-03-10T15:02:02.0976262+01:00"

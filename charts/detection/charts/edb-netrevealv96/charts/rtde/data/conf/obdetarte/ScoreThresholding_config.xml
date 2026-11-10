@@ -1,0 +1,5 @@
+<thresholdingconfig>
+	<conditions>
+		<condition  name="THRESHOLD_PARENT"  check="CustomerId = CustomerSourceUniqueId"/>
+	</conditions>		
+</thresholdingconfig>

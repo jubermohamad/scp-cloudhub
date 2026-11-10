@@ -1,0 +1,521 @@
+############################################################################################################################################
+#  _____  _     ___________  ___   _
+# |  __ \| |   |  _  | ___ \/ _ \ | |
+# | |  \/| |   | | | | |_/ / /_\ \| |
+# | | __ | |   | | | | ___ \  _  || |
+# | |_\ \| |___\ \_/ / |_/ / | | || |____
+#  \____/\_____/\___/\____/\_| |_/\_____/
+#
+############################################################################################################################################
+global:
+  toolsDockerImage: "nri-nrod-k8s-tools:1.0.6-20260327201420"
+  #####################################################################
+  # Section cert-manager and certificate lifecycle management
+  issuer:
+    ca:
+      name: ca
+    selfSigned:
+      name: selfsigned
+      certificate:
+        duration: 87600h # 10 years
+        renewBefore: 720h # 30 days
+  certificate:
+    duration: 8760h # 1 year
+    renewBefore: 720h # 30 days
+    subject:
+      organizations:
+      - Netreveal
+      countries:
+      - IE
+      organizationalUnits:
+      - IT
+      localities:
+      - Dublin
+      provinces:
+      - Dublin
+    privateKey:
+      algorithm: ECDSA
+      size: 256
+  #####################################################################
+  prefixPvcWithReleaseName: false
+  oneVolumePerPod: true
+  useResourceConstraints: "true" #true|false
+  clusterType: "minikube" #aks/nfs/minikube
+  # Global time zone identifier used for scheduling in configuration. Examples:
+  # timeZone: "UTC"
+  # timeZone: "Europe/Dublin"
+  # timeZone: "Australia/Melbourne"
+  timeZone: ""
+  useImagePullSecrets: "true"
+  netreveal:
+    imagePullSecrets:
+      - name: "regcred"
+ 
+  enableDataShim: true
+  trustStore:
+    password: ""
+  prometheus:
+    release: "dxv-sri"
+  namespace: dxv-sri
+
+  # Set to true to enable Parallel Pod Management Policy for StatefulSets
+  # This can improve startup and shutdown times for StatefulSets by allowing pods to be managed in parallel rather than sequentially.
+  # However, it may lead to resource contention if multiple pods start or stop simultaneously.
+  # STS has to be deleted and recreated to apply this change.
+  useParallelPodManagementPolicy: false
+
+  # Ingress properties
+  ingressPrefix: "nr"
+  ingressWildCardDns: "symphonyai.dev"
+  ingressNamespace: "nginx-ingress"
+  ingressAllowList:
+    customerIPs: []
+    platformIPs: []
+  # Empty string|prod|production are not added into the ingress host name
+  # Ingress host name is generated as:
+  #   <global.ingressPrefix>-(<sub-chart-name> if required)-(<global.envType> if not empty or not "prod" or "production")-<global.clientSubDomain>.<global.ingressWildCardDns>
+  envType: ""
+  clientSubDomain: "clientsubdomain"
+
+  #Globally defined ingress class name. It can be overridden in each sub-chart if needed. Please note that when kubePrometheusStackPresent=true then the ingress class for spark-operator has to be set to "nginx-inc" to work properly with kube-prometheus-stack configuration.
+  ingress: 
+    className: &ingressClass "nginx"
+
+  pv:
+    storageClassName: "standard"
+    host: "10.222.17.61"
+    rwmStorageClassName: ""
+
+  # Define override for JAVA_OPTS required for JDK 17.
+  java:
+    java_opts: ""
+
+  # Examples:
+  #   ECR: 519876397211.dkr.ecr.eu-west-1.amazonaws.com
+  #   ACR: nrengdev.azurecr.io
+  #   DockerHub: index.docker.io/symphonysensa
+  #
+  # spark-operator.image - has to be defined with reposiotry name
+  dockerRegistryName: "519876397211.dkr.ecr.eu-west-1.amazonaws.com"
+ 
+  orgUnitUserPrefix: ""
+  # @@orgUnitWithMultiplePods
+  # When 'true' multiple PODs are generated (one per Org Unit) for OOTB configuration works (with some project configuration for WLM):
+  #   Standalone
+  #   WLM IGS
+  #   WLM PN RT
+  #   WLM PN SA
+  # When 'false' the OOTB configuration requires project updates. The Multi Org Unit set up will be similar to NR 9.4 and 9.5
+  orgUnitWithMultiplePods: true
+  nrOrgUnits: []
+
+  # true|false
+  # false = it will not use root account for init script. It require to create directory structure with the proper permissions
+  useRootAccountForInit: true
+
+
+  externalCertificates: {}
+    # external:
+    #   # Secret name for external certificates
+    #   secretName: "external-certificates"
+    #   # Please provide:
+    #   #   - cert and key: certificate and private key in PEM format
+    #   #   - signedCertificate: signed certificate in PEM format
+    #   # signedCertificate is used when all properties are defined.
+    #   cert: "external.cert.crt"
+    #   key: "external.cert.key"
+    #   signedCertificate: "external.cert.cer"
+
+
+  # minio credentials
+  minio:
+    user: "minio"
+    password: ""
+    clientUser: "customer"
+    psqlUser: "psqlbackup"
+    clientPassword: ""
+    psqlPassword: ""
+
+  # Extra annotations required for PVC based on a StorageClass name
+  pvcAnnotations:
+    "managed-csi":
+      annotations:
+        velero.io/csi-volumesnapshot-class: "azure-disk-csi-snapshotclass"
+    "azurefile-csi-nfs":
+      annotations:
+        velero.io/csi-volumesnapshot-class: "trident-snapshotclass"
+    "azure-netapp-files":
+      annotations:
+        velero.io/csi-volumesnapshot-class: "trident-snapshotclass"
+
+  database:
+   
+    testBackupMode: false
+
+  operatorsNamespaces:
+    - nr-infra-common
+    - common-res
+
+# Subchart: network-policies (installed when global.nrSubChartSwitches.enableNetworkPolicies is true).
+network-policies:
+  minio:
+    trustedClientNamespaces: []
+
+
+############################################################################################################################################
+# ___  ________ _   _ _____ _____
+# |  \/  |_   _| \ | |_   _|  _  |
+# | .  . | | | |  \| | | | | | | |
+# | |\/| | | | | . ` | | | | | | |
+# | |  | |_| |_| |\  |_| |_\ \_/ /
+# \_|  |_/\___/\_| \_/\___/ \___/
+#
+############################################################################################################################################
+minio:
+  ## Provide a name to substitute for the full names of resources
+  ##
+  fullnameOverride: "minio"
+  ## minio mode, i.e. standalone or distributed
+  mode: standalone ## other supported values are "standalone"
+  imagePullSecrets:
+    - name: regcred
+  ## Update strategy for Deployments
+  deploymentUpdate:
+    type: Recreate
+    maxUnavailable: 1
+    maxSurge: 100%
+
+  probs:
+    livenessProbe:
+      failureThreshold: 3
+      initialDelaySeconds: 30
+      periodSeconds: 20
+      successThreshold: 1
+      timeoutSeconds: 15
+    readinessProbe:
+      failureThreshold: 3
+      initialDelaySeconds: 20
+      periodSeconds: 20
+      successThreshold: 1
+      timeoutSeconds: 15
+    # startupProbe:
+    #   failureThreshold: 3
+    #   initialDelaySeconds: 15
+    #   periodSeconds: 20
+    #   successThreshold: 1
+    #   timeoutSeconds: 15
+
+  ## Use existing Secret that store following variables:
+  ##
+  ## | Chart var             | .data.<key> in Secret    |
+  ## |:----------------------|:-------------------------|
+  ## | rootUser              | rootUser                 |
+  ## | rootPassword          | rootPassword             |
+  ##
+  ## All mentioned variables will be ignored in values file.
+  ## .data.rootUser and .data.rootPassword are mandatory,
+  ## others depend on enabled status of corresponding sections.
+  existingSecret: "nrodsftp-minio-creds"
+
+  # Number of drives attached to a node
+  drivesPerNode: 1
+  # Number of MinIO containers running
+  replicas: 1
+  # Number of expanded MinIO clusters
+  pools: 1
+
+  ## Enable persistence using Persistent Volume Claims
+  ## ref: http://kubernetes.io/docs/user-guide/persistent-volumes/
+  ##
+  persistence:
+    enabled: true
+    accessMode: ReadWriteOnce
+    size: 50Gi
+
+  users: []
+
+  ## Configure Ingress based on the documentation here: https://kubernetes.io/docs/concepts/services-networking/ingress/
+  ##
+  ingress:
+    enabled: false
+    ingressAllowList:
+      customerIPs: []
+      platformIPs: []
+    ingressClassName: ~
+    labels: {}
+      # node-role.kubernetes.io/ingress: platform
+    annotations: {}
+      # kubernetes.io/ingress.class: nginx
+      # kubernetes.io/tls-acme: "true"
+      # kubernetes.io/ingress.allow-http: "false"
+      # kubernetes.io/ingress.global-static-ip-name: ""
+      # nginx.ingress.kubernetes.io/secure-backends: "true"
+      # nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+      # nginx.ingress.kubernetes.io/whitelist-source-range: 0.0.0.0/0
+    path: /
+    hosts:
+      - minio-example.local
+    tls: []
+    #  - secretName: chart-example-tls
+    #    hosts:
+    #      - chart-example.local
+
+  consoleService:
+    type: ClusterIP
+    clusterIP: ~
+    port: "9001"
+    nodePort: 32001
+    loadBalancerIP: ~
+    externalIPs: []
+    annotations: {}
+    ## consoleService.loadBalancerSourceRanges Addresses that are allowed when service is LoadBalancer
+    ## https://kubernetes.io/docs/tasks/access-application-cluster/configure-cloud-provider-firewall/#restrict-access-for-loadbalancer-service
+    ##
+    #loadBalancerSourceRanges:
+    #   - 10.10.10.0/24
+    loadBalancerSourceRanges: []
+
+    ## servconsoleServiceice.externalTrafficPolicy minio service external traffic policy
+    ## ref http://kubernetes.io/docs/tasks/access-application-cluster/create-external-load-balancer/#preserving-the-client-source-ip
+    ##
+    externalTrafficPolicy: Cluster
+
+  consoleIngress:
+    enabled: false
+    ingressAllowList:
+      customerIPs: []
+      platformIPs: []
+    ingressClassName: ~
+    labels: {}
+      # node-role.kubernetes.io/ingress: platform
+    annotations: {}
+      # kubernetes.io/ingress.class: nginx
+      # kubernetes.io/tls-acme: "true"
+      # kubernetes.io/ingress.allow-http: "false"
+      # kubernetes.io/ingress.global-static-ip-name: ""
+      # nginx.ingress.kubernetes.io/secure-backends: "true"
+      # nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+      # nginx.ingress.kubernetes.io/whitelist-source-range: 0.0.0.0/0
+    path: /
+    hosts:
+      - console.minio-example.local
+    tls: []
+    #  - secretName: chart-example-tls
+    #    hosts:
+    #      - chart-example.local
+
+  ##Security context for minio containers
+  securityContext:
+    enabled: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    fsGroupChangePolicy: "OnRootMismatch"
+
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+
+  sftp:
+    enabled: false
+
+
+
+############################################################################################################################################
+#  _   _ ______ ___________  ___________ ___________
+# | \ | || ___ \  _  |  _  \/  ___|  ___|_   _| ___ \
+# |  \| || |_/ / | | | | | |\ `--.| |_    | | | |_/ /
+# | . ` ||    /| | | | | | | `--. \  _|   | | |  __/
+# | |\  || |\ \\ \_/ / |/ / /\__/ / |     | | | |
+# \_| \_/\_| \_|\___/|___/  \____/\_|     \_/ \_|
+#
+############################################################################################################################################
+nrodsftp:
+  minio-provisioner:
+    imageRepository: "quay.io/minio/mc"
+    imageTag: "RELEASE.2025-08-13T08-35-41Z"
+
+    notifyWebhook:
+      queueDir: "/export/events"
+      queueLimit: "10000"
+
+    # MinIO Site Replication Configuration (Active-Active)
+    # Enables bi-directional replication between two MinIO deployments
+    minio:
+      # All replication buckets must have versioning enabled. On both sites, ensure that versioning is
+      # enabled for the buckets listed in `bucketsWithVersioning`.
+      bucketsWithVersioning: []
+        # - "private-bucket"
+        # - "public-bucket"
+      replication:
+        enabled: false
+        # The replication endpoint has to be up and accessible from the source MinIO deployment. It it is not then the replication set up will fail.
+        # The endpoint has to be defined with ${MINIO_USER}:${MINIO_PASSWORD} for authentication
+        buckets: []
+          # - bucket: "private-bucket"
+          #   # The endpoint has to be defined with ${MINIO_USER}:${MINIO_PASSWORD} for authentication
+          #   endpoint: "http://${MINIO_USER}:${MINIO_PASSWORD}@minio.netreveal.svc.cluster.local:9000"
+          #   # Specify the integer priority of the replication rule. The value must be unique among all other rules on the source bucket. Higher values imply a higher priority than all other rules.
+          #   priority: 0
+          #   enabled: true
+          #   extraOptions: ""
+          #   replicateOptions: "delete,delete-marker,existing-objects,metadata-sync"
+          # - bucket: "public-bucket"
+          #   # The endpoint has to be defined with ${MINIO_USER}:${MINIO_PASSWORD} for authentication
+          #   endpoint: "http://${MINIO_USER}:${MINIO_PASSWORD}@minio.netreveal.svc.cluster.local:9000"
+          #   priority: 0
+          #   enabled: true
+          #   extraOptions: "--healthcheck-seconds 60 "
+          #   replicateOptions: "delete,delete-marker,existing-objects,metadata-sync"
+
+  nrodsftp:
+    # MinIO Ingress properties
+    ingress:
+      annotations:
+        nginx.ingress.kubernetes.io/proxy-body-size: 100m
+        nginx.org/client-max-body-size: "100m"
+      ingressAllowList:
+        customerIPs: []
+        platformIPs: []
+    fullnameOverride: "nrodsftp"
+    image:
+      repository: "symphonyfs.azurecr.io/symphonysensa/nrodsftp"
+      tag: "v1.2.4"
+      pullPolicy: IfNotPresent
+
+    imagePullSecrets:
+      - name: "regcred"
+
+    resources:
+      requests:
+        memory: "1500Mi"
+        cpu: "1000m"
+      limits:
+        memory: "3072Mi"
+        cpu: "1000m"
+
+    livenessProbe:
+      failureThreshold: 3
+      initialDelaySeconds: 60
+      periodSeconds: 20
+      successThreshold: 1
+      timeoutSeconds: 5
+    readinessProbe:
+      failureThreshold: 3
+      initialDelaySeconds: 60
+      periodSeconds: 20
+      successThreshold: 1
+      timeoutSeconds: 5
+    # startupProbe:
+    #   failureThreshold: 3
+    #   initialDelaySeconds: 60
+    #   periodSeconds: 20
+    #   successThreshold: 1
+    #   timeoutSeconds: 5
+
+    moveToPublicDirectories: ""
+    enablePgp: false
+    encryptOutgoingData: false
+
+    #Pod security context
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+
+    #Container security context
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+
+    # Enable/disable archiving feature.
+    archivingEnabled: false
+    # Comma separated list of folders to be archived. Extension to the default list.
+    archivingDirectories: ""
+    # This will add such folders into the archive folder list:
+    #   landing/acquisition{{ orgUnitCode }}/waiting
+    #   landing/acquisition/waiting
+    archiveAcquisitionWaitingDirectories: true
+    # This will add such folders into the archive folder list (example):
+    #   landing/listImport/UN List@XML-list'
+    #   landing/listImport/UN Country List@default'
+    #   (...)
+    archiveListImportDirectories: true
+    # This will add such folder into the archive folder list:
+    #   landing/fpfa
+    archiveFpfaDirectory: true
+    # This will add such folder into the archive folder list:
+    #   landing/worldcheck
+    archiveWorldcheckDirectory: true
+    # This will add such folders into the archive folder list:
+    #   landing/batchwatch/SWIFT@SWIFT'
+    #   landing/batchwatch/Subject@GSV'
+    #   landing/batchwatch/SWIFT@SWIFT_FLTS'
+    #   landing/batchwatch/GenericTransaction@SWIFT_FLTS_MX'
+    archiveBatchwatchDirectories: true
+    # this will add such folders into the archive folder list:
+    #   landing/amlopt/data
+    #   landing/amlopt{{ orgUnitCode }}/data
+    archiveAmloptDataDirectories: true
+    # PGP public key to be used for encrypting the archived files. It is required if nrodsftp.nrodsftp.archivingEnabled=true and nrodsftp.nrodsftp.archivingEnabled=true.
+    archivingPgpPublicKey:
+      secretName: "nrodsftp-archiving-pgp-key"
+      secretKey: "public-key"
+    # Number of seconds files archivek9sd files should be retained before being deleted.
+    # Default value is 1 year (31536000 seconds).
+    archivingRetentionPeeriodInSeconds: "31536000"
+    # This environment variable defines the cron expression for the archiving cleanup polling frequency.
+    # By default the job will run daily at midnight.
+    archivingCleanupCronExpression: "0 0 * * *"
+
+  redis:
+    fullnameOverride: "redis"
+    image:
+      tag: 7.4.7-patched-debian-12-r0
+    architecture: standalone
+
+    master:
+      resources:
+        requests:
+          memory: "1024Mi"
+          cpu: "500m"
+        limits:
+          memory: "1500Mi"
+          cpu: "1000m"
+      persistence:
+        ## @param master.persistence.enabled Enable persistence on Redis&reg; master nodes using Persistent Volume Claims
+        ##
+        enabled: false
+
+    replica:
+      resources:
+        requests:
+          memory: "1024Mi"
+          cpu: "500m"
+        limits:
+          memory: "1500Mi"
+          cpu: "1000m"
+      ## Persistence Parameters
+      ## ref: https://kubernetes.io/docs/user-guide/persistent-volumes/
+      ##
+      persistence:
+        enabled: false
+
+    auth:
+      enabled: false
+    commonConfiguration: |-
+      appendonly no
+      save ""
+
+  global:
+    PASSWORD: ""
+    MINIO_INGRESS_HOST: "{{ .Release.Name }}-minio.local"
+    MINIOUI_INGRESS_HOST: "{{ .Release.Name }}-minio-ui.local"
+    SSL_SECRETS: "https-certs"
+
+
+
+
+

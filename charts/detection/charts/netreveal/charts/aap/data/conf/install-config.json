@@ -1,0 +1,13 @@
+{
+  "username": "{{ .Values.aap.admin_username }}",
+  "password": "{{ .Values.aap.admin_password }}",
+  "jdbc.url": "{{- template "db.jdbc.url" . }}",
+  "jdbc.username": "{{ .Values.jdbc.user }}",
+  "jdbc.password": "{{ .Values.jdbc.password }}",
+  "solutions": {{ .Values.solutions }},
+  "cores": {{ .Values.aap.coreLimit }},
+  "memoryLimit": {{ .Values.aap.memoryLimit }},
+  "spark.enabled": false,
+  "host": "127.0.0.1",
+  "webUIPort": 5080
+}

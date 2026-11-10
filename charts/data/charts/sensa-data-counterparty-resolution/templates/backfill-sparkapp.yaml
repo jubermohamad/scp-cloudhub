@@ -1,0 +1,150 @@
+{{- if .Values.backfill.enabled }}
+{{- $pgSecret := include "cpr.pg.secretName" . -}}
+{{- $pgSecretKey := include "cpr.pg.secretKey" . -}}
+{{- $shared := printf "%s-shared" (include "cpr.fullname" .) -}}
+{{- $sparkSA := index .Values "spark-operator" "spark" "serviceAccount" "name" -}}
+{{- $scale := eq .Values.backfill.seedMode "scale" -}}
+{{- $msgClaim := .Values.backfill.messages.existingClaim -}}
+{{- $msgHostPath := .Values.backfill.messages.hostPath -}}
+{{- $msgVol := and $scale (or $msgClaim $msgHostPath) -}}
+# Day-0 backfill as a distributed SparkApplication (Kubeflow Spark Operator): engine image as driver
+# + N executors → ingest → train Splink → resolve → §4b → COPY into Postgres. The name carries the
+# release revision so `helm upgrade` submits a fresh run. This is the discrete, parameterised,
+# submittable unit the R38 trigger/monitor APIs (Argo) would drive.
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: {{ include "cpr.fullname" . }}-backfill-r{{ .Release.Revision }}
+  labels:
+    {{- include "cpr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backfill
+  annotations:
+    # Create the SparkApplication AFTER the operator (its webhook) is up. As a post-install/
+    # post-upgrade hook it's applied once Helm has waited for the release's resources (`--wait`),
+    # avoiding the "webhook connection refused" race. helm upgrade re-submits a fresh run.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+spec:
+  type: Python
+  pythonVersion: "3"
+  mode: cluster
+  image: "{{ .Values.images.engine.repository }}:{{ .Values.images.engine.tag }}"
+  imagePullPolicy: {{ .Values.images.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+  {{- with .Values.images.pullSecrets }}
+  # For a private ACR authed by a secret. Prefer `az aks update --attach-acr` (kubelet identity) so
+  # the driver/executor pods — and R38 on-demand build pods — pull without any secret.
+  imagePullSecrets: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  mainApplicationFile: "local:///app/backfill_entrypoint.py"
+  sparkVersion: {{ .Values.backfill.sparkVersion | quote }}
+  restartPolicy:
+    type: {{ .Values.backfill.restartPolicy }}
+  sparkConf:
+    # Driver + executors run the app under the 3.12 venv (the image's own Python is 3.10).
+    "spark.pyspark.python": "/opt/venv/bin/python"
+    "spark.pyspark.driver.python": "/opt/venv/bin/python"
+    {{- range $k, $v := .Values.backfill.sparkConf }}
+    {{ $k | quote }}: {{ $v | quote }}
+    {{- end }}
+  volumes:
+    - name: shared
+      persistentVolumeClaim:
+        claimName: {{ $shared }}
+    {{- include "cpr.iceberg.volume" . | nindent 4 }}
+    {{- if $msgVol }}
+    - name: messages
+      {{- if $msgClaim }}
+      persistentVolumeClaim:
+        claimName: {{ $msgClaim }}
+      {{- else }}
+      # hostPath dataset (minikube: `minikube mount <host-dir>:{{ $msgHostPath }}`). Node-local, RO.
+      hostPath:
+        path: {{ $msgHostPath | quote }}
+        type: Directory
+      {{- end }}
+    {{- end }}
+  driver:
+    cores: {{ .Values.backfill.driver.cores }}
+    {{- with .Values.backfill.driver.coreLimit }}
+    coreLimit: {{ . | quote }}
+    {{- end }}
+    memory: {{ .Values.backfill.driver.memory | quote }}
+    serviceAccount: {{ $sparkSA | quote }}
+    labels:
+      app.kubernetes.io/name: {{ include "cpr.name" . }}
+      app.kubernetes.io/component: backfill-driver
+    env:
+      # Empty → the pipeline inherits spark-submit's k8s master and distributes (cpr.pipeline.session).
+      - name: CPR_SPARK_MASTER
+        value: ""
+      - name: CPR_PG_CONNINFO
+        value: {{ include "cpr.pg.conninfo" . | quote }}
+      # R69 write seam: which StorageBackend the pipeline sinks through (default postgres).
+      - name: CPR_STORAGE_BACKEND
+        value: {{ .Values.storage.backend | quote }}
+      {{- include "cpr.iceberg.env" . | nindent 6 }}
+      # Password from the CNPG-managed <cluster>-app Secret (or the external existingSecret).
+      - name: PGPASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: {{ $pgSecret }}
+            key: {{ $pgSecretKey }}
+      - name: CPR_SEED_MODE
+        value: {{ .Values.backfill.seedMode | quote }}
+      - name: CPR_WORKDIR
+        value: {{ .Values.sharedWorkdir.path | quote }}
+      - name: CPR_METRICS_FILE
+        value: {{ .Values.sharedWorkdir.metricsFile | quote }}
+      {{- if $scale }}
+      - name: CPR_MSG_DIR
+        value: {{ .Values.backfill.messages.mountPath | quote }}
+      # Fresh store before a scale ingest (clean throughput; see values.backfill.resetStore).
+      - name: CPR_RESET_STORE
+        value: {{ .Values.backfill.resetStore | quote }}
+      {{- else }}
+      - name: CPR_N_BG
+        value: {{ .Values.backfill.demo.nBackgroundEntities | quote }}
+      - name: CPR_VOLUME_SCALE
+        value: {{ .Values.backfill.demo.volumeScale | quote }}
+      - name: CPR_SEED
+        value: {{ .Values.backfill.demo.seed | quote }}
+      {{- end }}
+    volumeMounts:
+      - name: shared
+        mountPath: {{ .Values.sharedWorkdir.path }}
+      {{- include "cpr.iceberg.volumeMount" . | nindent 6 }}
+      {{- if $msgVol }}
+      - name: messages
+        mountPath: {{ .Values.backfill.messages.mountPath }}
+        readOnly: true
+      {{- end }}
+  executor:
+    instances: {{ .Values.backfill.executor.instances }}
+    cores: {{ .Values.backfill.executor.cores }}
+    memory: {{ .Values.backfill.executor.memory | quote }}
+    labels:
+      app.kubernetes.io/name: {{ include "cpr.name" . }}
+      app.kubernetes.io/component: backfill-executor
+    env:
+      # Executors run the Postgres COPY (foreachPartition); libpq reads PGPASSWORD from the env.
+      - name: PGPASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: {{ $pgSecret }}
+            key: {{ $pgSecretKey }}
+      # The executors do the distributed write, so they carry the backend selector too — a driver-only
+      # setting would leave them writing through whatever the image defaulted to. Same for the Iceberg
+      # catalog surface: an executor with no catalog registered cannot write an Iceberg table.
+      - name: CPR_STORAGE_BACKEND
+        value: {{ .Values.storage.backend | quote }}
+      {{- include "cpr.iceberg.env" . | nindent 6 }}
+    volumeMounts:
+      - name: shared
+        mountPath: {{ .Values.sharedWorkdir.path }}
+      {{- include "cpr.iceberg.volumeMount" . | nindent 6 }}
+      {{- if $msgVol }}
+      - name: messages
+        mountPath: {{ .Values.backfill.messages.mountPath }}
+        readOnly: true
+      {{- end }}
+{{- end }}

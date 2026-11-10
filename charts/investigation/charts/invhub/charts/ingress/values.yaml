@@ -1,0 +1,26 @@
+---
+enabled: false
+enableGlobalTlsSecret: true
+ingressClassName: nginx
+host: ""
+annotations:
+  {}
+  # kubernetes.io/tls-acme: "true"
+service:
+  []
+  # - name: backend
+  #   port: 88
+  #   pathType: Prefix
+  #   paths:
+  #     - /api
+  #     - /test
+  # - name: frontend
+  #   port: 80
+  #   pathType: Prefix
+  #   paths:
+  #     - /
+tls:
+  []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local

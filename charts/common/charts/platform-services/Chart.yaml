@@ -1,0 +1,15 @@
+apiVersion: v2
+name: platform-services
+description: >-
+  Shared platform infrastructure for the SRI umbrella: ONE PostgreSQL
+  (CloudNativePG cluster sri-postgres) consumed by every product, plus the
+  per-product database provisioning jobs and the credential Secrets consumers
+  already reference. Shared Redis rides here too.
+type: application
+version: 0.1.1
+appVersion: "0.1.0"
+dependencies:
+  # same bitnami redis build invhub vendors (charts/redis-18.19.4.tgz)
+  - name: redis
+    version: 20.13.5
+    condition: redis.enabled

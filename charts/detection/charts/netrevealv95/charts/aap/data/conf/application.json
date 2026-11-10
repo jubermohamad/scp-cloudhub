@@ -1,0 +1,23 @@
+{
+  "http.port": 6789,
+  "db.config": {
+    "url": "{{- template "db.jdbc.url" . }}",
+    "user": "{{ .Values.jdbc.user }}",
+    "password": "{{ .Values.jdbc.encryptedPassword }}",
+    "solutions": [ {{ .Values.solutions }} ],
+    "pool.max": 8,
+    "password_isEncrypted": true
+  },
+  "upload.limit": 400,
+  "save.task.logs": false,
+  "data.root.dir": "data",
+  "evaluation.root.dir": "data/evaluations",
+  "visualization.root.dir": "data/visualizations",
+  "upload.dir": "data/uploads",
+  "report.root.dir": "./reports",
+  "model.root.dir": "./data/models",
+  "use.ssl": {{ .Values.ssl.use_ssl }},
+  "jks.path": "{{ .Values.jks.path }}",
+  "jks.password": "{{ .Values.jks.encryptedPassword }}",
+  "jks.password_isEncrypted": true
+}

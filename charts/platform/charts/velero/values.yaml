@@ -1,0 +1,26 @@
+# CloudHub Native defaults for Velero on AKS.
+# The Azure storage account / blob container for backups is provisioned per
+# cluster; credentials come from the platform external-secrets store.
+velero:
+  enabled: true
+  initContainers:
+    - name: velero-plugin-for-microsoft-azure
+      image: velero/velero-plugin-for-microsoft-azure:v1.10.1
+      volumeMounts:
+        - mountPath: /target
+          name: plugins
+  credentials:
+    useSecret: true
+    existingSecret: velero-credentials
+  configuration:
+    backupStorageLocation:
+      - name: default
+        provider: azure
+        bucket: velero
+        config:
+          resourceGroup: ""
+          storageAccount: ""
+    volumeSnapshotLocation:
+      - name: default
+        provider: azure
+  schedules: {}

@@ -1,0 +1,33 @@
+--- plugins/platform-common/src/sriDeploymentCatalog.ts
++++ plugins/platform-common/src/sriDeploymentCatalog.ts
+@@ -367,6 +367,31 @@
+     ],
+   },
++  {
++    id: 'netreveal-batch',
++    product: 'NetReveal',
++    domain: 'Core',
++    displayName: 'NetReveal',
++    componentType: 'engine',
++    language: { name: 'Java' },
++    runtime: { name: 'OpenJDK', version: '21' },
++    developmentProfile: { id: 'java-wildfly', version: 'v1' },
++    build: {
++      adapter: 'java',
++      dockerfile: 'Dockerfile',
++      context: '.',
++    },
++    repository: UNCONFIGURED_GITHUB_REPOSITORY,
++    deployment: {
++      type: 'kubernetes',
++      packaging: 'helm',
++      branchPolicy: {
++        allowedBranches: ['main', 'develop', 'release/*'],
++      },
++      workflowRequired: false,
++    },
++    owner: { team: 'core-platform' },
++    dependencies: [],
++  },
+ ];
+ 

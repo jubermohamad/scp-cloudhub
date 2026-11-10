@@ -1,0 +1,8 @@
+dist
+dist-types
+coverage
+.vscode
+cloudhub-platform-helm-charts/charts/*/templates/
+cloudhub-live-infra/
+scripts/apps/_templates/
+templates/

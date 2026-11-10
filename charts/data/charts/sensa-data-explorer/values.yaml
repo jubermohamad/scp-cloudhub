@@ -1,0 +1,19 @@
+# VALUES KEYS DO NOT MATCH THE ALIASES BELOW.
+#
+# Both dependencies are vendored into directories named after their alias
+# (charts/data-api, charts/frontend) but each keeps its original name in its own
+# Chart.yaml (listops-data-api, data-explorer-frontend). Helm keys a subchart's
+# values off that declared name, not off the directory or the parent's alias, so:
+#
+#   condition (read from THIS file)   ->  data-api.enabled / frontend.enabled
+#   values delivered to the subchart  ->  listops-data-api.* / data-explorer-frontend.*
+#
+# Setting data-api.database.url therefore renders nothing and the subchart still
+# fails "Set database.url" — which is exactly how sri-qa lost its platform pass
+# on 2026-08-25. Either rename the dirs back or write both keys; do not assume
+# the alias carries values.
+# Both halves ship with the product; each can still be switched off alone.
+data-api:
+  enabled: true
+frontend:
+  enabled: true

@@ -1,0 +1,10 @@
+storageClass:
+  config:
+    scXfsStandardssdLrs:
+      reclaimPolicy: Retain # or Delete
+      volumeBindingMode: WaitForFirstConsumer # or Immediate
+
+  enable:
+    scAzureNetapFiles: true
+    scAzureFileNfs: true
+    scXfsStandardssdLrs: true

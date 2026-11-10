@@ -1,0 +1,73 @@
+{{- if .Values.config.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "invhub.configuratorJobName" . }}
+  annotations:
+    "helm.sh/hook": post-install, post-upgrade
+    "helm.sh/hook-weight": "4"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.config.activeDeadlineSeconds | default 1800 }}
+  template:
+    spec:
+      {{- with .Values.config.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: configurator
+        image: "{{ .Values.config.image.repository }}:{{ .Values.config.image.tag }}"
+        imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+        envFrom:
+          {{- /* the flows subchart's ConfigMap is named after its fullname; this
+               is parent scope, so read that value rather than spelling the
+               name a second time (naming migration) */}}
+          - configMapRef:
+              name: {{ (index .Values "flows" | default dict).fullnameOverride | default "flows" }}
+        env:
+        - name: SETUP_USER
+          value: "{{ .Values.global.INVHUB_SETUP_USER | default "" }}"
+        - name: INVESTIGATION_HUB_INSTALL_ADMIN_USER_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: invhub-service-api-keys
+              key: investigation-hub-install-admin-user-api-key
+        - name: SENSA_API_URL
+          value: "{{ include "global.internalApiBaseUrl" . }}/"
+        - name: SENSA_EMAIL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: sensa-global-secrets
+              key: SENSA_EMAIL_PASSWORD
+        - name: EMAIL_FROM
+          value: "{{ include "global.emailFrom" . }}"
+        - name: EMAIL_HOST
+          value: "{{ include "global.emailHost" . }}"
+        - name: EMAIL_PORT
+          value: "{{ include "global.emailPort" . }}"
+        - name: EMAIL_USERNAME
+          value: "{{ include "global.emailUsername" . }}"
+        - name: EMAIL_FROM_NAME
+          value: "{{ include "global.emailFromName" . }}"
+        - name: BASENAME
+          value: "{{ include "global.basename" . }}"
+        - name: DOMAIN
+          value: "{{ include "global.domain" . }}"
+        - name: HTTPS_PORT
+          value: {{ include "global.externalHttpsPort" . | quote }}
+        - name: COPILOT_SERVICE_INTERNAL
+          value: "{{ .Values.global.COPILOT_SERVICE_INTERNAL | default (printf "ws://%s:8001" (include "invhub.interactionEngineService" .)) }}"
+        - name: COPILOT_SERVICE
+          value: "{{ include "global.basename" . }}-copilot-ie"
+        - name: NOTIFICATIONS_SERVICE
+          value: "{{ include "global.basename" . }}-notifications"
+        - name: USERS
+          value: "{{ .Values.global.USERS }}"
+        {{- with .Values.config.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      restartPolicy: Never
+{{- end }}

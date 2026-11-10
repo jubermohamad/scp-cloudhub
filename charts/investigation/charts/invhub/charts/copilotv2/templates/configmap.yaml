@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "copilotv2.fullname" . }}
+  labels:
+    {{- include "copilotv2.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+data:
+  {{- /* in-tree patch: these two were bare literals with no values path at all,
+       so a rename of copilot-data-adapter or terrarium moved the Service and
+       left this ConfigMap behind. They resolve through global.services.* now,
+       the same map api/disc-api/copilot already use. */}}
+  {{- $gs := .Values.global.services | default dict }}
+  COPILOT_DATA_ADAPTER_URL: {{ printf "http://%s:8000/api/v1" ($gs.copilotDataAdapter | default "copilot-data-adapter") | quote }}
+  BENTO_WORKERS: "4"
+  PYTHON_SANDBOX_URL: {{ printf "http://%s:8080" ($gs.terrarium | default "terrarium") | quote }}
+  {{- $sep := (index (.Values.global | default dict) "separateApiResponsibilities") | default false }}
+  {{- $apiBase := ((index (.Values.global | default dict) "internalApiBaseUrl") | default (ternary "http://api-for-ui:3001" "http://api:3001" $sep)) | trimSuffix "/" }}
+  GQL_URL: {{ printf "%s/graphql" $apiBase | quote }}
+  GQL_EMAIL: "copilotService@symphony.ai"

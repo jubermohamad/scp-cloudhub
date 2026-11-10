@@ -1,0 +1,185 @@
+{{- if .Values.infra.enabled }}
+# --- Temporal Dynamic Config (shared by both auto-setup and split modes) ---
+# Split into its own file (was inline in infra.yaml) so the checksum/temporal-dynamic-config
+# annotation on the temporal/temporal-frontend/temporal-history/temporal-matching/temporal-worker
+# Deployments can target this ConfigMap specifically, matching the checksum/apisix-config and
+# checksum/frontend-nginx-conf pattern (#1319/#1321/#1323) instead of hashing a whole
+# multi-resource file (which isn't possible anyway -- a template including its own file causes
+# infinite recursion in Helm's template engine). See #1322.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-dynamic-config
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+data:
+  docker.yaml: |
+    frontend.namespaceRPS:
+      - value: 6000
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+    matching.numTaskqueueReadPartitions:
+      - value: 24
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-tasks"
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-code-tasks"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-code-tasks-0"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-code-tasks-1"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-parallel-code-tasks"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-parallel-code-tasks-0"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-parallel-code-tasks-1"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-subflow-tasks"
+    matching.numTaskqueueWritePartitions:
+      - value: 24
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-tasks"
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-code-tasks"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-code-tasks-0"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-code-tasks-1"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-parallel-code-tasks"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-parallel-code-tasks-0"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-parallel-code-tasks-1"
+          taskType: 2
+      - value: 16
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+          taskQueueName: "agent-builder-subflow-tasks"
+    matching.maxTaskBatchSize:
+      - value: 200
+        constraints:
+          namespace: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+    history.transferProcessorMaxPollRPS:
+      - value: 1200
+    history.transferProcessorSchedulerWorkerCount:
+      - value: 512
+    # window-6: the TIMER path was under-tuned vs the transfer path (poll 400 / no
+    # scheduler-worker / no host-RPS override) while the timer-task backlog dwarfed
+    # transfer under sustained load → timer-queue congestion collapse (22k/hr) until
+    # the timer tier was matched to transfer. Validated live on tierA.
+    history.timerProcessorMaxPollRPS:
+      - value: 1200
+    history.timerProcessorSchedulerWorkerCount:
+      - value: 512
+    history.timerProcessorMaxPollHostRPS:
+      - value: 4000
+    # NOTE: history.cacheMaxSize (shard-level) was REMOVED in Temporal 1.30 — the
+    # host-level key is history.hostLevelCacheMaxSize (default 128000 entries). The
+    # old "1024" override here was silently rejected; leaving the 128000 default in
+    # place (a 1024-entry cache would have crippled sticky-cache hit rate). If you
+    # need to cap it, use history.hostLevelCacheMaxSize with a value near the default.
+    # history.eventsCacheMaxSize → renamed to history.eventsCacheMaxSizeBytes (default
+    # 512KB); the old "1024" was also rejected. Defaults are healthy; no override needed.
+    frontend.rps:
+      - value: 10000
+    # NOTE: keys must be unique across this whole file — Temporal's YAML parse
+    # is strict and a duplicate key crashloops every pod (burned in window 3).
+    frontend.persistenceMaxQPS:
+      - value: {{ if .Values.infra.temporal.dynamicConfig.perfOptimized }}8000{{ else }}5000{{ end }}
+    # Moved from system.* to history.* namespace in 1.30. Bumped 20 (default) → 200
+    # to drain the visibility task queue faster under burst (the visibility write path
+    # was the sleep5 500-conc bottleneck before the PG CPU bump).
+    history.visibilityProcessorMaxPollRPS:
+      - value: 200
+{{- if .Values.infra.temporal.dynamicConfig.perfOptimized }}
+    # --- perf-optimized additions (Tier 1 + Tier 3) ---
+    system.enableActivityEagerExecution:
+      - value: true
+    system.enableEagerWorkflowStart:
+      - value: true
+    matching.forwarderMaxOutstandingPolls:
+      - value: 3
+    matching.forwarderMaxRatePerSecond:
+      - value: 50
+    matching.rps:
+      - value: 4800
+    matching.persistenceMaxQPS:
+      - value: 8000
+    # Raised 9000 -> 12000 with the SQL pool bump (window 3): the limiter must
+    # not sit below what the (now larger) pools can actually serve.
+    history.persistenceMaxQPS:
+      - value: 12000
+    history.rps:
+      - value: 5000
+    history.transferProcessorMaxPollHostRPS:
+      - value: 4000
+    # NOTE: system.advancedVisibilityWritingMode was REMOVED in Temporal 1.30
+    # (it was silently rejected as an unregistered key — verified in history logs).
+    # Single SQL-visibility backends don't need it; dropped.
+    #
+    # Per-workflow-execution lock patience for internal (non-API) history ops like
+    # recording activity completions. Default 500ms. High-fan-out workflows (e.g.
+    # Final Narrative fires 7 api_request activities in parallel) have their
+    # completions race for this lock; at 500ms the losers get ResourceExhausted
+    # ("Workflow is busy") and the retry storm cascades into 30s context-deadline
+    # timeouts. Bumping to 2s converts "give up + retry" into "wait + succeed".
+    # KEY NAME: history.cacheNonUserContextLockTimeout (NOT history.historyCache… —
+    # the Go constant is HistoryCacheNonUserContextLockTimeout but the registered
+    # key string drops the leading "history"). Verified against Temporal 1.30 constants.go.
+    history.cacheNonUserContextLockTimeout:
+      - value: {{ .Values.infra.temporal.dynamicConfig.historyCacheLockTimeout | default "2s" | quote }}
+    {{- if .Values.workerVersioning.enabled }}
+    # Worker Versioning (Build IDs) — playbook 39. The engine workers use the
+    # v0.1 (Version Set-based) build-id API, which Temporal 1.30 DISABLES by
+    # default; without these the worker degrades to UNVERSIONED at startup
+    # (logged) and versioning silently no-ops. Validated live on tierA
+    # 2026-06-12: executions pin to BuildIds=["versioned:<image-tag>"]. Gated on
+    # workerVersioning.enabled so the keys only appear when the feature is on.
+    frontend.workerVersioningDataAPIs:
+      - value: true
+    frontend.workerVersioningWorkflowAPIs:
+      - value: true
+    {{- end }}
+{{- end }}
+{{- end }}

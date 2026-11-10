@@ -1,0 +1,14 @@
+namespace: ${K8S_NAMESPACE}
+owner: platform-team@symphonysensa.com
+businessUnit: cloudhub
+environment: dev
+application: cloudhub
+costCenter: cloudhub-platform
+
+extraLabels:
+  workload: platform
+
+serviceAccount:
+  name: cloudhub-backend
+  annotations:
+    azure.workload.identity/client-id: ${AZURE_CLIENT_ID}

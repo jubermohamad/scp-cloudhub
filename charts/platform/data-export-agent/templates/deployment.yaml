@@ -1,0 +1,164 @@
+{{- $grace := int .Values.shutdownGraceSeconds -}}
+{{- $buffer := int .Values.terminationGraceBufferSeconds -}}
+{{- if lt $buffer 10 }}
+{{- fail "terminationGraceBufferSeconds must be at least 10 so terminationGracePeriodSeconds exceeds shutdownGraceSeconds" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dxa.name" . }}
+  namespace: {{ include "dxa.namespace" . }}
+  labels:
+    {{- include "dxa.labels" . | nindent 4 }}
+spec:
+  # Exactly one agent per cluster. Recreate so a rollout never runs two agents
+  # side by side; the old pod finishes (or fails as retryable) its job first.
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "dxa.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dxa.selectorLabels" . | nindent 8 }}
+        azure.workload.identity/use: "true"
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "dxa.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: {{ add $grace $buffer }}
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            privileged: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: health
+              containerPort: {{ .Values.healthPort }}
+              protocol: TCP
+          env:
+            - name: CONTROL_PLANE_URL
+              value: {{ required "controlPlane.url is required" .Values.controlPlane.url | quote }}
+            - name: CONTROL_PLANE_SCOPE
+              value: {{ required "controlPlane.scope is required" .Values.controlPlane.scope | quote }}
+            - name: CLUSTER_NAME
+              value: {{ required "clusterName is required" .Values.clusterName | quote }}
+            {{- with .Values.agentName }}
+            - name: AGENT_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            - name: PGHOST
+              value: {{ required "postgres.host is required" .Values.postgres.host | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: PGDATABASE
+              value: {{ required "postgres.database is required" .Values.postgres.database | quote }}
+            - name: PGUSER
+              value: {{ required "postgres.user is required" .Values.postgres.user | quote }}
+            - name: PGSSLMODE
+              value: {{ .Values.postgres.sslMode | quote }}
+            {{- if .Values.postgres.sslRootCert.configMapName }}
+            - name: PGSSLROOTCERT
+              value: /etc/data-export-agent/pg-ca/{{ .Values.postgres.sslRootCert.key }}
+            {{- end }}
+            - name: WORK_DIR
+              value: {{ .Values.workDir.path | quote }}
+            - name: HEALTH_PORT
+              value: {{ .Values.healthPort | quote }}
+            - name: SHUTDOWN_GRACE_SECONDS
+              value: {{ $grace | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
+            {{- with .Values.nodeOptions }}
+            - name: NODE_OPTIONS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: work
+              mountPath: {{ .Values.workDir.path }}
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.postgres.sslRootCert.configMapName }}
+            - name: pg-ca
+              mountPath: /etc/data-export-agent/pg-ca
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: work
+          emptyDir:
+            sizeLimit: {{ .Values.workDir.sizeLimit }}
+            {{- with .Values.workDir.medium }}
+            medium: {{ . }}
+            {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        {{- if .Values.postgres.sslRootCert.configMapName }}
+        - name: pg-ca
+          configMap:
+            name: {{ .Values.postgres.sslRootCert.configMapName }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

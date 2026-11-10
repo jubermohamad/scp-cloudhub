@@ -1,0 +1,10 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ .Release.Name }}-{{ .Values.global.database.dbMainInstanceName }}-scheduled-backup
+spec:
+  schedule: {{ .Values.backups.schedule | quote }}
+  backupOwnerReference: self
+  cluster:
+    name: {{ include "postgresql.service.name" . }}

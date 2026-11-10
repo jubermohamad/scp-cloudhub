@@ -1,0 +1,114 @@
+{{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+{{ $currentScope := .}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-wlm-pn-sa-sim-logs-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "wlmPnSaSim.pvcApplicationLogsStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    {{- with $currentScope }}
+    namespace: {{ $.Values.global.namespace }}
+    {{- end }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "wlm-pn-sa-sim-logs" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-sa-sim-{{ $i }}/logs
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-sa-sim-{{ $i }}/logs
+  {{- end }}
+{{- end }}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-wlm-pn-sa-sim-conf-wlm-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "wlmPnSaSim.pvcConfWlmStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "wlm-pn-sa-sim-conf-wlm" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-sa-sim-{{ $i }}/conf/wlm
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-sa-sim-{{ $i }}/conf/wlm
+  {{- end }}
+{{- end -}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-wlm-pn-sa-sim-hsqldb-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "wlmPnSaSim.pvcHsqldbStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "wlm-pn-sa-sim-hsqldb" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-sa-sim-{{ $i }}/hsqldb
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-sa-sim-{{ $i }}/hsqldb
+  {{- end }}
+{{- end -}}
+
+{{- end }}

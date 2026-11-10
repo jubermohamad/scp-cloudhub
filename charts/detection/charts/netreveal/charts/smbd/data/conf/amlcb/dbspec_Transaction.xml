@@ -1,0 +1,67 @@
+<!--
+  Copyright © NetReveal (UK) Limited 2024.
+-->
+<!-- Transaction Record Specification -->
+<!-- ******************************** -->
+<dbspec name="Transaction" comments="Transactions from CB_TRANSACTIONS table">
+
+    <!-- Read Transaction data from TRANSACTIONS table -->
+    <source-query>
+     SELECT *
+     FROM (
+     SELECT
+          RUN_TIMESTAMP as RunTimestamp
+        , SRC_TXN_UNIQUE_ID as SrcTxnUniqueId
+		, SRC_TXN_NUM as SrcTxnNum
+        , ORGUNIT_CODE as OrgUnitCode
+        , DB_RESP_ORGUNIT_CODE as DbRespOrgUnitCode
+        , DB_RESP_ACCOUNT_ID as DbRespAccountSrcUniqueId
+        , DB_RESP_CUST_ID as DbRespCustSrcUniqueId
+        , ORIG_CPARTY_ID as OriginCPartySrcUniqueId
+        , ORIG_SUBCUST_ID as OriginSubCustSrcUniqueId
+        , ORIG_ACCOUNT_NUMBER as OriginAccountNumber
+		, ORIG_CPARTY_ACCOUNT_ID as OrigCpartyAccountId
+        , ORIG_COUNTRY_CODE as OriginCountryCode
+        , ORIG_BANK_COUNTRY_CODE as OriginBankCountryCode
+        , CR_RESP_ORGUNIT_CODE as CrRespOrgUnitCode
+        , CR_RESP_ACCOUNT_ID as CrRespAccountSrcUniqueId
+        , CR_RESP_CUST_ID as CrRespCustSrcUniqueId
+        , BENE_CPARTY_ID as BeneCPartySrcUniqueId
+        , BENE_SUBCUST_ID as BeneSubCustSrcUniqueId
+		, BENE_CPARTY_ACCOUNT_ID as BeneCpartyAccountId
+        , BENE_ACCOUNT_NUMBER as BeneAccountNumber
+        , BENE_COUNTRY_CODE as BeneCountryCode
+        , BENE_BANK_COUNTRY_CODE as BeneBankCountryCode
+        , CURRENCY_CODE_ORIG as CurrencyCodeOrig
+        , TXN_AMOUNT_BASE as TxnAmountBase
+        , TXN_AMOUNT_ORIG as TxnAmountOrig
+        , TXN_SRC_TYPE_CODE as TxnSrcTypeCode
+        , SENDING_BANK_COUNTRY_CODE as SendingBankCountryCode
+        , INTERMEDIARY_BANK_COUNTRY_CODE as IntBankCountryCode
+		, CURRENCY_CODE_BASE as CurrencyCodeBase
+		, RECV_BANK_COUNTRY_CODE as RecvBankCountryCode
+		, RECV_CORR_COUNTRY_CODE as RecvCorrCountryCode
+		, ORDER_INST_COUNTRY_CODE as OrderInstCountryCode
+		, SENDER_CORR_COUNTRY_CODE as SenderCorrCountryCode
+        , ULTIMATE_CREDITOR as UltimateCreditor
+        , ULTIMATE_DEBTOR as UltimateDebtor
+        , PAYMENT_INSTITUTION as PaymentInstitution
+        , DEBTOR_COUNTRY_CODE as DebtorCountryCode
+        , DEBTOR_ADDRESS as DebtorAddress
+        , CREDITOR_COUNTRY_CODE as CreditorCountryCode
+        , CREDITOR_ADDRESS as CreditorAddress
+    FROM V_SM_CB_TRANSACTIONS
+    ) V_SM_CB_TRANSACTIONS
+    WHERE @WHERE@
+    ORDER BY RunTimestamp, SrcTxnUniqueId
+    </source-query>
+    <tablename>  V_SM_CB_TRANSACTIONS  </tablename>
+    <bad-tablename> SM_CB_TRANSACTIONS_BAD </bad-tablename>
+
+    <!-- Navigation Fields -->
+    <timefield>RunTimestamp</timefield>
+
+    <!-- Column to Read from the ResultSet -->
+        <!--<column fieldname="RunTimestamp"    dataType="TIMESTAMP"      columnname="RunTimestamp" />-->
+		<column fieldname="RunTimestamp"    dataType="DATE"      columnname="RunTimestamp" />
+</dbspec>

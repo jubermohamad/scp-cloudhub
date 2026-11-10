@@ -1,0 +1,204 @@
+name: deploy-aks-dev
+
+on:
+  workflow_call:
+    inputs:
+      component-id:
+        required: true
+        type: string
+      image-repository:
+        required: true
+        type: string
+      image-tag:
+        required: true
+        type: string
+      image-digest:
+        required: false
+        default: ''
+        type: string
+      source-branch:
+        required: true
+        type: string
+      cluster-name:
+        required: false
+        default: ''
+        type: string
+      namespace:
+        required: false
+        default: ''
+        type: string
+      release-name:
+        required: false
+        default: ''
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ inputs.component-id }}-${{ inputs.namespace != '' && inputs.namespace || 'derived' }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Standard CD
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve target namespace and release
+        id: target
+        run: |
+          set -euo pipefail
+          ns="${{ inputs.namespace }}"
+          if [ -z "$ns" ]; then
+            ns="${COMPONENT_ID%-api}-dev"
+          fi
+
+          rel="${{ inputs.release-name }}"
+          if [ -z "$rel" ]; then
+            rel="${COMPONENT_ID}"
+          fi
+
+          cluster="${{ inputs.cluster-name }}"
+          if [ -z "$cluster" ]; then
+            cluster="${DEFAULT_AKS_CLUSTER}"
+          fi
+
+          if [ -z "$cluster" ]; then
+            echo "DEFAULT_AKS_CLUSTER variable is required when cluster-name input is empty" >&2
+            exit 1
+          fi
+
+          echo "namespace=$ns" >> "$GITHUB_OUTPUT"
+          echo "release=$rel" >> "$GITHUB_OUTPUT"
+          echo "cluster=$cluster" >> "$GITHUB_OUTPUT"
+        env:
+          COMPONENT_ID: ${{ inputs.component-id }}
+          DEFAULT_AKS_CLUSTER: ${{ vars.DEFAULT_AKS_CLUSTER }}
+
+      - name: Enforce branch policy
+        run: |
+          set -euo pipefail
+          allowed="${{ vars.DEPLOY_ALLOWED_BRANCHES }}"
+          if [ -z "$allowed" ]; then
+            allowed="main"
+          fi
+
+          branch="${{ inputs.source-branch }}"
+          ok=0
+          IFS=',' read -ra arr <<< "$allowed"
+          for raw in "${arr[@]}"; do
+            rule="$(echo "$raw" | xargs)"
+            if [ "$rule" = "$branch" ]; then
+              ok=1
+              break
+            fi
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            echo "Branch '$branch' is not allowed to deploy to shared dev. Allowed: $allowed" >&2
+            exit 1
+          fi
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Authenticate to AKS
+        run: |
+          set -euo pipefail
+          rg="$(az aks list --query "[?name=='${{ steps.target.outputs.cluster }}'].resourceGroup | [0]" -o tsv)"
+          if [ -z "$rg" ]; then
+            echo "Could not resolve resource group for AKS cluster '${{ steps.target.outputs.cluster }}'" >&2
+            exit 1
+          fi
+          az aks get-credentials -g "$rg" -n "${{ steps.target.outputs.cluster }}" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+
+      - name: Bootstrap namespace policy
+        run: |
+          set -euo pipefail
+          helm upgrade --install "ns-${{ steps.target.outputs.namespace }}" \
+            cloudhub-platform-helm-charts/charts/namespace-bootstrap \
+            --namespace "${{ steps.target.outputs.namespace }}" \
+            --create-namespace \
+            --set namespace="${{ steps.target.outputs.namespace }}" \
+            --set application="${{ inputs.component-id }}" \
+            --set businessUnit="sri" \
+            --set environment="dev" \
+            --set owner="${{ vars.DEFAULT_OWNER_EMAIL }}" \
+            --set costCenter="${{ vars.DEFAULT_COST_CENTER }}" \
+            --wait --timeout 5m
+
+      - name: Deploy application chart
+        run: |
+          set -euo pipefail
+          repo="${{ inputs.image-repository }}"
+          tag="${{ inputs.image-tag }}"
+          digest="${{ inputs.image-digest }}"
+
+          image_ref="$repo:$tag"
+          if [ -n "$digest" ]; then
+            image_ref="$repo@$digest"
+          fi
+
+          helm upgrade --install "${{ steps.target.outputs.release }}" \
+            cloudhub-platform-helm-charts/charts/app-bootstrap \
+            --namespace "${{ steps.target.outputs.namespace }}" \
+            --set application="${{ inputs.component-id }}" \
+            --set namespace="${{ steps.target.outputs.namespace }}" \
+            --set businessUnit="sri" \
+            --set environment="dev" \
+            --set owner="${{ vars.DEFAULT_OWNER_EMAIL }}" \
+            --set costCenter="${{ vars.DEFAULT_COST_CENTER }}" \
+            --set image.repository="$repo" \
+            --set image.tag="$tag" \
+            --set service.port="80" \
+            --set service.targetPort="8080" \
+            --wait --timeout 10m
+
+          echo "Resolved image reference: $image_ref"
+
+      - name: Verify rollout and readiness
+        run: |
+          set -euo pipefail
+          ns="${{ steps.target.outputs.namespace }}"
+          rel="${{ steps.target.outputs.release }}"
+
+          kubectl -n "$ns" rollout status deploy/"$rel" --timeout=5m
+          kubectl -n "$ns" get deploy "$rel" -o jsonpath='{.status.availableReplicas}' | grep -Eq '^[1-9]'
+
+          svc_port="$(kubectl -n "$ns" get svc "$rel" -o jsonpath='{.spec.ports[0].port}')"
+          echo "Service $rel in namespace $ns is available on port $svc_port"
+
+      - name: Deployment summary
+        run: |
+          {
+            echo "## Deployment Summary"
+            echo "- Component: ${{ inputs.component-id }}"
+            echo "- Cluster: ${{ steps.target.outputs.cluster }}"
+            echo "- Namespace: ${{ steps.target.outputs.namespace }}"
+            echo "- Release: ${{ steps.target.outputs.release }}"
+            echo "- Image: ${{ inputs.image-repository }}:${{ inputs.image-tag }}"
+            echo "- Digest: ${{ inputs.image-digest }}"
+            echo "- Source Branch: ${{ inputs.source-branch }}"
+          } >> "$GITHUB_STEP_SUMMARY"

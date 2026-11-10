@@ -1,0 +1,34 @@
+{{- if and .Values.api.serviceAccount.create .Values.api.builds.enabled }}
+{{- $api := include "cpr.api.fullname" . -}}
+# R38 (ADR-001) — LEAST-PRIVILEGE Role bound to the cpr-api ServiceAccount so the serving API can
+# submit + monitor on-demand Day-0 backfills as SparkApplication CRs. Namespaced (not a ClusterRole),
+# scoped to exactly what the /builds endpoints need: create/get/list/watch sparkapplications, and
+# get/list on pods + pods/log for run status + driver logs. Nothing more (no delete, no secrets, no
+# cluster scope). Only rendered when api.builds.enabled — serving-only deploys grant nothing.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $api }}-builds
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["sparkoperator.k8s.io"]
+    resources: ["sparkapplications"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $api }}-builds
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $api }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $api }}-builds
+{{- end }}

@@ -1,0 +1,298 @@
+{{- /*
+InvHub's OWN Keycloak provisioning Job (USER REQUIREMENT: "create job for invhub
+also" — and the standing rule that per-product provisioning lives in the
+product's own chart: "job should exist in their own job").
+
+Sibling of charts/detection/charts/detectionhub/templates/keycloak-setup-job.yaml.
+The two are deliberately independent: neither depends on the other having run,
+either may run first, and both are safe to re-run. They provision DISJOINT
+material into the one shared realm `SRI` — DetHub owns client `smui` and the
+Detection/Project roles, InvHub owns client `investigation-hub` and the
+`investigation-hub-*` roles — so they cannot collide.
+
+WHY A JOB, not a realm import: realm import runs only when a realm is ABSENT and
+silently no-ops against one that exists, so it can never ship a change to the
+shared realm. A Job runs on every install and upgrade.
+
+KEYCLOAK AS IDENTITY BROKER (the design this implements)
+InvHub is configured against Keycloak REALM ROLES only, never against a
+customer's IDP directly. Customer IDPs (Entra ID, Okta, Auth0) federate INTO the
+realm as SAML identity providers and their group/role attributes are mapped onto
+those realm roles, so InvHub stays agnostic to where a user came from. The IDP
+instances themselves are CUSTOMER-SPECIFIC and ship empty here
+(`identityProviders: []`) — this chart provides the mechanism, not a particular
+customer's federation.
+
+STATUS ON THIS CLUSTER: default OFF, and InvHub's application-side auth is still
+`LOGIN_FORM` — see values.yaml. Provisioning the client does not by itself switch
+InvHub to SSO; that is an app-side change (auth type + SP config) which must land
+together with enabling this.
+*/}}
+{{- if .Values.keycloakSetup.enabled }}
+{{- $ks := .Values.keycloakSetup }}
+{{- if not $ks.internalUrl }}
+{{- fail "invhub.keycloakSetup.enabled requires keycloakSetup.internalUrl (the IN-CLUSTER Keycloak URL — the master-realm admin token lives 60s and public-ingress latency has outlived it mid-Job)" }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # release-derived, matching this chart's other Job (invhub.migrationJobName)
+  name: {{ printf "%s-invhub-keycloak-setup" .Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: keycloak-setup
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+  annotations:
+    # ALWAYS post-phase: it provisions INTO a realm another chart's hook creates,
+    # and on a cold install that realm does not exist until the apply phase has
+    # run. A pre-phase hook deadlocks waiting for a server that cannot appear
+    # until the hook returns.
+    helm.sh/hook: post-install,post-upgrade
+    # weight 10 = AFTER keycloak-config-cli (weight 5), which creates realm SRI.
+    helm.sh/hook-weight: "10"
+    # Jobs are immutable; a stranded one blocks the next install outright.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ $ks.backoffLimit }}
+  {{- if $ks.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ $ks.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: keycloak-setup
+    spec:
+      restartPolicy: Never
+      # keycloakSetup.imagePullSecrets first: this chart's global does not carry
+      # one, and the kcadm image is in a private registry, so without a secret
+      # the Job never starts (ImagePullBackOff) — the exact failure detectionhub's
+      # Job hit.
+      {{- with (or $ks.imagePullSecrets (and .Values.global .Values.global.imagePullSecrets) .Values.imagePullSecrets) }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: keycloak-setup
+          image: {{ $ks.image | quote }}
+          imagePullPolicy: {{ $ks.imagePullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            # kcadm writes its session token under $HOME; the image runs as a
+            # non-root user with no writable home, so it must be /tmp.
+            - name: HOME
+              value: /tmp
+            - name: KEYCLOAK_ADMIN_USER
+              value: {{ $ks.adminUser | quote }}
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ks.adminPasswordSecret.name | quote }}
+                  key: {{ $ks.adminPasswordSecret.key | quote }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              # A past bug here hid migration failures behind a missing `set -e`.
+              # This Job must fail LOUDLY on a real error.
+              set -euo pipefail
+
+              KC={{ $ks.internalUrl | quote }}
+              REALM={{ $ks.realm | quote }}
+              ADMIN_REALM={{ $ks.adminRealm | quote }}
+              CLIENT_ID={{ $ks.client.clientId | quote }}
+              KCADM={{ $ks.kcadmPath | quote }}
+
+              login() {
+                "$KCADM" config credentials --server "$KC" \
+                  --realm "$ADMIN_REALM" \
+                  --user "$KEYCLOAK_ADMIN_USER" --password "$KEYCLOAK_ADMIN_PASSWORD"
+              }
+
+              # Percent-encode a URL PATH SEGMENT. kcadm splices path arguments
+              # into the request URI verbatim, so any human-authored name that
+              # reaches a path (auth flow aliases, role names) must be encoded or
+              # the request fails outright instead of returning a clean 404.
+              # Spaces are the case that actually occurs here; the others are
+              # cheap insurance for values-driven names we do not control.
+              enc() {
+                printf '%s' "$1" | sed -e 's/%/%25/g' -e 's/ /%20/g' \
+                  -e 's/"/%22/g' -e "s/'/%27/g" -e 's/#/%23/g' -e 's/?/%3F/g'
+              }
+
+              echo "==> Logging in to $KC (admin realm $ADMIN_REALM)"
+              login
+
+              echo "==> Waiting for realm $REALM"
+              i=0
+              until "$KCADM" get "realms/$REALM" >/dev/null 2>&1; do
+                i=$((i+1))
+                if [[ "$i" -ge 60 ]]; then
+                  echo "ERROR: realm $REALM absent after 60 attempts — is the keycloak-config-cli hook enabled?" >&2
+                  exit 1
+                fi
+                sleep 5
+                login >/dev/null 2>&1 || true   # the admin token expires in 60s
+              done
+
+              # ── 1. REALM ROLES ────────────────────────────────────────────
+              # THE unification point of the broker design: InvHub authorizes on
+              # these and nothing else, so a user from any federated IDP is
+              # equivalent once their attributes map onto them.
+              # Create unconditionally, treat ONLY "already exists" as success —
+              # same reasoning as detectionhub's copy: `kcadm get roles/<name>`
+              # embeds the name in the URL path unencoded, so any role name with
+              # a space fails the lookup instead of reporting absent, and the
+              # duplicate create then fails the hook and wedges the release.
+              # InvHub's own role names are hyphenated today, but the roles are
+              # values-driven and a brokered IDP's role set is customer-supplied,
+              # so this must not depend on the naming staying space-free.
+              {{- range $ks.roles }}
+              login >/dev/null
+              echo "==> ensuring role {{ .name | quote }}"
+              if ! out="$("$KCADM" create roles -r "$REALM" \
+                  -s name={{ .name | quote }} \
+                  -s description={{ .description | quote }} 2>&1)"; then
+                case "$out" in
+                  *"already exists"*) echo "    already present" ;;
+                  *) echo "$out" >&2; exit 1 ;;
+                esac
+              fi
+              {{- end }}
+
+              # ── 2. SAML CLIENT ────────────────────────────────────────────
+              cat >/tmp/client.json <<'JSON'
+              {{ $ks.client | toJson }}
+              JSON
+
+              login >/dev/null
+              CID="$("$KCADM" get clients -r "$REALM" -q clientId="$CLIENT_ID" \
+                      --fields id --format csv --noquotes 2>/dev/null || true)"
+              if [[ -z "$CID" ]]; then
+                echo "==> creating SAML client $CLIENT_ID"
+                CID="$("$KCADM" create clients -r "$REALM" -i -f /tmp/client.json)"
+              else
+                echo "==> updating SAML client $CLIENT_ID ($CID)"
+                "$KCADM" update "clients/$CID" -r "$REALM" -f /tmp/client.json
+              fi
+              echo "==> client id: $CID"
+
+              # ── 3. SAML ATTRIBUTE MAPPERS ─────────────────────────────────
+              # A subresource, so `update clients/<id>` does NOT manage them;
+              # reconciled by name, one call each. NOTE the role/group attribute
+              # name is case-sensitive on the InvHub side.
+              login >/dev/null
+              EXISTING="$("$KCADM" get "clients/$CID/protocol-mappers/models" -r "$REALM" \
+                           --fields name --format csv --noquotes 2>/dev/null || true)"
+              add_prop_mapper() {
+                local name="$1" attr="$2"
+                if printf '%s\n' "$EXISTING" | grep -qx "$name"; then
+                  echo "==> mapper '$name' already present"; return 0
+                fi
+                echo "==> creating mapper '$name'"
+                "$KCADM" create "clients/$CID/protocol-mappers/models" -r "$REALM" \
+                  -s name="$name" -s protocol=saml \
+                  -s protocolMapper=saml-user-property-mapper \
+                  -s 'config."attribute.nameformat"=Basic' \
+                  -s "config.\"attribute.name\"=$attr" \
+                  -s "config.\"friendly.name\"=$attr" \
+                  -s "config.\"user.attribute\"=$attr"
+              }
+              add_prop_mapper firstName firstName
+              add_prop_mapper lastName  lastName
+              add_prop_mapper email     email
+              add_prop_mapper username  username
+
+              {{- if $ks.groupMapper.enabled }}
+              # Group list mapper: full group path OFF and single attribute ON,
+              # so groups arrive as one repeated attribute of bare names rather
+              # than as /parent/child paths InvHub would not match.
+              if printf '%s\n' "$EXISTING" | grep -qx {{ $ks.groupMapper.name | quote }}; then
+                echo "==> group mapper already present"
+              else
+                echo "==> creating group list mapper"
+                login >/dev/null
+                "$KCADM" create "clients/$CID/protocol-mappers/models" -r "$REALM" \
+                  -s name={{ $ks.groupMapper.name | quote }} -s protocol=saml \
+                  -s protocolMapper=saml-group-membership-mapper \
+                  -s 'config."attribute.nameformat"=Basic' \
+                  -s "config.\"attribute.name\"={{ $ks.groupMapper.attributeName }}" \
+                  -s "config.\"friendly.name\"={{ $ks.groupMapper.attributeName }}" \
+                  -s 'config."full.path"=false' \
+                  -s 'config.single=true'
+              fi
+              {{- end }}
+
+              # ── 4. BROKERED IDENTITY PROVIDERS (customer-specific) ────────
+              {{- if $ks.identityProviders }}
+              # `first broker login` normally runs idp-review-profile, which
+              # prompts every brokered user to confirm their profile on first
+              # login even though the attributes are already mapped. A copy of
+              # the flow with that execution DISABLED is what suppresses it.
+              login >/dev/null
+              FLOW={{ $ks.firstBrokerLoginFlowAlias | quote }}
+              if "$KCADM" get authentication/flows -r "$REALM" --fields alias --format csv --noquotes 2>/dev/null | grep -qx "$FLOW"; then
+                echo "==> auth flow '$FLOW' already present"
+              else
+                echo "==> copying 'first broker login' -> '$FLOW'"
+                # Both the built-in flow name and $FLOW contain SPACES, and kcadm
+                # drops a path argument into the request URI verbatim — an
+                # unencoded space makes the request fail rather than 404. Encode
+                # every path segment that carries a human-authored name. Getting
+                # this wrong here fails SILENTLY: the `|| true` below leaves
+                # EXEC_ID empty, the WARNING branch runs, and idp-review-profile
+                # stays ENABLED — so brokered users still get the profile prompt
+                # this whole flow exists to suppress, while the Job reports success.
+                "$KCADM" create "authentication/flows/$(enc 'first broker login')/copy" -r "$REALM" \
+                  -s newName="$FLOW"
+                EXEC_ID="$("$KCADM" get "authentication/flows/$(enc "$FLOW")/executions" -r "$REALM" 2>/dev/null \
+                  | grep -B4 'idp-review-profile' | grep '"id"' | head -1 | cut -d'"' -f4 || true)"
+                if [[ -n "$EXEC_ID" ]]; then
+                  echo "==> disabling idp-review-profile in '$FLOW'"
+                  "$KCADM" update "authentication/flows/$(enc "$FLOW")/executions" -r "$REALM" \
+                    -s id="$EXEC_ID" -s requirement=DISABLED
+                else
+                  echo "WARNING: idp-review-profile execution not found in '$FLOW'" >&2
+                fi
+              fi
+
+              {{- range $ks.identityProviders }}
+              login >/dev/null
+              ALIAS={{ .alias | quote }}
+              cat >/tmp/idp.json <<'IDPJSON'
+              {{ . | toJson }}
+              IDPJSON
+              if "$KCADM" get "identity-provider/instances/$ALIAS" -r "$REALM" >/dev/null 2>&1; then
+                echo "==> updating identity provider $ALIAS"
+                "$KCADM" update "identity-provider/instances/$ALIAS" -r "$REALM" -f /tmp/idp.json
+              else
+                echo "==> creating identity provider $ALIAS"
+                "$KCADM" create identity-provider/instances -r "$REALM" -f /tmp/idp.json
+              fi
+              # Separate call, deliberately: the flow must exist before an IDP
+              # can reference it.
+              "$KCADM" update "identity-provider/instances/$ALIAS" -r "$REALM" \
+                -s firstBrokerLoginFlowAlias="$FLOW"
+              {{- end }}
+              {{- else }}
+              echo "==> no brokered identity providers configured (customer-specific; none for this environment)"
+              {{- end }}
+
+              # ── 5. ROLE GRANTS ────────────────────────────────────────────
+              {{- range $user, $roles := $ks.roleAssignments }}
+              login >/dev/null
+              UID_="$("$KCADM" get users -r "$REALM" -q username={{ $user | quote }} -q exact=true \
+                       --fields id --format csv --noquotes 2>/dev/null || true)"
+              if [[ -z "$UID_" ]]; then
+                echo "==> user {{ $user }} not present in $REALM — skipping role grant"
+              else
+                echo "==> granting InvHub roles to {{ $user }}"
+                "$KCADM" add-roles -r "$REALM" --uusername {{ $user | quote }}{{ range $roles }} --rolename {{ . | quote }}{{ end }}
+              fi
+              {{- end }}
+
+              echo "==> InvHub Keycloak material provisioned into realm $REALM"
+          {{- with $ks.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

@@ -1,0 +1,133 @@
+name: Developer Workspace Images
+
+on:
+  pull_request:
+    paths:
+      - developer-environments/images/**
+      - developer-environments/tests/images/**
+      - .github/workflows/dev-workspace-images.yml
+  push:
+    branches:
+      - main
+    paths:
+      - developer-environments/images/**
+      - developer-environments/tests/images/**
+      - .github/workflows/dev-workspace-images.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  ACR_NAME: symphonyfs
+  ACR_LOGIN_SERVER: symphonyfs.azurecr.io
+
+jobs:
+  build-test-scan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - family: base
+            context: developer-environments/images/base
+            imageRepo: cloudhub/dev/base
+            imageTag: 1.0.0
+          - family: node
+            context: developer-environments/images/node
+            imageRepo: cloudhub/dev/node
+            imageTag: 1.0.0
+          - family: python
+            context: developer-environments/images/python
+            imageRepo: cloudhub/dev/python
+            imageTag: 1.0.0
+          - family: java
+            context: developer-environments/images/java
+            imageRepo: cloudhub/dev/java
+            imageTag: 1.0.0
+          - family: scala
+            context: developer-environments/images/scala
+            imageRepo: cloudhub/dev/scala
+            imageTag: 1.0.0
+          - family: postgres
+            context: developer-environments/images/postgres
+            imageRepo: cloudhub/dev/postgres
+            imageTag: 1.0.0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Build image
+        run: |
+          docker build \
+            -t local/${{ matrix.imageRepo }}:${{ matrix.imageTag }} \
+            ${{ matrix.context }}
+
+      - name: Smoke test image
+        run: |
+          chmod +x developer-environments/tests/images/smoke-test.sh
+          developer-environments/tests/images/smoke-test.sh \
+            ${{ matrix.family }} \
+            local/${{ matrix.imageRepo }}:${{ matrix.imageTag }}
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: local/${{ matrix.imageRepo }}:${{ matrix.imageTag }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: build-test-scan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - context: developer-environments/images/base
+            imageRepo: cloudhub/dev/base
+            imageTag: 1.0.0
+          - context: developer-environments/images/node
+            imageRepo: cloudhub/dev/node
+            imageTag: 1.0.0
+          - context: developer-environments/images/python
+            imageRepo: cloudhub/dev/python
+            imageTag: 1.0.0
+          - context: developer-environments/images/java
+            imageRepo: cloudhub/dev/java
+            imageTag: 1.0.0
+          - context: developer-environments/images/scala
+            imageRepo: cloudhub/dev/scala
+            imageTag: 1.0.0
+          - context: developer-environments/images/postgres
+            imageRepo: cloudhub/dev/postgres
+            imageTag: 1.0.0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Build and push
+        run: |
+          if [[ -z "$ACR_LOGIN_SERVER" ]]; then
+            echo "ACR_LOGIN_SERVER variable is required" >&2
+            exit 1
+          fi
+          docker build \
+            -t $ACR_LOGIN_SERVER/${{ matrix.imageRepo }}:${{ matrix.imageTag }} \
+            ${{ matrix.context }}
+          docker push $ACR_LOGIN_SERVER/${{ matrix.imageRepo }}:${{ matrix.imageTag }}

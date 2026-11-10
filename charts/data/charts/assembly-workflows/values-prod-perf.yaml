@@ -1,0 +1,601 @@
+image:
+  # Without this a fresh install pulls anonymously and ImagePullBackOffs —
+  # the 2026-06-11 resume only worked because the old release carried it as
+  # an out-of-band user value (same incident class as values-dev / #477).
+  pullSecrets:
+    - name: acr-secret
+
+# Performance profile sized for ~25 vCPU / 75 GiB cluster footprint. Targets the
+# same workload class as the retired values-perf-medium.yaml (settings since promoted
+# to chart defaults) but on D4ds_v4 infra (vs D16ds_v4)
+# for a tighter compute envelope.
+#
+# Cluster: assembly-perf-tierA
+# Nodepools:
+#   syspool   : 1x B2ms       (system only)
+#   infrapool : 1x D4ds_v4    (taint workload=infra) — Temporal split + Postgres
+#   apppool   : 5x D4ds_v4    (taint workload=app)   — agents/workers/sandbox/llm-gateway
+# Total compute: 26 vCPU / 104 GiB (B2ms system pool excluded from app budget)
+#
+# Tuning intent: same env-var optimizations as the retired perf-medium profile
+# so tierA results stay comparable to the recorded medium baselines; infra is
+# the only axis meaningfully different.
+
+# Worker Versioning (Build IDs) — KEEP OFF. 2026-06-13 controlled finding: enabling it
+# CRATERS chain-M throughput 270k -> ~16-26k. The build-id advertises fine, but the
+# *versioned* task queue does not inherit matching.numTaskqueueReadPartitions:24 (that
+# dyncfg is scoped to the unversioned queue name), so matching dispatch starves and the
+# 16 workers sit ~16-23% idle. Versioning is NOT needed for the perf win (that is the
+# gate-retired engine image, below) and is NOT a usable rolling-deploy safety lever here
+# until the versioned-queue partition tuning is fixed. (Re: PR #543 determinism re-gate.)
+workerVersioning:
+  enabled: false
+  buildId: ""
+
+infra:
+  enabled: true
+  nodeSelector:
+    workload: infra
+  tolerations:
+    - key: workload
+      value: infra
+      effect: NoSchedule
+  postgres:
+    resources:
+      requests: { memory: 512Mi, cpu: 200m }
+      limits: { memory: 2Gi, cpu: "1" }
+  temporal:
+    mode: split
+    # 256 shards: between small's 128 and medium's 2048. Fits D4 infra cleanly.
+    numHistoryShards: 256
+    dynamicConfig:
+      # Unlocks history.persistenceMaxQPS 5K→9K, matching.rps 2400, eager exec, etc.
+      # Verified critical for sustained 500-concurrent throughput on Simple Single-Node.
+      perfOptimized: true
+    split:
+      frontend:
+        # 4 replicas. For sleep5 (1 activity/wf) frontend is NOT the bottleneck —
+        # 2 vs 4 made no difference. But for high-fan-out workflows (Final Narrative
+        # = 7 parallel activities/wf), at 500-concurrent the RespondActivityTaskCompleted
+        # fan-in (3500 simultaneous completions) saturated the 2-pod gRPC dispatch
+        # queue → 266 "Slow gRPC call" warnings (5-9s each) → activity timeouts.
+        # 4 pods cut slow-gRPC 266→20/min. Marginal end-to-end gain (FN 500 90→92%)
+        # because FN-500 latency is distributed queuing, not one tier — but it removes
+        # a real saturation point at low cost (infra node at ~6% CPU).
+        replicas: 4
+        # GOMAXPROCS/GOMEMLIMIT match resources.limits — at 1 CPU / 768Mi we want Go
+        # to see exactly what k8s allocates so its scheduler doesn't over-commit OS threads.
+        gomaxprocs: "1"
+        gomemlimit: "700MiB"
+        resources:
+          requests: { memory: 256Mi, cpu: 100m }
+          limits: { memory: 768Mi, cpu: "1" }
+      history:
+        # 4×2 instead of 8×1 — same total compute (8 vCPU / 6 GiB) but better cache
+        # locality. 256 shards / 4 pods = 64 shards/pod (was 32); Temporal Go services
+        # scale better vertically than horizontally for hot-shard work.
+        replicas: 4
+        gomaxprocs: "2"
+        gomemlimit: "3600MiB"
+        resources:
+          requests: { memory: 384Mi, cpu: 100m }
+          # window-6: history mem ~1314Mi of the old 1500Mi limit → bumped 1500→2Gi (gomemlimit 1400→1800).
+          # 2026-06-17 40-min SUSTAINED run (playbook 42 §O): mem climbs ~linearly to 1737Mi = 85% of 2Gi and
+          # still rising (the host-level history cache fills toward its 128k-entry default; gomemlimit 1800/2Gi
+          # gap is only 248Mi) → OOM under sustained full load. Bumped 2Gi→4Gi (+gomemlimit 1800→3600) to give
+          # the bounded cache room to plateau. NOTE: a multi-hour re-run should confirm 4Gi holds the plateau;
+          # the deterministic alternative is capping history.hostLevelCacheMaxSize (a cache-hit-rate tradeoff).
+          limits: { memory: "4Gi", cpu: "2" }
+      matching:
+        # 4 replicas spreads numTaskqueueReadPartitions:24 → 6 partitions/replica
+        # (was 12/replica) for less poller contention under burst.
+        replicas: 4
+        gomaxprocs: "1"
+        gomemlimit: "450MiB"
+        resources:
+          requests: { memory: 128Mi, cpu: 30m }
+          limits: { memory: 512Mi, cpu: 750m }
+      worker:
+        replicas: 1
+        gomaxprocs: "1"
+        gomemlimit: "350MiB"
+        resources:
+          requests: { memory: 192Mi, cpu: 50m }
+          limits: { memory: 384Mi, cpu: 500m }
+      postgres:
+        # Window-3 finding: 40/10 pools were the dominant cluster bottleneck —
+        # persistence CreateWorkflowExecution averaged 262ms during C=90 start
+        # bursts (pool-wait; the SQL itself runs in 1-6ms) and chain-M C=180
+        # campaigns had a 30s WFT-timeout p99 tail from lost completions.
+        # 80/80 (idle == max kills reconnect churn): raw start p50 505->175ms,
+        # campaign p95 16.4s->5.4s, p99 35s->13s, zero WFT timeouts.
+        # Budget: 4 history + 4 frontend + 4 matching + 1 worker = 13 pods x
+        # (80+32) = 1456 theoretical max vs postgres max_connections 800 —
+        # fine in practice (steady-state ~150 conns), but raise postgres
+        # max_connections before raising these further.
+        maxConns: 80
+        maxIdleConns: 80
+        visibility:
+          maxConns: 32
+          maxIdleConns: 32
+  redis:
+    # Window-2 finding: chart-default 512Mi redis (no maxmemory) was OOMKilled
+    # 9x under perf burst once the trace-ingest stream landed on it; every
+    # death stalled worker LAs ~24s in-tick. Perf scale needs headroom.
+    resources:
+      requests: { memory: 512Mi, cpu: 250m }
+      limits: { memory: 2Gi, cpu: "1" }
+    maxmemory: 1600mb
+  postgresTemporal:
+    enabled: true
+    # Attribute PG cycles during perf windows (window-2: 1.2-2 busy cores
+    # unattributable without it). CREATE EXTENSION pg_stat_statements; once
+    # after deploy.
+    pgStatStatements: true
+    # 256Gi → Premium SSD P15 tier (1100 IOPS / 125 MB/s) — sized for IOPS not capacity.
+    # 32Gi P4 (120 IOPS) saturated under 500-concurrent burst.
+    storage: 256Gi
+    sharedBuffers: "1GB"
+    # Keep planner memory assumptions aligned with the 6Gi pod limit. The old
+    # chart hardcoded 24GB, inherited from larger perf profiles.
+    effectiveCacheSize: "4GB"
+    maxWalSize: "4GB"
+    workMem: "8MB"
+    syncCommitOff: true
+    # bgwriter tunes: cut P95 70s → 19s at 500-concurrent (PG buffer-write contention).
+    # If you change these, re-test against the sleep5 500×2 baseline.
+    bgwriterLruMaxpages: 200
+    bgwriterDelay: "50ms"
+    bgwriterLruMultiplier: "4.0"
+    resources:
+      requests: { memory: 1Gi, cpu: "1" }
+      # 4 CPU (was 2): at 500-concurrent the SQL visibility-write path
+      # (executions_visibility upserts) saturated the 2-core limit, backing up
+      # history's visibility-queue-processor → 60s WORKFLOW_TASK_TIMED_OUT tail
+      # on ~5% of workflows. 4 cores cut P95 76% (72s → 17s) and lifted success
+      # 92.9% → 99.5% at 500-concurrent. THE single highest-impact tune for the
+      # bimodal tail. Infra node has ample headroom (was ~29% CPU).
+      #
+      # ⭐ TUNING LEVER (measured 2026-06-16, perf-high w/ a D16 infra node): when PG
+      # sits on a DEDICATED or ≥8-core infra node, raise this limit to 8 → a further
+      # +17% chain-M ceiling (282k→330k/hr, sweet-spot 75→90/s, AND the 90/s
+      # congestion-collapse becomes stable) — the prior 4-core cap was throttling PG
+      # while node cores sat idle. Above ~330k the bind shifts OFF PG-CPU (PG ~5/8
+      # cores) to coordination-latency, so 8 is the useful ceiling for this lever.
+      #   `kubectl set resources deploy/postgres-temporal -c postgres --limits=cpu=8`
+      # ⚠️ Keep it at 4 on a SMALL SHARED infra node (e.g. a single 4-core node also
+      # hosting history/matching/frontend): an 8-core limit there lets PG starve the
+      # co-located coordination pods. The lever pays off only with spare node cores.
+      limits: { memory: 6Gi, cpu: "4" }
+    nodeSelector: { workload: infra }
+    tolerations:
+      - key: workload
+        value: infra
+        effect: NoSchedule
+
+externalInfra:
+  temporal:
+    agentBuilderNamespace: agent-builder-perf
+
+# In-cluster mock-llm Service (scripts/perf/mock-llm/k8s.yaml) — the perf
+# matrix drives api_request nodes at it; the SSRF guard needs the host.
+# First-class knob renders ASSEMBLY_URL_VALIDATION_ALLOW_HOSTS on the engine
+# + all three workers (was 4 duplicated extraEnv entries).
+urlValidation:
+  allowHosts: "perf-mock-llm"
+
+agents:
+  replicas: 3
+  # Engine image = the gate-retired "wv-nogate" build (3 patched() gates removed -> ~24
+  # events/run vs ~30). 2026-06-13 controlled single-variable measurement: this closes the
+  # chain-M gap 181k -> 270k (=tierA) by HALVING per-run Postgres cost (PG node 1.1/4 vs
+  # 2.86/4 @50/s) and lifting the collapse point ~55/s -> ~80/s. The canonical file had
+  # pinned the older perf-tierA-main build with the gates still firing. SAFETY: the gate
+  # retirement is replay-safe for CLEAN deploys (bootstrap.sh teardown+install = zero
+  # in-flight old-version histories to diverge). For ROLLING upgrades over live workflows,
+  # drain first OR use a build carrying the PR #543 conditional re-gate.
+  image: { repository: "", tag: perf-tierA-wv-nogate-20260612a }
+  resources:
+    requests: { memory: 512Mi, cpu: 100m }
+    limits: { memory: 2Gi, cpu: "2" }
+  temporal:
+    # Web pods only poll "main" (not subflow) — subflow is owned by agentsSubflowWorker.
+    # Cuts the subflow sticky-poller fanout from 22 pods to 3, restoring cache locality.
+    workerQueues: "main"
+    maxConcurrentWorkflowTasks: 200
+    maxConcurrentActivities: 200
+    maxCachedWorkflows: 800
+  probes:
+    liveness: { timeoutSeconds: 5, failureThreshold: 6 }
+    readiness: { timeoutSeconds: 5, failureThreshold: 6 }
+  hpa:
+    enabled: false
+  # NOTE (2026-06-11 audit): ASSEMBLY_INLINE_CONDITION_NODES,
+  # ASSEMBLY_LOCAL_CUSTOM_CODE_NODES, ASSEMBLY_INLINE_SIMPLE_CALL_WORKFLOW and
+  # ASSEMBLY_BATCH_PARALLEL_CUSTOM_CALL_CACHE_HITS were removed here: no code
+  # on main reads them (research-branch leftovers — dead config). What they
+  # claimed to do is provided by localActivityNodeTypes below; condition and
+  # while are local activities by chart default now.
+  extraEnv:
+    - name: ASSEMBLY_WORKFLOW_STATUS_BATCH_CONCURRENCY
+      # Capped 200→75 after status-path fast-path landed (BATCH_FETCH_RESULT=false
+      # skips handle.result()). The remaining cost is Temporal describe() calls;
+      # 75 in-flight per pod × 3 pods = 225 — well under frontend capacity, low
+      # risk of overdriving describe RPS.
+      value: "75"
+    - name: ASSEMBLY_WORKFLOW_STATUS_BATCH_FETCH_RESULT
+      # Perf runner only needs terminal state from /statuses; fetching full
+      # Temporal results for every completed run adds read pressure at the tail.
+      value: "false"
+    - &cache_ttl
+      name: ASSEMBLY_CUSTOM_CODE_RESULT_CACHE_TTL_SECONDS
+      value: "0"
+    - &cache_wait
+      name: ASSEMBLY_CUSTOM_CODE_RESULT_CACHE_WAIT_SECONDS
+      value: "5"
+    - &cache_local_timeout
+      name: ASSEMBLY_CUSTOM_CODE_RESULT_CACHE_LOCAL_ACTIVITY_TIMEOUT_SECONDS
+      value: "5"
+    - &call_cache_ttl
+      name: ASSEMBLY_CALL_WORKFLOW_RESULT_CACHE_TTL_SECONDS
+      value: "0"
+    - &call_cache_wait
+      name: ASSEMBLY_CALL_WORKFLOW_RESULT_CACHE_WAIT_SECONDS
+      value: "120"
+    - &call_cache_poll
+      name: ASSEMBLY_CALL_WORKFLOW_RESULT_CACHE_POLL_SECONDS
+      value: "10"
+    - &call_cache_local
+      name: ASSEMBLY_CALL_WORKFLOW_RESULT_CACHE_LOCAL_ACTIVITY_ENABLED
+      value: "true"
+    - &compact_hits
+      name: ASSEMBLY_RESULT_CACHE_COMPACT_HITS
+      value: "false"
+    - &local_activity_nodes
+      # NOTE (consistency): this anchor is the CODE-WORKER's (and the inert web pods') local-activity
+      # set and INCLUDES custom_code (reused at agentsCodeWorker.extraEnv below). The real chain-M
+      # runner — the engine-worker (agentsWorker.localActivityNodeTypes) — deliberately EXCLUDES
+      # custom_code so sandboxed/untrusted code never blocks a workflow task. Both are intentional;
+      # this is NOT a conflict with the agentsCodeWorker comment.
+      # Dispatch nodes as Temporal local activities (1 MarkerRecorded event + NO
+      # activity-task transfer, vs a regular activity's ~3 events + a transfer-queue
+      # task). Two compounding wins at FN-500:
+      #  - fewer history events → relieves the SQL visibility-write path
+      #    (FN-180 P95 84s→38s, P99 ~65s→~40s).
+      #  - NO activity-task transfers → removes history per-workflow-LOCK contention.
+      #    FN fans out to 7 custom_code activities; their transfers serialized on the
+      #    per-workflow mutable-state lock at 500-conc, causing transfer-queue
+      #    context-deadline-exceeded → 90s activity HEARTBEAT timeouts (P99 ~77s).
+      #    Making custom_code local eliminated it: FN-500 P99 77s→35s, success →100%,
+      #    0 transfer-queue errors. (custom_code here is PURE-TRANSFORM trusted
+      #    in-process — safe to run on the workflow worker; do NOT localize
+      #    sandbox/network/packaged custom_code which needs the code-worker.)
+      name: ASSEMBLY_LOCAL_ACTIVITY_NODE_TYPES
+      value: "api_request,transform,custom_code"
+    - &trusted_executor_workers
+      name: ASSEMBLY_TRUSTED_CODE_EXECUTOR_MAX_WORKERS
+      # Bumped 32→64 after engine-worker thread pool saturated at 500-concurrent sleep5.
+      # 64 threads × 16 worker pods = 1024 total slots — comfortably above worst-case fan-out.
+      value: "64"
+    # ASSEMBLY_WORKFLOW_PLANNING_YIELD_NODE_THRESHOLD deliberately NOT set
+    # here: the chart emits it natively (default 150, the FN-500-proven value;
+    # see agentsWorker.planningYieldNodeThreshold). Carrying it in extraEnv
+    # duplicates the env key, and kubectl strategic-merge rejects duplicate
+    # names ($setElementOrder) — it broke the 2026-06-11 tierA upgrade.
+    - &progress_off
+      name: ASSEMBLY_NODE_PROGRESS_REPORTER_ENABLED
+      value: "false"
+    - &wf_poller_min
+      name: TEMPORAL_WORKFLOW_TASK_POLLER_MIN
+      value: "8"
+    - &wf_poller_initial
+      name: TEMPORAL_WORKFLOW_TASK_POLLER_INITIAL
+      value: "12"
+    # POLLER_MAX moved to .Values.{component}.temporal.{name}PollerMax — the chart now
+    # emits these from values, so leaving them in extraEnv produces duplicate env keys.
+    - &act_poller_min
+      name: TEMPORAL_ACTIVITY_TASK_POLLER_MIN
+      value: "10"
+    - &act_poller_initial
+      name: TEMPORAL_ACTIVITY_TASK_POLLER_INITIAL
+      value: "15"
+    - &code_poller_min
+      name: TEMPORAL_AGENT_BUILDER_CODE_ACTIVITY_TASK_POLLER_MIN
+      value: "10"
+    - &code_poller_initial
+      name: TEMPORAL_AGENT_BUILDER_CODE_ACTIVITY_TASK_POLLER_INITIAL
+      value: "15"
+    - &code_poller_max
+      name: TEMPORAL_AGENT_BUILDER_CODE_ACTIVITY_TASK_POLLER_MAX
+      value: "50"
+    - &parallel_poller_min
+      name: TEMPORAL_AGENT_BUILDER_PARALLEL_CODE_ACTIVITY_TASK_POLLER_MIN
+      value: "5"
+    - &parallel_poller_initial
+      name: TEMPORAL_AGENT_BUILDER_PARALLEL_CODE_ACTIVITY_TASK_POLLER_INITIAL
+      value: "10"
+    - &aux_poller_min
+      name: TEMPORAL_AGENT_BUILDER_AUX_ACTIVITY_TASK_POLLER_MIN
+      value: "5"
+    - &aux_poller_initial
+      name: TEMPORAL_AGENT_BUILDER_AUX_ACTIVITY_TASK_POLLER_INITIAL
+      value: "10"
+    # --- Tier-2 payload blob-offload (#140) -------------------------------------
+    # When a workflow payload still exceeds the hard size limit AFTER zlib (PR #784's
+    # compressed second-chance), the Temporal PayloadCodec stores it in the in-cluster
+    # MinIO (enabled below) and keeps only a tiny content-addressed reference in
+    # Temporal history — so large/INCOMPRESSIBLE payloads COMPLETE instead of failing
+    # loud (WorkflowStatePayloadTooLarge). OPT-IN + thresholded (>=1.5MB stored):
+    # small/normal payloads keep the untouched inline path → ZERO chain-M ceiling
+    # regression. Creds default to the chart minio (minioadmin/minioadmin123); override
+    # via a secret in prod. TTL_DAYS (blob lifecycle GC) MUST be >= temporal namespace
+    # retention (72h here) so a blob is never reclaimed while a replay could still need
+    # it — see blob_offload.offload_ttl_days. Enabled on the engine + all workers so
+    # the codec round-trips on every runner that touches the data converter.
+    - &offload_enabled
+      name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_ENABLED
+      value: "true"
+    - &offload_endpoint
+      name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_S3_ENDPOINT
+      value: "http://minio:9000"
+    - &offload_ttl
+      name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_TTL_DAYS
+      value: "7"   # >= 72h namespace retention (with margin)
+
+agentsWorker:
+  # 16 workers on 5x D4ds_v4 ≈ 3.2 workers/node. Each request 384Mi/100m ≈
+  # 6Gi/1.6cpu total — leaves >50Gi/15cpu free for other app pods on 70Gi/17cpu app pool.
+  replicas: 16
+  image: { repository: "", tag: perf-tierA-wv-nogate-20260612a }
+  resources:
+    requests: { memory: 384Mi, cpu: 100m }
+    limits: { memory: 1Gi, cpu: "2" }
+  temporal:
+    maxConcurrentActivities: 400
+    # 200 OVERSUBSCRIBED the single asyncio event loop: these workers run the
+    # Temporal worker + uvicorn on one loop, and api_request nodes execute as
+    # LOCAL activities IN that loop (9 sequential HTTP-await LAs per chain-M
+    # run). At 200 concurrent WFTs the loop juggled ~1800 in-flight ops, so a
+    # 1.8s workflow stretched to 24s and many hit the 30s WFT timeout → retry
+    # storm. tierA A/B at C=400 (sustained, 6000 runs): 200 → 59.8k/hr p95 83s
+    # vs 50 → 76.2k/hr p95 33.5s (+27% throughput, −60% p95). Scale OUT (more
+    # replicas) for more throughput, not UP on per-worker concurrency.
+    maxConcurrentWorkflowTasks: 50
+    maxCachedWorkflows: 600
+    disableResourceTuner: true
+    tunerMode: fixed
+    # "main,aux" not "main,subflow,aux" — subflow lives on agentsSubflowWorker only.
+    # 16 pods × subflow polling was creating sticky-poller fanout (cache hit rate 1/22).
+    workerQueues: "main,aux"
+    # Reverted to 50 — codex A/B: poller=100 on workflow workers added matching
+    # pressure without throughput win. Only code-worker benefits from higher pollers
+    # (its bottleneck is activity dispatch). 50 here, 100 on agentsCodeWorker.
+    workflowTaskPollerMax: 50
+    activityTaskPollerMax: 50
+  # Chart-native key for ASSEMBLY_LOCAL_ACTIVITY_NODE_TYPES (the template
+  # emits the env; carrying it in extraEnv duplicates the key and breaks
+  # strategic-merge upgrades). custom_code stays localized — the tierA
+  # trusted-in-process posture, the single biggest FN-500 win.
+  localActivityNodeTypes: "api_request,transform,condition,while"  # custom_code routed to code-worker (sandbox) — runs correctly out-of-the-box
+  extraEnv:
+    - *cache_ttl
+    - *cache_wait
+    - *cache_local_timeout
+    - *call_cache_ttl
+    - *call_cache_wait
+    - *call_cache_poll
+    - *call_cache_local
+    - *compact_hits
+    - *trusted_executor_workers
+    - *progress_off
+    - *code_poller_min
+    - *code_poller_initial
+    - *code_poller_max
+    - *parallel_poller_min
+    - *parallel_poller_initial
+    - *aux_poller_min
+    - *aux_poller_initial
+    - *offload_enabled    # Tier-2 payload blob-offload (#140) — engine-worker is the chain-M runner
+    - *offload_endpoint
+    - *offload_ttl
+
+agentsCodeWorker:
+  # 4 replicas. custom_code is dispatched as a REGULAR activity to this dedicated code-worker
+  # ("code"/"parallel-code" queues): the engine-worker's ASSEMBLY_LOCAL_ACTIVITY_NODE_TYPES
+  # intentionally EXCLUDES custom_code so slow/sandboxed (untrusted/packaged/JS) code never blocks a
+  # workflow task. The code-worker runs trusted python IN-PROCESS (trustedCodeInprocess: true, ~2ms)
+  # and auto-routes untrusted/packaged/JS to the secure sandbox /execute-code (code_interpreter.py).
+  # FN/agent workloads use no custom_code, so code-workers sit idle there (validated idle at FN-500;
+  # scaling 12→4 had zero perf impact, P99 stayed 35s) — but for custom_code-HEAVY workflows this tier
+  # IS on the hot path. Such workflows are Temporal-persistence(PG)-bound (~10/s sustained on this
+  # profile, ~4-5× heavier per-wf than chain-M — the cost of activity-dispatching each code node, which
+  # is what keeps the sandbox path safe). Raise replicas for packaged/network custom_code.
+  # (Validated 2026-06-13: 36k/hr clean at 10/s, app/code-worker idle ~14%, PG ~1.9/4 — NOT exec-bound.)
+  replicas: 4
+  image: { repository: "", tag: perf-tierA-wv-nogate-20260612a }
+  codeExecutionTarget: sandbox-service
+  # Security: never enable in-process exec on multi-tenant clusters — canvas
+  # custom_code can reach FERNET_KEY / DATABASE_URL via ASSEMBLY_TRUSTED_CODE_INPROCESS.
+  # Sandbox path is slower (~ms→tens of ms) but required ahead of external pentest.
+  trustedCodeInprocess: false
+  resources:
+    requests: { memory: 384Mi, cpu: 100m }
+    limits: { memory: 1Gi, cpu: "2" }
+  temporal:
+    workerQueues: "code,parallel-code"
+    maxConcurrentWorkflowTasks: 100
+    # Keep at 200 — bumping to 400 over-subscribed the trusted executor pool
+    # (8 pods × 64 threads = 512 actual threads vs 8 × 400 = 3,200 dispatch slots),
+    # which queued activities waiting for threads and worsened tail latency.
+    maxConcurrentActivities: 200
+    # Bumped 600→1000 — more sticky cache headroom per worker reduces history
+    # replay rate when workflows cycle through the worker.
+    maxCachedWorkflows: 1000
+    tunerMode: fixed
+    activityTaskPollerMax: 100
+  extraEnv:
+    - *cache_ttl
+    - *cache_wait
+    - *cache_local_timeout
+    - *call_cache_ttl
+    - *call_cache_wait
+    - *call_cache_poll
+    - *call_cache_local
+    - *compact_hits
+    - *local_activity_nodes
+    - *trusted_executor_workers
+    - *progress_off
+    - *wf_poller_min
+    - *wf_poller_initial
+    - *act_poller_min
+    - *act_poller_initial
+    - *code_poller_min
+    - *code_poller_initial
+    - *code_poller_max
+    - *parallel_poller_min
+    - *parallel_poller_initial
+    - *aux_poller_min
+    - *aux_poller_initial
+    - *offload_enabled    # Tier-2 payload blob-offload (#140) — code-worker emits the large node outputs
+    - *offload_endpoint
+    - *offload_ttl
+
+agentsSubflowWorker:
+  enabled: true
+  replicas: 3
+  image: { repository: "", tag: perf-tierA-wv-nogate-20260612a }
+  resources:
+    requests: { memory: 384Mi, cpu: 100m }
+    limits: { memory: 1Gi, cpu: "2" }
+  temporal:
+    workerQueues: "subflow,aux"
+    maxConcurrentWorkflowTasks: 200
+    maxConcurrentActivities: 150
+    maxCachedWorkflows: "600"
+    tunerMode: fixed
+    # Reverted to 50 — subflow worker doesn't benefit from higher pollers.
+    workflowTaskPollerMax: 50
+    activityTaskPollerMax: 50
+  # Chart-native key for ASSEMBLY_LOCAL_ACTIVITY_NODE_TYPES (the template
+  # emits the env; carrying it in extraEnv duplicates the key and breaks
+  # strategic-merge upgrades). custom_code stays localized — the tierA
+  # trusted-in-process posture, the single biggest FN-500 win.
+  localActivityNodeTypes: "api_request,transform,condition,while"  # custom_code routed to code-worker (sandbox) — runs correctly out-of-the-box
+  extraEnv:
+    - *cache_ttl
+    - *cache_wait
+    - *cache_local_timeout
+    - *call_cache_ttl
+    - *call_cache_wait
+    - *call_cache_poll
+    - *call_cache_local
+    - *compact_hits
+    - *trusted_executor_workers
+    - *progress_off
+    - *wf_poller_min
+    - *wf_poller_initial
+    - *act_poller_min
+    - *act_poller_initial
+    - *code_poller_min
+    - *code_poller_initial
+    - *code_poller_max
+    - *parallel_poller_min
+    - *parallel_poller_initial
+    - *aux_poller_min
+    - *aux_poller_initial
+    - *offload_enabled    # Tier-2 payload blob-offload (#140) — subflow payloads can be large too
+    - *offload_endpoint
+    - *offload_ttl
+
+sandboxTrigger:
+  # Webhook ingestion tier. 3 replicas, CPU limit 2 (NOT 1): the 1-core limit
+  # CFS-throttles ingestion and caps webhook acceptance at ~237k/hr while the
+  # engine has headroom (validated 2026-06-12). image tag falls back to the
+  # release image.tag (do NOT pin a stale tag — it gets pruned from ACR).
+  replicas: 3
+  image: { repository: "", tag: "" }
+  resources:
+    requests: { memory: 384Mi, cpu: 500m }
+    limits: { memory: 1Gi, cpu: "2" }
+  probes:
+    liveness: { timeoutSeconds: 5, failureThreshold: 6 }
+    readiness: { timeoutSeconds: 5, failureThreshold: 6 }
+  extraEnv:
+    - name: DEPLOYMENT_RUN_RATE_LIMIT_PER_MINUTE
+      value: "0"
+
+sandboxExecute:
+  requireNsjail: true
+  replicas: 3
+  resources:
+    requests: { memory: 768Mi, cpu: 250m }
+    # cpu 2 -> 4, measured on assembly-perf-medium after #2118 made the cap real.
+    #
+    # Before the fix the cgroup tree sat outside the kubelet hierarchy, so this
+    # limit applied to nothing and sandbox-execute actually drew 9.01 cores on a
+    # 12-core app pool. Enforcing "2" therefore was not a tightening, it was a
+    # 4.5x cut to what the tier had really been using, and the code-heavy shapes
+    # collapsed: plain 5.76 -> 2.37 wf/s, networked 3.90 -> 1.60 wf/s, with the
+    # sandbox throttled 99% of every CFS period.
+    #
+    # Measured ladder (perf-codeheavy-10, 10 custom_code nodes, drive 8/s,
+    # 3 replicas one-per-node, 40s warmup + 60s window, completions from the
+    # Temporal visibility DB):
+    #   limit 2 -> plain 2.37 / net 1.60 wf/s,  5.96 cores, 99% throttled
+    #   limit 3 -> plain 4.90 / net 3.19 wf/s,  8.33 cores, 54-65% throttled
+    #   limit 4 -> plain 5.55 / net 3.86 wf/s,  8.87 cores, 0% throttled
+    #
+    # 4 restores parity with the pre-fix numbers (-3.6% plain, -1% net) with the
+    # workload now bounded and attributable to the pod. Raising REQUESTS instead
+    # was tried and does nothing: at 99% throttling the tier is quota-bound, not
+    # weight-bound, and requests: 1 additionally does not FIT (3860m allocatable
+    # vs 3315-3460m already requested per node), which evicts the spread and
+    # costs more than it buys.
+    limits: { memory: 3Gi, cpu: "4" }
+
+llmGateway:
+  # 8 replicas — at FN-500/1000 the LLM-proxy tier needs ~1.8 cores total; a
+  # single 1-CPU replica throttled (CPU cap) and serialized LLM calls. With the
+  # raised gpt-5.4-nano Foundry quota, scaling to 8 gives reproducible FN-500
+  # 100% @ P95 ~29s (was ~35s @ 1 replica) and FN-1000 ~97-99% @ P95 ~55s.
+  # REQUIRES the bumped Foundry quota — at the old quota, >1 replica caused
+  # Foundry 429/503 overload (FN-500 dropped to 87%). Gateways stay <100m each
+  # at FN-1000 (not CPU-bound); the ceiling is Foundry concurrent capacity.
+  replicas: 8
+
+# MinIO — enabled for Tier-2 payload blob-offload (#140). Runs on the infra
+# nodepool (aw.infraScheduling), so it does NOT compete with the app-pool workers;
+# the offload codec targets http://minio:9000 and auto-creates its own
+# `assembly-workflow-payloads` bucket (separate from the chart's file-search bucket).
+# storage bumped 20Gi→100Gi: at 10MB-incompressible payloads even a modest run
+# churns disk fast; the 7-day lifecycle GC (offload_ttl) + content-addressed dedup
+# bound it. Creds = chart defaults (minioadmin/minioadmin123); override via secret in prod.
+minio:
+  enabled: true
+  storage: 100Gi
+
+scheduling:
+  nodeSelector:
+    workload: app
+  tolerations:
+    - key: workload
+      value: app
+      effect: NoSchedule
+  # #1282: assembly-perf-small's shared infra node has been squatted on by an unrelated foreign
+  # workload with no priorityClassName; kubelet's node-pressure eviction picked the legitimate
+  # `temporal` pod over the foreign one purely on requests-exceeded + usage, since nothing on this
+  # node carried a priority. Enabling this on all perf tiers gives infra-tier pods (postgres/
+  # postgres-temporal/redis/temporal/keycloak — see aw.infraScheduling/aw.pgTemporalScheduling)
+  # priority over any default-priority (0) workload sharing the same node, without touching the
+  # foreign workload itself (not ours to alter — see the issue).
+  priorityClasses:
+    enabled: true
+  # #1606: on assembly-perf-medium (2 infra nodes since PR #1594's node-pool bump), all 5 singleton
+  # infra pods (postgres/postgres-temporal/redis/keycloak/minio) stayed on the ORIGINAL infra node
+  # (96%+ memory) while the 2nd node sat at 19% — Kubernetes never proactively reschedules an
+  # already-Running pod just because a new node joins, so the shared nodeSelector alone didn't help.
+  # kubelet evicted postgres-temporal (the durable Temporal DB) twice under routine load as a direct
+  # result. Soft anti-affinity actually spreads them on the next rollout. Also helps small (1 infra
+  # node = no-op today, but harmless and ready if small ever gains a 2nd infra node).
+  infraSingletonSpread:
+    enabled: true

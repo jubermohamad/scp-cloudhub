@@ -1,0 +1,66 @@
+application: cloudhub-backend
+namespace: ${K8S_NAMESPACE}
+owner: platform-team@symphonysensa.com
+businessUnit: cloudhub
+environment: dev
+costCenter: cloudhub-platform
+
+image:
+  repository: ${ACR_LOGIN_SERVER}/cloudhub-backend
+  tag: ${BACKEND_IMAGE_TAG}
+
+serviceAccountName: cloudhub-backend
+
+deploymentLabels:
+  azure.workload.identity/use: "true"
+podLabels:
+  azure.workload.identity/use: "true"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 768Mi
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 7007
+  targetPort: 7007
+
+ingress:
+  enabled: false
+
+env:
+  - name: NODE_ENV
+    value: production
+  - name: APP_BASE_URL
+    value: https://${FRONTEND_HOST}
+  - name: BACKEND_BASE_URL
+    value: https://${FRONTEND_HOST}
+  - name: BACKEND_ORIGIN
+    value: http://cloudhub-backend.${K8S_NAMESPACE}.svc.cluster.local:7007
+  - name: POSTGRES_AAD_AUTH
+    value: "true"
+  - name: PGHOST
+    value: ${PGHOST}
+  - name: POSTGRES_HOST
+    value: ${PGHOST}
+  - name: PGDATABASE
+    value: ${PGDATABASE}
+  - name: POSTGRES_DB
+    value: ${PGDATABASE}
+  - name: PGUSER
+    value: ${PGUSER}
+  - name: POSTGRES_USER
+    value: ${PGUSER}
+  - name: PGSSLMODE
+    value: require
+  - name: AZURE_CLIENT_ID
+    value: ${AZURE_CLIENT_ID}
+
+envFrom:
+  - secretRef:
+      name: cloudhub-runtime-secrets

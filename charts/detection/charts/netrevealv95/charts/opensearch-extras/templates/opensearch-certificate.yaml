@@ -1,0 +1,29 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: opensearch
+  namespace: {{ .Values.global.namespace }}
+spec:
+  secretName: cert-opensearch
+  duration: {{ .Values.global.certificate.duration }}
+  renewBefore: {{ .Values.global.certificate.renewBefore }}
+  dnsNames:
+  {{- include "opensearch.dnsNames" . | nindent 2 }}
+  commonName: OpenSearch_Node
+  usages:
+  - digital signature
+  - key encipherment
+  - server auth
+  - client auth
+  issuerRef:
+    name: {{ .Values.global.issuer.ca.name }}
+  keystores:
+    pkcs12:
+      create: true
+      passwordSecretRef:
+        name: {{ .Release.Name }}-jks-password
+        key: password
+  secretTemplate:
+      annotations:
+        reloader.stakater.com/match: "true"

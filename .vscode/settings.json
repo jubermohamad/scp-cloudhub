@@ -1,0 +1,7 @@
+{
+  "github.copilot.chat.codeGeneration.instructions": [
+    {
+      "text": "Only perform Kubernetes and Azure AKS operations against the cluster aks-scp-dev-sdc-st-cms. Never switch contexts or target any other AKS cluster."
+    }
+  ]
+}

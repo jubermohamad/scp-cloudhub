@@ -1,0 +1,605 @@
+{{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.standaloneVersions.configuration .Values.global.override.chartEnable.standaloneVersions.database) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ include "job.standalone.override.name" . }}"
+  labels:
+    app.kubernetes.io/managed-by: {{.Release.Service | quote }}
+    app.kubernetes.io/instance: {{.Release.Name | quote }}
+    helm.sh/chart: "{{.Chart.Name}}-{{.Chart.Version}}"
+  annotations:
+    # This is what defines this resource as a hook. Without this line, the
+    # job is considered part of the release.
+    "helm.sh/hook": post-install, pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": post-install, pre-upgrade
+spec:
+  ttlSecondsAfterFinished: {{ .Values.override.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      name: "{{.Release.Name}}-override-job-{{ randAlphaNum 8 | lower }}"
+      labels:
+        app.kubernetes.io/managed-by: {{.Release.Service | quote }}
+        app.kubernetes.io/instance: {{.Release.Name | quote }}
+        helm.sh/chart: "{{.Chart.Name}}-{{.Chart.Version}}"
+    spec:
+      restartPolicy: Never
+      ################################################
+      # init: override-wait-for-postgres
+      ################################################
+      initContainers:
+      - name: override-wait-for-postgres
+        image: "{{- include "standalone.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          {{- if .Values.global.useRootAccountForInit }}
+          runAsUser: 0
+          {{- else }}
+          runAsUser: 200
+          runAsGroup: 200
+          {{- end }}
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            if [ -f /opt/WLM/overrideInitialised.flag ]; then
+              echo "/opt/WLM/overrideInitialised.flag exists. Remove it."
+              rm /opt/WLM/overrideInitialised.flag
+            fi
+            if [ -f /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag ]; then
+              echo "/opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag exists. Remove it."
+              rm /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag
+            fi
+            if [ -f /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag ]; then
+              echo "/opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag exists. Remove it."
+              rm /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag
+            fi
+            if [ ! -f /opt/netreveal/standaloneHome/overrideState/overrideList.txt ]; then
+              echo "Create /opt/netreveal/standaloneHome/overrideState/overrideList.txt"
+              touch /opt/netreveal/standaloneHome/overrideState/overrideList.txt
+            fi
+
+            echo "List of previously processed Database versions:"
+            cat /opt/netreveal/standaloneHome/overrideState/overrideList.txt
+
+            echo "Copy install.sh to /opt/netreveal/standaloneHome/overrideState/install.sh"
+            cp /opt/docker/data/DBInitScripts/install.sh /opt/netreveal/standaloneHome/overrideState/install.sh
+            chmod +x /opt/netreveal/standaloneHome/overrideState/install.sh
+            echo "Process configuration override versions."
+            {{- range $item := .Values.global.override.chartEnable.standaloneVersions.configuration }}
+              fullVersion={{ $item }}
+              echo "Processing: ${fullVersion}"
+              version=${fullVersion%:*}
+              reInstall=${fullVersion#*:}
+              echo "version: ${version}"
+              echo "reInstall: ${reInstall}"
+              if [ "${version}" != "${reInstall}" -a "${reInstall}" == "reinstall" ]; then
+                echo "Version is defined with 'reinstall' adding it to the runOverrideConfiguration.flag file."
+                echo "configuration#${version}#" >> /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag
+              else
+                if ! grep -q "configuration#${version}#" /opt/netreveal/standaloneHome/overrideState/overrideList.txt; then
+                  echo "Version was not processed before. Add it to the list."
+                  echo "configuration#${version}#" >> /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag
+                else
+                  echo "Version was processed before. Skip it."
+                fi
+              fi
+            {{- end }}
+            if [ -f /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag ]; then
+              echo "/opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag exists. It contains:"
+              cat /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag
+            fi
+
+            echo "Process database override versions."
+            {{- range $item := .Values.global.override.chartEnable.standaloneVersions.database }}
+              fullVersion={{ $item }}
+              echo "====>Processing: ${fullVersion}"
+              version=${fullVersion%:*}
+              reInstall=${fullVersion#*:}
+              echo "version: ${version}"
+              echo "reInstall: ${reInstall}"
+              if [ "${version}" != "${reInstall}" -a "${reInstall}" == "reinstall" ]; then
+                echo "Skipp verification version is present on the overrideList.txt. Adding version to the runOverrideDatabase.flag file."
+                echo "database#${version}#" >> /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag
+              else
+                if ! grep -q "database#${version}#" /opt/netreveal/standaloneHome/overrideState/overrideList.txt; then
+                  echo "Version was not processed before. Add it to the list."
+                  echo "database#${version}#" >> /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag
+                else
+                  echo "Version was processed before. Skip it."
+                fi
+              fi
+            {{- end }}
+            if [ -f /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag ]; then
+              echo "/opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag exists. It contains:"
+              cat /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag
+            fi
+
+            {{- if .Values.global.useRootAccountForInit }}
+            echo "Change ownership of /opt/netreveal/standaloneHome/overrideState"
+            chown -R 200:200 /opt/netreveal/standaloneHome/overrideState
+            {{- end }}
+            if [ -f /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag -o -f /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag ]; then
+              timeout {{ .Values.global.standalone.dbInit.dbJobFileFlagTimeout }} bash -c 'while [ ! -f /opt/WLM/db_job_completed.flag ]; do echo "Wait for the db init job to complete"; sleep 2; done'
+              /wait-for-it/wait-for-it.sh {{ include "db.url" . }} --timeout=300
+            fi
+        volumeMounts:
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+        - name: {{ .Release.Name }}-standalone-override
+          mountPath: /opt/netreveal/standaloneHome/overrideState
+
+      ################################################
+      # init: override-prepare-configuration
+      ################################################
+      - name: override-prepare-configuration
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 200
+          runAsGroup: 200
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            if [ -f /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag ]; then
+              echo "/opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag exists. Processing Database override."
+              if [ -f /opt/netreveal/standaloneHome/database/fullDbInstall.lst ]; then
+                echo "/opt/netreveal/standaloneHome/database/fullDbInstall.lst exists. Remove it."
+                rm /opt/netreveal/standaloneHome/database/fullDbInstall.lst
+              fi
+              if [ -f /opt/netreveal/standaloneHome/database/fullDbInstall.lst ]; then
+                echo "/opt/netreveal/standaloneHome/database/fullDbPostInstall.lst exists. Remove it."
+                rm /opt/netreveal/standaloneHome/database/fullDbInstall.lst
+              fi
+
+              echo "Processing Database override versions."
+              for versions in $(cat /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag)
+              do
+                fix=$(echo ${versions} | cut -d "#" -f 2)
+                echo "Processing: ${fix}"
+                if [ -d "/opt/override/database/standalone/${fix}" -a "x${fix}" != "x" ]; then
+                  echo "Directory /opt/override/database/standalone/${fix} exists. Copy it to /opt/netreveal/standaloneHome/database/${fix}"
+                  echo ">>>>"
+                  find /opt/override/database/standalone/${fix}
+                  echo "<<<<"
+                  cp -R /opt/override/database/standalone/${fix} /opt/netreveal/standaloneHome/database/
+                else
+                  echo "Directory /opt/override/database/standalone/${fix} does not exist or fix version is empty."
+                fi
+
+                if [ -f /opt/override/database/standalone/${fix}/dbInstall.lst ]; then
+                  echo "/opt/override/database/standalone/${fix}/dbInstall.lst exists. Update path and append to /opt/netreveal/standaloneHome/database/fullDbInstall.lst"
+                  echo ">>>>"
+                  cat /opt/override/database/standalone/${fix}/dbInstall.lst
+                  echo "<<<<"
+                  sed '/^ *#/d;s/#.*//' /opt/override/database/standalone/${fix}/dbInstall.lst | grep ".sql" | sed -e "s/^/${fix}\//" >> /opt/netreveal/standaloneHome/database/fullDbInstall.lst
+                  echo "" >> /opt/netreveal/standaloneHome/database/fullDbInstall.lst
+                else
+                  echo "File /opt/override/database/standalone/${fix}/dbInstall.lst does not exist."
+                fi
+                if [ -f /opt/override/database/standalone/${fix}/dbPostInstall.lst ]; then
+                  echo "/opt/override/database/standalone/${fix}/dbPostInstall.lst exists. Update path and append to /opt/netreveal/standaloneHome/database/fullDbPostInstall.lst"
+                  echo ">>>>"
+                  cat /opt/override/database/standalone/${fix}/dbPostInstall.lst
+                  echo "<<<<"
+                  sed '/^ *#/d;s/#.*//' /opt/override/database/standalone/${fix}/dbPostInstall.lst | grep ".sql" | sed -e "s/^/${fix}\//" >> /opt/netreveal/standaloneHome/database/fullDbPostInstall.lst
+                  echo "" >> /opt/netreveal/standaloneHome/database/fullDbPostInstall.lst
+                else
+                  echo "File /opt/override/database/standalone/${fix}/dbPostInstall.lst does not exist."
+                fi
+              done
+
+              if [ -f /opt/netreveal/standaloneHome/database/fullDbInstall.lst ]; then
+                echo "/opt/netreveal/standaloneHome/database/fullDbInstall.lst contains:"
+                echo ">>>>"
+                cat /opt/netreveal/standaloneHome/database/fullDbInstall.lst
+                echo "<<<<"
+              else
+                echo "/opt/netreveal/standaloneHome/database/fullDbInstall.lst does not exist."
+              fi
+
+              if [ -f /opt/netreveal/standaloneHome/database/fullDbPostInstall.lst ]; then
+                echo "/opt/netreveal/standaloneHome/database/fullDbPostInstall.lst contains:"
+                echo ">>>>"
+                cat /opt/netreveal/standaloneHome/database/fullDbPostInstall.lst
+                echo "<<<<"
+              else
+                echo "/opt/netreveal/standaloneHome/database/fullDbPostInstall.lst does not exist."
+              fi
+            fi
+
+            if [ -f /opt/netreveal/standaloneHome/importExport/fullImport.lst ]; then
+              echo "/opt/netreveal/standaloneHome/importExport/fullImport.lst exists. Remove it."
+              rm /opt/netreveal/standaloneHome/importExport/fullImport.lst
+            fi
+            if [ -f /opt/netreveal/standaloneHome/importExport/fullPostImport.lst ]; then
+              echo "/opt/netreveal/standaloneHome/importExport/fullPostImport.lst exists. Remove it."
+              rm /opt/netreveal/standaloneHome/importExport/fullPostImport.lst
+            fi
+
+            echo "Processing Configuration override versions."
+            if [ -f /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag ]; then
+              for versions in $(cat /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag)
+              do
+                fix=$(echo ${versions} | cut -d "#" -f 2)
+                echo "Processing: ${fix}"
+                if [ -d /opt/override/configuration/standalone/${fix} -a "x${fix}" != "x" ]; then
+                  echo "Directory /opt/override/configuration/standalone/${fix} exists. Copy it to /opt/netreveal/standaloneHome/importExport/${fix}"
+                  echo ">>>>"
+                  find /opt/override/configuration/standalone/${fix}
+                  echo "<<<<"
+                  cp -R /opt/override/configuration/standalone/${fix} /opt/netreveal/standaloneHome/importExport/
+
+                  if [ -f /opt/override/configuration/standalone/${fix}/import.lst ]; then
+                    echo "/opt/override/configuration/standalone/${fix}/import.lst exists. Append to /opt/netreveal/standaloneHome/importExport/fullImport.lst"
+                    echo ">>>>"
+                    cat /opt/override/configuration/standalone/${fix}/import.lst
+                    echo "<<<<"
+                    cat /opt/override/configuration/standalone/${fix}/import.lst >> /opt/netreveal/standaloneHome/importExport/fullImport.lst
+                    echo "" >> /opt/netreveal/standaloneHome/importExport/fullImport.lst
+                  fi
+                  if [ -f /opt/override/configuration/standalone/${fix}/postImport.lst ]; then
+                    echo "/opt/override/configuration/standalone/${fix}/postImport.lst exists. Append to /opt/netreveal/standaloneHome/importExport/fullPostImport.lst"
+                    echo ">>>>"
+                    cat /opt/override/configuration/standalone/${fix}/postImport.lst
+                    echo "<<<<"
+                    cat /opt/override/configuration/standalone/${fix}/postImport.lst >> /opt/netreveal/standaloneHome/importExport/fullPostImport.lst
+                    echo "" >> /opt/netreveal/standaloneHome/importExport/fullPostImport.lst
+                  fi
+                else
+                  echo "Directory /opt/override/configuration/standalone/${fix} does not exist or fix version is empty."
+                fi
+              done
+
+              if [ -f /opt/netreveal/standaloneHome/importExport/fullImport.lst ]; then
+                echo "/opt/netreveal/standaloneHome/importExport/fullImport.lst contains:"
+                echo ">>>>"
+                cat /opt/netreveal/standaloneHome/importExport/fullImport.lst
+                echo "<<<<"
+              else
+                echo "/opt/netreveal/standaloneHome/importExport/fullImport.lst does not exist."
+              fi
+              if [ -f /opt/netreveal/standaloneHome/importExport/fullPostImport.lst ]; then
+                echo "/opt/netreveal/standaloneHome/importExport/fullPostImport.lst contains:"
+                echo ">>>>"
+                cat /opt/netreveal/standaloneHome/importExport/fullPostImport.lst
+                echo "<<<<"
+              else
+                echo "/opt/netreveal/standaloneHome/importExport/fullPostImport.lst does not exist."
+              fi
+            fi
+
+        volumeMounts:
+        - name: {{ .Release.Name }}-standalone-override-configuration
+          mountPath: /opt/netreveal/standaloneHome/importExport
+        - name: {{ .Release.Name }}-standalone-override-database
+          mountPath: /opt/netreveal/standaloneHome/database
+        - name: {{ .Release.Name }}-standalone-override
+          mountPath: /opt/netreveal/standaloneHome/overrideState
+
+      ################################################
+      # init: override-run-db-scripts
+      ################################################
+      - name: override-run-db-scripts
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.psqlDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 200
+          runAsGroup: 200
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        command:
+          - sh
+          - -c
+          - |
+            set +x
+            cd /opt/netreveal/standaloneHome/database
+            cp /opt/netreveal/standaloneHome/overrideState/install.sh .
+            USERID='{{ .Values.global.baseConfigProperties.db.postgresql.userid }}'
+            DBSID='{{ .Values.global.baseConfigProperties.db.postgresql.database }}'
+            EXEC_PORT='{{ .Values.global.baseConfigProperties.db.postgresql.port }}'
+            DBHOST='{{ include "db.host" . }}'
+
+            {{- if .Values.global.saml.enabled }}
+            echo "###################################################"
+            echo "# Enable SAML configuration."
+            echo "###################################################"
+            echo ""
+            ./install.sh "$USERID" "$PASSW" "$DBSID" "$DBHOST" 00_override_enable_saml.lst >> /dev/null
+            if grep -wi "ERROR:" *.log; then
+              echo "ERROR: ************Error has been found in the SQL scripts.*********************"
+              echo "ERROR: ************Please fix SQL issues.***************************************"
+              touch /opt/WLM/overrideInitialised.flag
+              exit 10
+            fi
+            {{- else }}
+            echo "###################################################"
+            echo "# Disable SAML configuration."
+            echo "###################################################"
+            echo ""
+            ./install.sh "$USERID" "$PASSW" "$DBSID" "$DBHOST" 00_override_disable_saml.lst >> /dev/null
+            if grep -wi "ERROR:" *.log; then
+              echo "ERROR: ************Error has been found in the SQL scripts.*********************"
+              echo "ERROR: ************Please fix SQL issues.***************************************"
+              touch /opt/WLM/overrideInitialised.flag
+              exit 10
+            fi
+            {{- end }}
+            if [ -f /opt/netreveal/standaloneHome/database/fullDbInstall.lst ]; then
+              echo "Run DB scripts: fullDbInstall.lst"
+              echo ">>>>"
+              cat /opt/netreveal/standaloneHome/database/fullDbInstall.lst
+              echo "<<<<"
+              ./install.sh "$USERID" "$PASSW" "$DBSID" "$DBHOST" fullDbInstall.lst >> /dev/null
+              if grep -wi "ERROR:" *.log; then
+                echo "ERROR: ************Error has been found in the SQL scripts.*********************"
+                echo "ERROR: ************Please fix SQL issues.***************************************"
+                touch /opt/WLM/overrideInitialised.flag
+                exit 10
+              fi
+            else
+              echo "fullDbInstall.lst is empty. Nothing to run."
+            fi
+        env:
+        - name: PASSW
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credential-apps-user-cnpg
+              key: password
+
+        volumeMounts:
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+        - name: {{ .Release.Name }}-standalone-override-database
+          mountPath: /opt/netreveal/standaloneHome/database
+        - name: {{ .Release.Name }}-standalone-override
+          mountPath: /opt/netreveal/standaloneHome/overrideState
+        {{- if .Values.global.saml.enabled }}
+        - name: "{{ include "config.map.saml.script.name" . }}"
+          mountPath: /opt/netreveal/standaloneHome/database/SAML_Enable.sql
+          subPath: SAML_Enable.sql
+        - name: "{{ include "config.map.saml.script.name" . }}"
+          mountPath: /opt/netreveal/standaloneHome/database/00_override_enable_saml.lst
+          subPath: 00_override_enable_saml.lst
+        {{- else }}
+        - name: "{{ include "config.map.saml.script.name" . }}"
+          mountPath: /opt/netreveal/standaloneHome/database/SAML_Disable.sql
+          subPath: SAML_Disable.sql
+        - name: "{{ include "config.map.saml.script.name" . }}"
+          mountPath: /opt/netreveal/standaloneHome/database/00_override_disable_saml.lst
+          subPath: 00_override_disable_saml.lst
+        {{- end }}
+
+      ################################################
+      # init: override-import-configuration
+      ################################################
+      - name: override-import-configuration
+        image: "{{- include "standalone.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 200
+          runAsGroup: 200
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            echo "Create wlm directories."
+            wlm_sub_dirs=("alertsaver" "batch" "config" "indexes" "listDownload" "shared" "xslt" "archive" "batchwatch" "fpfa" "gwl" "listImport" "settings" "trans" "worldcheck")
+            base_dir="conf/wlm/"
+            for dir in "${wlm_sub_dirs[@]}"; do mkdir -p "$base_dir/$dir"; done
+
+            # FCENGX-3368 fix
+            if  ! grep -q -L 'ALL-UNNAMED' ./importExport.sh; then
+              echo "Java 17 options are not present in the importExport.sh script. Add them."
+              export JAVA_OPTS=" ${JAVA_OPTS} {{- include "jdk17.java.opts" . -}} "
+              echo "JAVA_OPTS=${JAVA_OPTS}"
+            else
+              echo "Java 17 options are present in the importExport.sh script."
+            fi
+
+            if [ -f /opt/netreveal/standaloneHome/importExport/fullImport.lst ]; then
+              echo "Import /opt/netreveal/standaloneHome/importExport/fullImport.lst"
+              echo ">>>>"
+              cat /opt/netreveal/standaloneHome/importExport/fullImport.lst
+              echo "<<<<"
+              status="success"
+              ./importExport.sh /opt/netreveal/standaloneHome/importExport/fullImport.lst | tail -n1 | grep -v 0 && status="failed"
+              if [ "${status}" == "failed" ]; then
+                cat /opt/netreveal/standaloneHome/logs/importexport.log
+                touch /opt/WLM/overrideInitialised.flag
+                exit 1
+              fi
+            else
+              echo "File /opt/netreveal/standaloneHome/importExport/fullImport.lst does not exist."
+            fi
+
+            if [ -f /opt/netreveal/standaloneHome/importExport/fullPostImport.lst ]; then
+              echo "Import /opt/netreveal/standaloneHome/importExport/fullPostImport.lst"
+              echo ">>>>"
+              cat /opt/netreveal/standaloneHome/importExport/fullPostImport.lst
+              echo "<<<<"
+              status="success"
+              ./importExport.sh /opt/netreveal/standaloneHome/importExport/fullPostImport.lst | tail -n1 | grep -v 0 && status="failed"
+              if [ "${status}" == "failed" ]; then
+                cat /opt/netreveal/standaloneHome/logs/importexport.log
+                touch /opt/WLM/overrideInitialised.flag
+                exit 1
+              fi
+            else
+              echo "File /opt/netreveal/standaloneHome/importExport/fullPostImport.lst does not exist."
+            fi
+
+            if [ -f /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag ]; then
+              echo "Update /opt/netreveal/standaloneHome/overrideState/overrideList.txt"
+              while read line; do
+                if ! grep -q "${line}" /opt/netreveal/standaloneHome/overrideState/overrideList.txt; then
+                  echo $line >> /opt/netreveal/standaloneHome/overrideState/overrideList.txt
+                fi
+              done < /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag
+              echo ">>>>"
+              cat /opt/netreveal/standaloneHome/overrideState/overrideList.txt
+              echo "<<<<"
+              if [ -f /opt/netreveal/standaloneHome/logs/importexport.log ]; then
+                cat /opt/netreveal/standaloneHome/logs/importexport.log
+              fi
+              rm /opt/netreveal/standaloneHome/overrideState/runOverrideConfiguration.flag
+            fi
+        env:
+        - name: IMPORT_EXPORT_HEAP_MAX
+          value: {{ .Values.pod.java.importExportHeapMax }}
+        - name: IMPORT_EXPORT_HEAP_MIN
+          value: {{ .Values.pod.java.importExportHeapMin }}
+        - name: JAVA_OPTS
+          value: " -Djava.io.tmpdir=/opt/netreveal/standaloneHome/java/tmpSaImp "
+
+        volumeMounts:
+        {{ include "postgres.server.secret-mount" . | nindent 8 }}
+        - name: {{ .Release.Name }}-standalone-override-logs
+          mountPath: /opt/netreveal/standaloneHome/logs
+        - name: {{ .Release.Name }}-standalone-override-data
+          mountPath: /opt/netreveal/standaloneHome/data
+        - name: {{ .Release.Name }}-standalone-override-java-tmp
+          mountPath: /opt/netreveal/standaloneHome/java
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+        - name: {{ .Release.Name }}-standalone-override-conf-wlm
+          mountPath: /opt/netreveal/standaloneHome/conf/wlm
+
+        - name: {{ .Release.Name }}-standalone-override-configuration
+          mountPath: /opt/netreveal/standaloneHome/importExport
+        - name: {{ .Release.Name }}-standalone-override-database
+          mountPath: /opt/netreveal/standaloneHome/database
+        - name: {{ .Release.Name }}-standalone-override
+          mountPath: /opt/netreveal/standaloneHome/overrideState
+        - name: "{{ include "standalone.schema.import.base.config.property.name" . }}"
+          mountPath: /opt/netreveal/standaloneHome/conf/base_config.properties
+          subPath: base_config.properties
+
+      containers:
+
+      ################################################
+      # override-run-post-install-db-scripts
+      ################################################
+      - name: override-run-post-install-db-scripts
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.psqlDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 200
+          runAsGroup: 200
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        command:
+          - sh
+          - -c
+          - |
+            set +x
+            cd /opt/netreveal/standaloneHome/database
+            cp /opt/netreveal/standaloneHome/overrideState/install.sh .
+            USERID='{{ .Values.global.baseConfigProperties.db.postgresql.userid }}'
+            DBSID='{{ .Values.global.baseConfigProperties.db.postgresql.database }}'
+            EXEC_PORT='{{ .Values.global.baseConfigProperties.db.postgresql.port }}'
+            DBHOST='{{ include "db.host" . }}'
+
+            if [ -f /opt/netreveal/standaloneHome/database/fullDbPostInstall.lst ]; then
+              echo "Run DB scripts: fullDbPostInstall.lst"
+              echo ">>>>"
+              cat /opt/netreveal/standaloneHome/database/fullDbPostInstall.lst
+              echo "<<<<"
+              ./install.sh "$USERID" "$PASSW" "$DBSID" "$DBHOST" fullDbPostInstall.lst
+              if grep -wi "ERROR:" *.log; then
+                echo "ERROR: ************Error has been found in the SQL scripts.*********************"
+                echo "ERROR: ************Please fix SQL issues.***************************************"
+                touch /opt/WLM/overrideInitialised.flag
+                exit 10
+              fi
+            else
+              echo "fullDbPostInstall.lst is empty. Nothing to run."
+            fi
+
+            if [ -f /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag ]; then
+              echo "Update /opt/netreveal/standaloneHome/overrideState/overrideList.txt"
+              while read line; do
+                if ! grep -q "${line}" /opt/netreveal/standaloneHome/overrideState/overrideList.txt; then
+                  echo $line >> /opt/netreveal/standaloneHome/overrideState/overrideList.txt
+                fi
+              done < /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag
+              echo ">>>>"
+              cat /opt/netreveal/standaloneHome/overrideState/overrideList.txt
+              echo "<<<<"
+              rm /opt/netreveal/standaloneHome/overrideState/runOverrideDatabase.flag
+            fi
+            touch /opt/WLM/overrideInitialised.flag
+        env:
+        - name: PASSW
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credential-apps-user-cnpg
+              key: password
+
+        volumeMounts:
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+        - name: {{ .Release.Name }}-standalone-override-database
+          mountPath: /opt/netreveal/standaloneHome/database
+        - name: {{ .Release.Name }}-standalone-override
+          mountPath: /opt/netreveal/standaloneHome/overrideState
+
+{{- include "image.pull.secrets" . | nindent 6 }}
+
+      volumes:
+        {{ include "postgres.server.secret-volume" . | nindent 8 }}
+        - name: {{ .Release.Name }}-standalone-override-configuration
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-override-database
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-override-conf-wlm
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-override-java-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-override-data
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-override-logs
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-indexes
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+        - name: {{ .Release.Name }}-standalone-override
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "standalone-override-volume-claim") | quote }}
+        - name: "{{ include "standalone.schema.import.base.config.property.name" . }}"
+          configMap:
+            name: "{{ include "standalone.schema.import.base.config.property.name" . }}"
+            items:
+            - key: base_config.properties
+              path: base_config.properties
+        - name: "{{ include "config.map.saml.script.name" . }}"
+          configMap:
+            name: "{{ include "config.map.saml.script.name" . }}"
+            items:
+            {{- if .Values.global.saml.enabled }}
+            - key: SAML_Enable.sql
+              path: SAML_Enable.sql
+            - key: 00_override_enable_saml.lst
+              path: 00_override_enable_saml.lst
+            {{- else }}
+            - key: SAML_Disable.sql
+              path: SAML_Disable.sql
+            - key: 00_override_disable_saml.lst
+              path: 00_override_disable_saml.lst
+            {{- end }}
+
+  backoffLimit: 0
+{{- end }}

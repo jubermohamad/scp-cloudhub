@@ -1,0 +1,8 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: {{ .Release.Name }}-{{ .Values.global.database.dbMainInstanceName }}-initial-backup
+spec:
+  cluster:
+    name: {{ include "postgresql.service.name" . }}

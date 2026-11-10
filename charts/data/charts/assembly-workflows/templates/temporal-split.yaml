@@ -1,0 +1,833 @@
+{{- if and .Values.infra.enabled (eq .Values.infra.temporal.mode "split") }}
+# =============================================================================
+# Split Temporal: separate frontend/history/matching/worker deployments
+# Replaces the single auto-setup pod for high-throughput scenarios (15+ wf/s)
+# =============================================================================
+---
+# --- Schema migration job (rolls out WITH the release; server pods gate on it via wait-schema init containers) ---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Regular Job, NOT a pre-install hook: hooks run before the chart's
+  # Postgres exists, so a fresh install deadlocked waiting for it (the old
+  # workaround was installing with --no-hooks). As a normal resource it
+  # deploys alongside Postgres and polls until the DB is reachable; the
+  # server Deployments gate on schema readiness via their wait-schema init
+  # containers. Revision suffix sidesteps Job spec immutability on upgrade;
+  # ttlSecondsAfterFinished garbage-collects finished runs.
+  name: {{ include "aw.prefix" . }}-temporal-schema-migrate-r{{ .Release.Revision }}
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 6
+  # 7200, NOT 600: helm4's --wait watcher held this release for its full
+  # 1500s timeout waiting on a Job that had already COMPLETED — the TTL
+  # reaped it before the watcher observed the completion, and from then on
+  # the watcher saw only "status: NotFound". A TTL shorter than the helm
+  # wait fails a working release; 7200 matches the platform convention.
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        # Required by allow-app-same-namespace-ingress, which keys on `app`
+        # Exists at BOTH ends: without it this Job cannot reach Postgres or
+        # Temporal once a policy engine enforces (#2111). It polls in an
+        # `until` loop, so it would hang forever rather than fail.
+        app: assembly-temporal-schema-migrate
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      restartPolicy: OnFailure
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      containers:
+        - name: schema-migrate
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.temporal.adminToolsImage "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ if .Values.infra.postgresTemporal.enabled }}postgres-temporal{{ else }}postgres{{ end }}
+            - name: PGUSER
+              value: assembly
+            - name: PGPASSWORD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              COMMON="--plugin postgres12 --ep $PGHOST -p 5432 -u $PGUSER --pw $PGPASSWORD"
+
+              echo "Waiting for temporal DB to be reachable..."
+              until temporal-sql-tool $COMMON --db temporal \
+                setup-schema -v 0.0 2>/dev/null; do
+                echo "Postgres not ready, retrying in 5s..."
+                sleep 5
+              done
+
+              echo "Running temporal DB schema update..."
+              temporal-sql-tool $COMMON --db temporal \
+                update-schema -d /etc/temporal/schema/postgresql/v12/temporal/versioned
+
+              echo "Setting up visibility schema..."
+              temporal-sql-tool $COMMON --db temporal_visibility \
+                setup-schema -v 0.0 2>/dev/null || true
+
+              echo "Running visibility DB schema update..."
+              temporal-sql-tool $COMMON --db temporal_visibility \
+                update-schema -d /etc/temporal/schema/postgresql/v12/visibility/versioned
+
+              echo "Schema migration complete."
+---
+# --- Table tuning job (uses postgres image for psql access) ---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Regular Job for the same reason as temporal-schema-migrate above; its
+  # poll loop orders it after the migrate job (waits for the executions
+  # table that update-schema creates).
+  name: {{ include "aw.prefix" . }}-temporal-table-tuning-r{{ .Release.Revision }}
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 6
+  # 7200, NOT 300: helm4's --wait watcher held this release for its full
+  # 1500s timeout waiting on a Job that had already COMPLETED — the TTL
+  # reaped it before the watcher observed the completion, and from then on
+  # the watcher saw only "status: NotFound". A TTL shorter than the helm
+  # wait fails a working release; 7200 matches the platform convention.
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        # Required by allow-app-same-namespace-ingress, which keys on `app`
+        # Exists at BOTH ends: without it this Job cannot reach Postgres or
+        # Temporal once a policy engine enforces (#2111). It polls in an
+        # `until` loop, so it would hang forever rather than fail.
+        app: assembly-temporal-table-tuning
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      restartPolicy: OnFailure
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      containers:
+        - name: table-tuning
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgres.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ if .Values.infra.postgresTemporal.enabled }}postgres-temporal{{ else }}postgres{{ end }}
+            - name: PGUSER
+              value: assembly
+            - name: PGPASSWORD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for temporal tables..."
+              until psql -h $PGHOST -U $PGUSER -d temporal -Atqc "SELECT 1 FROM executions LIMIT 1" 2>/dev/null | grep -q 1; do
+                sleep 5
+              done
+              echo "Tuning hot tables for write-heavy workload..."
+              psql -h $PGHOST -U $PGUSER -d temporal \
+                -c "ALTER TABLE executions SET (autovacuum_vacuum_scale_factor=0.01, autovacuum_analyze_scale_factor=0.01, fillfactor=80);" \
+                -c "ALTER TABLE current_executions SET (autovacuum_vacuum_scale_factor=0.01, autovacuum_analyze_scale_factor=0.01, fillfactor=80);" \
+                -c "ALTER TABLE history_node SET (autovacuum_vacuum_scale_factor=0.02, fillfactor=90);" \
+                -c "ALTER TABLE timer_tasks SET (autovacuum_vacuum_scale_factor=0.01, fillfactor=70);" \
+                -c "ALTER TABLE transfer_tasks SET (autovacuum_vacuum_scale_factor=0.01, fillfactor=70);" \
+                -c "ALTER TABLE activity_info_maps SET (autovacuum_vacuum_scale_factor=0.01, fillfactor=80);"
+              echo "Table tuning complete."
+          resources:
+            requests: { memory: 128Mi, cpu: 50m }
+            limits: { memory: 256Mi, cpu: 200m }
+---
+# --- Frontend Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-frontend
+  labels:
+    app: assembly-temporal-frontend
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.infra.temporal.split.frontend.replicas }}
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-temporal-frontend
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+        # #1322: temporal-split-config/temporal-dynamic-config are subPath-mounted (kubelet never
+        # live-refreshes those); neither had a checksum annotation to force a rollout on `helm
+        # upgrade` content changes -- same bug class as #1319/#1321.
+        checksum/temporal-split-config: {{ include (print $.Template.BasePath "/configmap-temporal-split-config.yaml") . | sha256sum }}
+        checksum/temporal-dynamic-config: {{ include (print $.Template.BasePath "/configmap-temporal-dynamic-config.yaml") . | sha256sum }}
+      labels:
+        app: assembly-temporal-frontend
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      # Keep temporal-frontend OFF the postgres-temporal node (preferred). Like history
+      # (below), frontend bin-packs onto the PG node on cold start; with PG + history +
+      # matching + frontend ALL on one D4 infra node it saturates (~3.5/4) and caps
+      # coordination-heavy throughput. Spreading ALL coordination (not just history) off
+      # PG on a >=2-infra-node tier lifted coordination-heavy workloads +54% (5s-sleep
+      # 120k->185k, code-1node +32%, agent +53%; measured 2026-06-14, perf-medium 2x D4).
+      # Preferred (not required) so single-infra tiers still schedule.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: assembly-postgres-temporal }
+                topologyKey: kubernetes.io/hostname
+            # Spread frontend replicas across nodes too (mirrors temporal-history below):
+            # without this, a cold-start burst piles all replicas on the first-Ready node.
+            - weight: 50
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: assembly-temporal-frontend }
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-schema
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgres.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ if .Values.infra.postgresTemporal.enabled }}postgres-temporal{{ else }}postgres{{ end }}
+            - name: PGUSER
+              value: assembly
+            - name: PGPASSWORD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+          # Gates this server pod on the schema-migrate Job having finished BOTH
+          # databases (visibility is migrated last), since the Job now runs
+          # alongside the rollout instead of as a pre-install hook.
+          command: ['/bin/sh', '-c', 'until psql -h $PGHOST -d temporal -Atqc "select 1 from schema_version limit 1" 2>/dev/null | grep -q 1 && psql -h $PGHOST -d temporal_visibility -Atqc "select 1 from schema_version limit 1" 2>/dev/null | grep -q 1; do echo "Waiting for schema..."; sleep 5; done']
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 64Mi, cpu: 100m }
+      containers:
+        - name: {{ include "aw.prefix" . }}-temporal
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.temporal.splitImage "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 7233
+            - containerPort: 8000
+              name: metrics
+          env:
+            - name: SERVICES
+              value: "frontend"
+            - name: TEMPORAL_SERVICES
+              value: "frontend"
+            - name: TEMPORAL_SERVER_CONFIG_FILE_PATH
+              value: "/etc/temporal/config/config_template.yaml"
+            - name: POSTGRES_USER
+              value: "assembly"
+            - name: POSTGRES_PWD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+            # GOMAXPROCS / GOMEMLIMIT — Go runtime sizing.
+            # MUST match each component's resources.limits or Go's scheduler over-commits
+            # OS threads. Default "2"/"900MiB" matches the perf infra 2-CPU split limit.
+            # Override per-component via .Values.infra.temporal.split.{component}.gomaxprocs / .gomemlimit.
+            - name: GOMAXPROCS
+              value: {{ .Values.infra.temporal.split.frontend.gomaxprocs | default "2" | quote }}
+            - name: GOMEMLIMIT
+              value: {{ .Values.infra.temporal.split.frontend.gomemlimit | default "900MiB" | quote }}
+            - name: TEMPORAL_LOG_LEVEL
+              value: "warn"
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/temporal/config
+            - name: dynamic-config
+              mountPath: /etc/temporal/dynamic_config
+          resources:
+            {{- toYaml .Values.infra.temporal.split.frontend.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 7233
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            tcpSocket:
+              port: 7233
+            initialDelaySeconds: 15
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "aw.prefix" . }}-temporal-split-config
+        - name: dynamic-config
+          configMap:
+            name: {{ include "aw.prefix" . }}-temporal-dynamic-config
+            items:
+              - key: docker.yaml
+                path: dynamic_config.yaml
+---
+# --- History Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-history
+  labels:
+    app: assembly-temporal-history
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.infra.temporal.split.history.replicas }}
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-temporal-history
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+        # #1322: temporal-split-config/temporal-dynamic-config are subPath-mounted (kubelet never
+        # live-refreshes those); neither had a checksum annotation to force a rollout on `helm
+        # upgrade` content changes -- same bug class as #1319/#1321.
+        checksum/temporal-split-config: {{ include (print $.Template.BasePath "/configmap-temporal-split-config.yaml") . | sha256sum }}
+        checksum/temporal-dynamic-config: {{ include (print $.Template.BasePath "/configmap-temporal-dynamic-config.yaml") . | sha256sum }}
+      labels:
+        app: assembly-temporal-history
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      # Keep temporal-history OFF the postgres-temporal node and spread it across infra
+      # nodes. Without this the 4 history pods bin-pack onto the PG node (PG 2.2c + 4×history
+      # → ~4.0/4 SATURATED) while the 2nd infra node sits idle (0.1c) → throughput collapses
+      # to ~173k with early congestion-collapse (measured 2026-06-13, perf-high efficient).
+      # Preferred (not required) so single-infra-node tiers (small/medium) still schedule.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: assembly-postgres-temporal }
+                topologyKey: kubernetes.io/hostname
+            - weight: 50
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: assembly-temporal-history }
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-schema
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgres.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ if .Values.infra.postgresTemporal.enabled }}postgres-temporal{{ else }}postgres{{ end }}
+            - name: PGUSER
+              value: assembly
+            - name: PGPASSWORD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+          # Gates this server pod on the schema-migrate Job having finished BOTH
+          # databases (visibility is migrated last), since the Job now runs
+          # alongside the rollout instead of as a pre-install hook.
+          command: ['/bin/sh', '-c', 'until psql -h $PGHOST -d temporal -Atqc "select 1 from schema_version limit 1" 2>/dev/null | grep -q 1 && psql -h $PGHOST -d temporal_visibility -Atqc "select 1 from schema_version limit 1" 2>/dev/null | grep -q 1; do echo "Waiting for schema..."; sleep 5; done']
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 64Mi, cpu: 100m }
+      containers:
+        - name: {{ include "aw.prefix" . }}-temporal
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.temporal.splitImage "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 7234
+            - containerPort: 8000
+              name: metrics
+          env:
+            - name: SERVICES
+              value: "history"
+            - name: TEMPORAL_SERVICES
+              value: "history"
+            - name: TEMPORAL_SERVER_CONFIG_FILE_PATH
+              value: "/etc/temporal/config/config_template.yaml"
+            - name: POSTGRES_USER
+              value: "assembly"
+            - name: POSTGRES_PWD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+            # GOMAXPROCS / GOMEMLIMIT — Go runtime sizing.
+            # MUST match each component's resources.limits or Go's scheduler over-commits
+            # OS threads. Default "2"/"900MiB" matches the perf infra 2-CPU split limit.
+            # Override per-component via .Values.infra.temporal.split.{component}.gomaxprocs / .gomemlimit.
+            - name: GOMAXPROCS
+              value: {{ .Values.infra.temporal.split.history.gomaxprocs | default "2" | quote }}
+            - name: GOMEMLIMIT
+              value: {{ .Values.infra.temporal.split.history.gomemlimit | default "900MiB" | quote }}
+            - name: TEMPORAL_LOG_LEVEL
+              value: "warn"
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/temporal/config
+            - name: dynamic-config
+              mountPath: /etc/temporal/dynamic_config
+          resources:
+            {{- toYaml .Values.infra.temporal.split.history.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 7234
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            tcpSocket:
+              port: 7234
+            initialDelaySeconds: 15
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "aw.prefix" . }}-temporal-split-config
+        - name: dynamic-config
+          configMap:
+            name: {{ include "aw.prefix" . }}-temporal-dynamic-config
+            items:
+              - key: docker.yaml
+                path: dynamic_config.yaml
+---
+# --- Matching Deployment ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-matching
+  labels:
+    app: assembly-temporal-matching
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.infra.temporal.split.matching.replicas }}
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-temporal-matching
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+        # #1322: temporal-split-config/temporal-dynamic-config are subPath-mounted (kubelet never
+        # live-refreshes those); neither had a checksum annotation to force a rollout on `helm
+        # upgrade` content changes -- same bug class as #1319/#1321.
+        checksum/temporal-split-config: {{ include (print $.Template.BasePath "/configmap-temporal-split-config.yaml") . | sha256sum }}
+        checksum/temporal-dynamic-config: {{ include (print $.Template.BasePath "/configmap-temporal-dynamic-config.yaml") . | sha256sum }}
+      labels:
+        app: assembly-temporal-matching
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      # Keep temporal-matching OFF the postgres-temporal node (preferred) — same rationale
+      # as frontend/history above: don't let all coordination bin-pack onto the PG node.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: assembly-postgres-temporal }
+                topologyKey: kubernetes.io/hostname
+            # Spread matching replicas across nodes too (mirrors temporal-history):
+            # without this, a cold-start burst piles all replicas on the first-Ready node.
+            - weight: 50
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: assembly-temporal-matching }
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-schema
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgres.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ if .Values.infra.postgresTemporal.enabled }}postgres-temporal{{ else }}postgres{{ end }}
+            - name: PGUSER
+              value: assembly
+            - name: PGPASSWORD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+          # Gates this server pod on the schema-migrate Job having finished BOTH
+          # databases (visibility is migrated last), since the Job now runs
+          # alongside the rollout instead of as a pre-install hook.
+          command: ['/bin/sh', '-c', 'until psql -h $PGHOST -d temporal -Atqc "select 1 from schema_version limit 1" 2>/dev/null | grep -q 1 && psql -h $PGHOST -d temporal_visibility -Atqc "select 1 from schema_version limit 1" 2>/dev/null | grep -q 1; do echo "Waiting for schema..."; sleep 5; done']
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 64Mi, cpu: 100m }
+      containers:
+        - name: {{ include "aw.prefix" . }}-temporal
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.temporal.splitImage "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 7235
+            - containerPort: 8000
+              name: metrics
+          env:
+            - name: SERVICES
+              value: "matching"
+            - name: TEMPORAL_SERVICES
+              value: "matching"
+            - name: TEMPORAL_SERVER_CONFIG_FILE_PATH
+              value: "/etc/temporal/config/config_template.yaml"
+            - name: POSTGRES_USER
+              value: "assembly"
+            - name: POSTGRES_PWD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+            # GOMAXPROCS / GOMEMLIMIT — Go runtime sizing.
+            # MUST match each component's resources.limits or Go's scheduler over-commits
+            # OS threads. Default "2"/"900MiB" matches the perf infra 2-CPU split limit.
+            # Override per-component via .Values.infra.temporal.split.{component}.gomaxprocs / .gomemlimit.
+            - name: GOMAXPROCS
+              value: {{ .Values.infra.temporal.split.matching.gomaxprocs | default "2" | quote }}
+            - name: GOMEMLIMIT
+              value: {{ .Values.infra.temporal.split.matching.gomemlimit | default "900MiB" | quote }}
+            - name: TEMPORAL_LOG_LEVEL
+              value: "warn"
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/temporal/config
+            - name: dynamic-config
+              mountPath: /etc/temporal/dynamic_config
+          resources:
+            {{- toYaml .Values.infra.temporal.split.matching.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 7235
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            tcpSocket:
+              port: 7235
+            initialDelaySeconds: 15
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "aw.prefix" . }}-temporal-split-config
+        - name: dynamic-config
+          configMap:
+            name: {{ include "aw.prefix" . }}-temporal-dynamic-config
+            items:
+              - key: docker.yaml
+                path: dynamic_config.yaml
+---
+# --- Internal Worker Deployment (Temporal's own system workflows) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-worker
+  labels:
+    app: assembly-temporal-worker
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.infra.temporal.split.worker.replicas }}
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-temporal-worker
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+        # #1322: temporal-split-config/temporal-dynamic-config are subPath-mounted (kubelet never
+        # live-refreshes those); neither had a checksum annotation to force a rollout on `helm
+        # upgrade` content changes -- same bug class as #1319/#1321.
+        checksum/temporal-split-config: {{ include (print $.Template.BasePath "/configmap-temporal-split-config.yaml") . | sha256sum }}
+        checksum/temporal-dynamic-config: {{ include (print $.Template.BasePath "/configmap-temporal-dynamic-config.yaml") . | sha256sum }}
+      labels:
+        app: assembly-temporal-worker
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      initContainers:
+        - name: wait-schema
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgres.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ if .Values.infra.postgresTemporal.enabled }}postgres-temporal{{ else }}postgres{{ end }}
+            - name: PGUSER
+              value: assembly
+            - name: PGPASSWORD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+          # Gates this server pod on the schema-migrate Job having finished BOTH
+          # databases (visibility is migrated last), since the Job now runs
+          # alongside the rollout instead of as a pre-install hook.
+          command: ['/bin/sh', '-c', 'until psql -h $PGHOST -d temporal -Atqc "select 1 from schema_version limit 1" 2>/dev/null | grep -q 1 && psql -h $PGHOST -d temporal_visibility -Atqc "select 1 from schema_version limit 1" 2>/dev/null | grep -q 1; do echo "Waiting for schema..."; sleep 5; done']
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 64Mi, cpu: 100m }
+      containers:
+        - name: {{ include "aw.prefix" . }}-temporal
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.temporal.splitImage "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 8000
+              name: metrics
+          env:
+            - name: SERVICES
+              value: "worker"
+            - name: TEMPORAL_SERVICES
+              value: "worker"
+            - name: TEMPORAL_SERVER_CONFIG_FILE_PATH
+              value: "/etc/temporal/config/config_template.yaml"
+            - name: POSTGRES_USER
+              value: "assembly"
+            - name: POSTGRES_PWD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+            # GOMAXPROCS / GOMEMLIMIT — Go runtime sizing.
+            # MUST match each component's resources.limits or Go's scheduler over-commits
+            # OS threads. Default "2"/"900MiB" matches the perf infra 2-CPU split limit.
+            # Override per-component via .Values.infra.temporal.split.{component}.gomaxprocs / .gomemlimit.
+            - name: GOMAXPROCS
+              value: {{ .Values.infra.temporal.split.worker.gomaxprocs | default "2" | quote }}
+            - name: GOMEMLIMIT
+              value: {{ .Values.infra.temporal.split.worker.gomemlimit | default "900MiB" | quote }}
+            - name: TEMPORAL_LOG_LEVEL
+              value: "warn"
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/temporal/config
+            - name: dynamic-config
+              mountPath: /etc/temporal/dynamic_config
+          resources:
+            {{- toYaml .Values.infra.temporal.split.worker.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "aw.prefix" . }}-temporal-split-config
+        - name: dynamic-config
+          configMap:
+            name: {{ include "aw.prefix" . }}-temporal-dynamic-config
+            items:
+              - key: docker.yaml
+                path: dynamic_config.yaml
+---
+# --- Frontend Service (named "temporal" so workers connect without config change) ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal
+  labels:
+    app: assembly-temporal-frontend
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 7233
+      targetPort: 7233
+  selector:
+    app: assembly-temporal-frontend
+---
+# --- Headless services for membership gossip ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-frontend-headless
+  labels:
+    app: assembly-temporal-frontend
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app: assembly-temporal-frontend
+  ports:
+    - name: grpc
+      port: 7233
+    - name: membership
+      port: 6933
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-history-headless
+  labels:
+    app: assembly-temporal-history
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app: assembly-temporal-history
+  ports:
+    - name: grpc
+      port: 7234
+    - name: membership
+      port: 6934
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-matching-headless
+  labels:
+    app: assembly-temporal-matching
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app: assembly-temporal-matching
+  ports:
+    - name: grpc
+      port: 7235
+    - name: membership
+      port: 6935
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-worker-headless
+  labels:
+    app: assembly-temporal-worker
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app: assembly-temporal-worker
+  ports:
+    - name: membership
+      port: 6939
+---
+# --- Namespace setup (waits for frontend, then creates namespaces) ---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-namespace-setup
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  # 7200, not 300: a TTL shorter than helm's wait deletes a completed Job
+  # while the watcher still needs it, and the release fails as NotFound
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        # Required by allow-app-same-namespace-ingress, which keys on `app`
+        # Exists at BOTH ends: without it this Job cannot reach Postgres or
+        # Temporal once a policy engine enforces (#2111). It polls in an
+        # `until` loop, so it would hang forever rather than fail.
+        app: assembly-temporal-namespace-setup
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      restartPolicy: OnFailure
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      containers:
+        - name: {{ include "aw.prefix" . }}-temporal-namespace-setup
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.temporal.adminToolsImage "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Temporal frontend..."
+              until temporal operator cluster health --address {{ include "aw.prefix" . }}-temporal:7233 >/dev/null 2>&1; do sleep 5; done
+              echo "Temporal frontend reachable, creating namespaces..."
+              retention={{ .Values.infra.temporal.namespaceRetention | quote }}
+              for ns in default {{ .Values.externalInfra.temporal.agentBuilderNamespace }} autonomous-executor sandbox; do
+                if ! temporal operator namespace describe -n $ns --address {{ include "aw.prefix" . }}-temporal:7233 2>/dev/null; then
+                  temporal operator namespace create -n $ns --address {{ include "aw.prefix" . }}-temporal:7233 --retention "$retention"
+                  echo "Created temporal namespace: $ns with retention $retention"
+                else
+                  temporal operator namespace update -n $ns --address {{ include "aw.prefix" . }}-temporal:7233 --retention "$retention"
+                  echo "Updated temporal namespace retention: $ns -> $retention"
+                fi
+              done
+              echo "Temporal namespace setup complete"
+          resources:
+            requests: { memory: 64Mi, cpu: 10m }
+            limits: { memory: 128Mi, cpu: 200m }
+{{- end }}

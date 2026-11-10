@@ -1,0 +1,11 @@
+{{- if .Values.keycloak.realm.json }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "core-api.keycloakRealmConfigMapName" . }}
+  labels:
+    {{- include "core-api.labels" . | nindent 4 }}
+data:
+  SMUI-realm.json: |
+    {{- .Values.keycloak.realm.json | nindent 4 }}
+{{- end }}

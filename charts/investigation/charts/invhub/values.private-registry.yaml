@@ -1,0 +1,217 @@
+---
+# Private cluster image overrides for symphonyfs.azurecr.io.
+#
+# Apply on top of the default values.yaml:
+#   helm upgrade --install invhub ./invhub -f invhub/values.yaml -f invhub/values.private-registry.yaml
+#
+# Create regcred in the install namespace before deploying.
+
+migrations:
+  waitForTlsSecrets:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+api:
+  waitForTlsSecrets:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForMigrations:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+api-for-ui:
+  waitForTlsSecrets:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForMigrations:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+api-data-ingestion:
+  waitForTlsSecrets:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForMigrations:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+event-data-ingestion:
+  waitForTlsSecrets:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForMigrations:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+search-indexing:
+  waitForTlsSecrets:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForMigrations:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+disc-api:
+  waitForTlsSecrets:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+copilot:
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+context-engine:
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+interaction-engine:
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+prompt-engine:
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+copilotv2:
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+copilot-data-adapter:
+  waitForDependencies:
+    image: "symphonyfs.azurecr.io/docker.io/curlimages/curl:8.11.1"
+
+opensearch:
+  imagePullSecrets:
+    - name: "regcred"
+  global:
+    dockerRegistry: "symphonyfs.azurecr.io/docker.io"
+  persistence:
+    image: "library/busybox"
+    imageTag: "latest"
+  sysctlInit:
+    image: "library/busybox"
+    imageTag: "latest"
+
+observability-opensearch:
+  imagePullSecrets:
+    - name: "regcred"
+  global:
+    dockerRegistry: "symphonyfs.azurecr.io/docker.io"
+  persistence:
+    image: "library/busybox"
+    imageTag: "latest"
+  sysctlInit:
+    image: "library/busybox"
+    imageTag: "latest"
+
+kafka-ui:
+  image:
+    registry: "symphonyfs.azurecr.io/ghcr.io"
+  imagePullSecrets:
+    - name: "regcred"
+
+minioop:
+  tenant:
+    image:
+      repository: "symphonyfs.azurecr.io/quay.io/minio/minio"
+    imagePullSecret:
+      name: "regcred"
+  mirror:
+    image:
+      repository: "symphonyfs.azurecr.io/docker.io/rclone/rclone"
+
+cn-postgres:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/cloudnative-pg/postgresql"
+  imagePullSecrets:
+    - name: "regcred"
+
+cn-postgres-invhub:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/cloudnative-pg/postgresql"
+  imagePullSecrets:
+    - name: "regcred"
+
+cn-postgres-transactions:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/cloudnative-pg/postgresql"
+  imagePullSecrets:
+    - name: "regcred"
+
+cn-postgres-copilot:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/cloudnative-pg/postgresql"
+  imagePullSecrets:
+    - name: "regcred"
+
+cn-postgres-copilotv2:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/cloudnative-pg/postgresql"
+  imagePullSecrets:
+    - name: "regcred"
+
+cn-postgres-copilot-data-adapter:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/cloudnative-pg/postgresql"
+  imagePullSecrets:
+    - name: "regcred"
+
+cn-postgres-keycloak:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/cloudnative-pg/postgresql"
+  imagePullSecrets:
+    - name: "regcred"
+
+cn-postgres-langfuse:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/cloudnative-pg/postgresql"
+  imagePullSecrets:
+    - name: "regcred"
+
+cn-postgres-ai-doc-centre:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/cloudnative-pg/postgresql"
+  imagePullSecrets:
+    - name: "regcred"
+
+pgadmin4:
+  global:
+    imageRegistry: "symphonyfs.azurecr.io/docker.io"
+  image:
+    registry: "symphonyfs.azurecr.io/docker.io"
+  imagePullSecrets:
+    - name: "regcred"
+  test:
+    image:
+      registry: "symphonyfs.azurecr.io/docker.io"
+
+fluentd:
+  image:
+    repository: "symphonyfs.azurecr.io/docker.io/fluent/fluentd-kubernetes-daemonset"
+  imagePullSecrets:
+    - name: "regcred"
+
+grafana:
+  image:
+    repository: "symphonyfs.azurecr.io/docker.io/grafana/grafana"
+  testFramework:
+    enabled: false
+
+langfuse:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/langfuse/langfuse"
+  imagePullSecrets:
+    - name: "regcred"
+
+tempo-distributed:
+  global:
+    image:
+      registry: "symphonyfs.azurecr.io/docker.io"
+      pullSecrets:
+        - regcred
+
+tempo-minio:
+  global:
+    imageRegistry: "symphonyfs.azurecr.io/docker.io"

@@ -1,0 +1,35 @@
+# Public-exposure overlay for the perf env — replicates assembly-aks-dev's public + TLS setup.
+# Layer it LAST:  EXTRA_VALUES=helm/assembly-workflows/values-public-perf.yaml ... ./deploy/bootstrap.sh
+#
+# SIZE-AGNOSTIC ONLY. This file is loaded by deploy-public.sh regardless of $SIZE (full/efficient/
+# medium/small) — do NOT add SIZE-specific values here (e.g. worker replica counts tuned for one
+# tier). Anything SIZE-specific silently clobbers whichever tier's `values-prod-perf.yaml` defaults
+# or `SIZE_SETS` --set flags don't happen to override the same key (see values-public-perf-medium-
+# workers.yaml's header for the incident this caused). SIZE-specific overrides belong in a
+# SIZE-suffixed file that deploy-public.sh only wires in for that tier.
+#
+# Exposes APISIX as a public LoadBalancer with an Azure-provisioned hostname + HTTPS.
+# The `azure-dns-label-name` annotation makes Azure auto-allocate the public IP AND give it the DNS
+# name <label>.<region>.cloudapp.azure.com (uksouth here) — no pre-created static IP needed (dev pins
+# a static IP via loadBalancerIP; the label approach is simpler for a fresh env).
+#
+# TLS: cert-manager (self-signed ClusterIssuer) issues the apisix-tls secret. Install cert-manager and
+# apply deploy/public-perf/cert-manager-issuer.yaml — the cert's dnsNames MUST match publicHostname below.
+apisix:
+  service:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/azure-dns-label-name: assembly-workflows-perf
+  tls:
+    enabled: true
+    publicHostname: assembly-workflows-perf.uksouth.cloudapp.azure.com
+
+# The chart default (values.yaml) is codeExecutionTarget: local-nsjail, which HARD-FAILS custom_code
+# on this cluster's code-worker: that pod runs non-root (runAsUser/runAsGroup: 1001), and nsjail
+# cannot build its mount-staging tree under a non-root uid — every value.yaml-sibling env override
+# this to sandbox-service (see values-demo.yaml, values-dev.yaml, values-perf-tierA.yaml,
+# values-prod-perf.yaml); this overlay was the one gap, masked only because the live cluster has a
+# matching out-of-band kubectl patch that a future `deploy-public.sh` re-run would silently undo.
+# NOTE: this key is SIZE-agnostic (every tier needs code-exec to work), unlike replica counts.
+agentsCodeWorker:
+  codeExecutionTarget: sandbox-service

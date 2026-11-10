@@ -1,0 +1,8 @@
+apiVersion: v2
+name: hybrid-manager
+description: >-
+  EDB Hybrid Manager - PostgreSQL cluster management console for database
+  provisioning, backup and DR (CloudHub-vendored deployment wrapper).
+type: application
+version: 1.0.0
+appVersion: "1.0"

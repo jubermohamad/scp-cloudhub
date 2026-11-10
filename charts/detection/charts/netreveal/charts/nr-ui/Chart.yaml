@@ -1,0 +1,7 @@
+apiVersion: v2
+name: nr-ui
+appVersion: "9.4.0.0"
+description: A Helm chart NR UI (Solution 9.4.0.0; Platform 9.4.0.*)
+# netreveal chart version: 1.0.19
+version: 1.0.18
+type: application

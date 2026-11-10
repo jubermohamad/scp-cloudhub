@@ -1,0 +1,323 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+# P10: this chart was a detectionhub SUBCHART; it now renders from `common`.
+# detectionhub's values.yaml supplied a big `minio:` block of defaults that the
+# chart's own values did not carry (ingressAllowList, launch-template config,
+# ...). Those defaults are FOLDED IN here so the chart is self-contained in
+# its new home. Regenerate by deep-merging detectionhub's `minio:` block over
+# the upstream chart values if either is ever updated.
+nameOverride: ''
+fullnameOverride: ''
+clusterDomain: cluster.local
+image:
+  repository: quay.io/minio/minio
+  tag: RELEASE.2025-04-22T22-12-26Z
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+imagePullSecrets: []
+mcImage:
+  repository: quay.io/minio/mc
+  tag: RELEASE.2025-05-21T01-59-54Z
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+mode: standalone
+additionalLabels: {}
+additionalAnnotations: {}
+ignoreChartChecksums: false
+extraArgs: []
+extraVolumes: []
+extraVolumeMounts: []
+extraContainers: []
+minioAPIPort: '9000'
+minioConsolePort: '9001'
+deploymentUpdate:
+  type: RollingUpdate
+  maxUnavailable: 0
+  maxSurge: 100%
+statefulSetUpdate:
+  updateStrategy: RollingUpdate
+priorityClassName: ''
+runtimeClassName: ''
+rootUser: ''
+rootPassword: ''
+existingSecret: ''
+certsPath: /etc/minio/certs/
+configPathmc: /etc/minio/mc/
+mountPath: /export
+bucketRoot: ''
+drivesPerNode: 1
+replicas: 16
+pools: 1
+tls:
+  enabled: false
+  certSecret: ''
+  publicCrt: public.crt
+  privateKey: private.key
+trustedCertsSecret: ''
+persistence:
+  enabled: true
+  annotations: {}
+  existingClaim: ''
+  storageClass: azurefile
+  reclaimPolicy: Retain
+  volumeName: ''
+  accessMode: ReadWriteMany
+  size: 10Gi
+  hostPath: /data/minio
+  subPath: ''
+service:
+  type: ClusterIP
+  clusterIP: null
+  port: 9000
+  nodePort: 32000
+  loadBalancerIP: null
+  externalIPs: []
+  annotations: {}
+  consolePort: 9001
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  labels: {}
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: '0'
+    nginx.ingress.kubernetes.io/enable-cors: 'true'
+    nginx.ingress.kubernetes.io/cors-allow-origin: ''
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: '300'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '300'
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '300'
+  path: /
+  hosts:
+  - ''
+  tls: []
+  className: nginx
+  ingressAllowList:
+    customerIPs: []
+    platformIPs: []
+consoleService:
+  type: ClusterIP
+  clusterIP: null
+  port: '9001'
+  nodePort: 32001
+  loadBalancerIP: null
+  externalIPs: []
+  annotations: {}
+consoleIngress:
+  enabled: false
+  ingressClassName: null
+  labels: {}
+  annotations: {}
+  path: /
+  hosts:
+  - console.minio-example.local
+  tls: []
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+securityContext:
+  enabled: true
+  runAsUser: 0
+  runAsGroup: 0
+  fsGroup: 0
+  fsGroupChangePolicy: OnRootMismatch
+podAnnotations: {}
+podLabels: {}
+resources:
+  requests:
+    memory: 1Gi
+    cpu: 250m
+  limits:
+    memory: 2Gi
+    cpu: 500m
+policies: []
+makePolicyJob:
+  securityContext:
+    enabled: false
+    runAsUser: 1000
+    runAsGroup: 1000
+  resources:
+    requests:
+      memory: 128Mi
+  exitCommand: ''
+users:
+- accessKey: console
+  secretKey: console123
+  policy: consoleAdmin
+makeUserJob:
+  securityContext:
+    enabled: false
+    runAsUser: 1000
+    runAsGroup: 1000
+  resources:
+    requests:
+      memory: 128Mi
+  exitCommand: ''
+svcaccts: []
+makeServiceAccountJob:
+  securityContext:
+    enabled: false
+    runAsUser: 1000
+    runAsGroup: 1000
+  resources:
+    requests:
+      memory: 128Mi
+  exitCommand: ''
+buckets:
+- name: input
+  policy: public
+  purge: false
+- name: modeltemplates
+  policy: public
+  purge: false
+- name: sparktemplates
+  policy: public
+  purge: false
+- name: conf
+  policy: public
+  purge: false
+- name: conftemplates
+  policy: public
+  purge: false
+makeBucketJob:
+  securityContext:
+    enabled: false
+    runAsUser: 1000
+    runAsGroup: 1000
+  resources:
+    requests:
+      memory: 128Mi
+  exitCommand: ''
+customCommands:
+- command: "export fail=0\nif [ $fail -eq 0 ]; then\n  if ls /shared-data/AML/*model*.zip\
+    \ > /dev/null 2>&1; then\n    echo \"Uploading template files to the MinIO bucket...\"\
+    \n    if ${MC} cp -r /shared-data/AML/* myminio/modeltemplates; then\n      echo\
+    \ \"Files successfully uploaded to the MinIO bucket.\"\n    else\n      echo \"\
+    Error: Failed to upload files to the MinIO bucket.\"\n      exit 1\n    fi\n \
+    \ else\n    echo \"No .zip files found in /shared-data to upload.\"\n    exit\
+    \ 1\n  fi\nelse\n  echo \"Skipping file upload due to previous errors.\"\nfi\n"
+- command: "export fail=0\nif [ $fail -eq 0 ]; then\n  if ls /shared-data/RUN_TEMPLATE/*.json\
+    \ > /dev/null 2>&1; then\n    echo \"Uploading run templates to the MinIO bucket...\"\
+    \n    if ${MC} cp /shared-data/RUN_TEMPLATE/*.json myminio/sparktemplates; then\n\
+    \      echo \"Files successfully uploaded to the MinIO bucket.\"\n    else\n \
+    \     echo \"Error: Failed to upload files to the MinIO bucket.\"\n      exit\
+    \ 1\n    fi\n  else\n    echo \"No .json files found in /shared-data to upload.\"\
+    \n    exit 1\n  fi\nelse\n  echo \"Skipping file upload due to previous errors.\"\
+    \nfi\n"
+- command: "export fail=0\nif [ $fail -eq 0 ]; then\n  if ls /shared-data/CONF/*conf*.zip\
+    \ > /dev/null 2>&1; then\n    echo \"Uploading conf templates to the conftemplates\
+    \ bucket...\"\n    if ${MC} cp -r /shared-data/CONF/* myminio/conftemplates; then\n\
+    \      echo \"Conf templates successfully uploaded.\"\n    else\n      echo \"\
+    Error: Failed to upload conf templates.\"\n      exit 1\n    fi\n  else\n    echo\
+    \ \"No conf zip files found to upload.\"\n    exit 1\n  fi\nelse\n  echo \"Skipping\
+    \ conf upload due to previous errors.\"\nfi\n"
+customCommandJob:
+  securityContext:
+    enabled: false
+    runAsUser: 1000
+    runAsGroup: 1000
+  resources:
+    requests:
+      memory: 128Mi
+  exitCommand: ''
+postJob:
+  podAnnotations: {}
+  annotations: {}
+  securityContext:
+    enabled: false
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+environment: null
+extraSecret: null
+oidc:
+  enabled: false
+  configUrl: https://identity-provider-url/.well-known/openid-configuration
+  clientId: minio
+  clientSecret: ''
+  existingClientSecretName: ''
+  existingClientIdKey: ''
+  existingClientSecretKey: ''
+  claimName: policy
+  scopes: openid,profile,email
+  redirectUri: https://console-endpoint-url/oauth_callback
+  claimPrefix: ''
+  comment: ''
+  displayName: ''
+networkPolicy:
+  enabled: false
+  flavor: kubernetes
+  allowExternal: true
+  egressEntities:
+  - kube-apiserver
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+serviceAccount:
+  create: true
+  name: ''
+metrics:
+  serviceMonitor:
+    enabled: false
+    includeNode: false
+    public: true
+    additionalLabels: {}
+    annotations: {}
+    relabelConfigs: {}
+    relabelConfigsCluster: {}
+    namespace: null
+    interval: null
+    scrapeTimeout: null
+etcd:
+  endpoints: []
+  pathPrefix: ''
+  corednsPathPrefix: ''
+  clientCert: ''
+  clientCertKey: ''
+inputBucket: input
+traceMode: false
+smbdTag: 1.0.0
+decisioningTag: 1.0.0
+modeltemplates:
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/dethub-engine-configuration
+    tag: 1.0.0
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+probes:
+  startup:
+    enabled: true
+    type: http
+    httpPath: /minio/health/live
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    successThreshold: 1
+    failureThreshold: 30
+  liveness:
+    enabled: true
+    type: http
+    httpPath: /minio/health/live
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 5
+    successThreshold: 1
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    type: http
+    httpPath: /minio/health/ready
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    successThreshold: 1
+    failureThreshold: 3
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 30

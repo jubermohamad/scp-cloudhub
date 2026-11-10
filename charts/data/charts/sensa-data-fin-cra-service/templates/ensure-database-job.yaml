@@ -1,0 +1,86 @@
+{{- if .Values.ensureDatabase.enabled }}
+# Pre-install/upgrade: make sure the app role + database exist on the shared
+# Postgres instance (owned by the ontology/lens release in another namespace)
+# before fs-cra-svc starts. Idempotent — creates only what's missing, never
+# alters what exists. Admin credentials come from an in-namespace secret
+# (ensureDatabase.adminExistingSecret); the app role/password/database are read
+# from the same secret fs-cra-svc uses (craSvc.postgres.existingSecret:
+# POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB).
+#
+# This does NOT apply the KYC schema (app/schema.sql) — fs-cra-svc's own FastAPI
+# lifespan applies that idempotently on every startup, so there is nothing else
+# to do here once the role/database exist. Mirrors
+# sensa-data-fin-pipeline-service's deploy/helm/templates/ensure-database-job.yaml.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "craService.prefix" . }}-ensure-database
+  labels:
+    app: cra-ensure-database
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  # >= helm wait window: a shorter TTL reaps the completed Job before the
+  # watcher sees it ("status: NotFound" failing a working release)
+  ttlSecondsAfterFinished: 7200
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: cra-ensure-database
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ensure-database
+          image: {{ .Values.ensureDatabase.image }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ .Values.craSvc.postgres.host | quote }}
+            - name: PGPORT
+              value: {{ .Values.craSvc.postgres.port | quote }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ensureDatabase.adminExistingSecret }}
+                  key: {{ .Values.ensureDatabase.adminUserKey }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ensureDatabase.adminExistingSecret }}
+                  key: {{ .Values.ensureDatabase.adminPasswordKey }}
+            - name: APP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.craSvc.postgres.existingSecret }}
+                  key: POSTGRES_USER
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.craSvc.postgres.existingSecret }}
+                  key: POSTGRES_PASSWORD
+            - name: APP_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.craSvc.postgres.existingSecret }}
+                  key: POSTGRES_DB
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              echo "ensuring role '$APP_USER' and database '$APP_DB' on $PGHOST"
+              psql -d postgres -v ON_ERROR_STOP=1 \
+                -v app_user="$APP_USER" -v app_password="$APP_PASSWORD" <<'SQL'
+              SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password')
+              WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_user')
+              \gexec
+              SQL
+              psql -d postgres -v ON_ERROR_STOP=1 \
+                -v app_user="$APP_USER" -v app_db="$APP_DB" <<'SQL'
+              SELECT format('CREATE DATABASE %I OWNER %I', :'app_db', :'app_user')
+              WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'app_db')
+              \gexec
+              SQL
+              echo "done"
+{{- end }}

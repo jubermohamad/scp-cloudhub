@@ -1,0 +1,108 @@
+{{- /*
+IN-TREE ADDITION (not upstream): ensure-portal-catalog.
+
+The upstream chart seeds the catalog from db/portal-catalog.sql, whose rows
+describe the apps that existed when the file was written and whose
+`embed_upstream` FQDNs name ANOTHER cluster's namespaces. This Job makes the
+portal menu THE COMPLETE PLATFORM MAP for *this* installation: one row per real
+product, with the right mode per product —
+
+  * embed      — an in-cluster UI the portal reverse-proxies same-origin
+                 (`embed_upstream`), which is the micro-frontend norm;
+  * literal    — a product with its own public host (`external = true`), taken
+                 from a `${ENV_VAR}` template wherever the pod already carries
+                 the host, so the seed stays portable across environments;
+  * badge      — a product with no embeddable UI (or none yet): `href IS NULL`,
+                 which the portal renders as a badge rather than a link.
+
+Why it lives in THIS chart and not platform-services: platform-services
+provisions INFRASTRUCTURE for other products (roles, databases, buckets) and
+never speaks to a product's own database. These rows are the portal's own
+content, in the portal's own database, reached with the portal's own credential
+(`PORTAL_DATABASE_URL` — one source of truth, the same Secret the app uses).
+
+Ordering: post-install/post-upgrade at weight 5, i.e. after `ensure-db-portal`
+(weight -5, platform-services) and after the chart's schema Job — and it waits
+for the database anyway, so it cannot race them. Idempotent by construction:
+every statement is ON CONFLICT DO UPDATE, so a re-run refreshes the rows, which
+is exactly the upstream seed's semantics.
+
+Switchboard interaction, deliberate: EVERY product gets a row whether or not it
+is installed. A product that is switched off simply shows its badge (its
+`env_gate` env var is absent, or its host is unreachable) instead of vanishing
+from the menu — the same "here is the platform, this part is not turned on"
+behaviour the marketplace shows, and the reason the catalog is data rather than
+code.
+*/}}
+{{- if and .Values.catalog.database.enabled .Values.portalCatalog.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-ensure-portal-catalog" (include "sri-micro-frontend.fullname" .) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "sri-micro-frontend.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ensure-portal-catalog
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    # Jobs are immutable: a stranded one from a failed release blocks the next
+    # apply unless it is deleted before the new one is created.
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.portalCatalog.backoffLimit }}
+  template:
+    metadata:
+      labels: {{- include "sri-micro-frontend.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ensure-portal-catalog
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: seed
+          image: {{ .Values.portalCatalog.image | quote }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGURL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.catalog.database.appExistingSecret | quote }}
+                  key: {{ .Values.catalog.database.appUrlKey | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              # the database is created by ensure-db-portal / the schema Job;
+              # both are hooks too, so wait rather than assume an order
+              i=0
+              until psql "$PGURL" -c 'select 1' >/dev/null 2>&1; do
+                i=$((i+1))
+                [ "$i" -ge {{ .Values.portalCatalog.waitAttempts }} ] && {
+                  echo "portal database not reachable after {{ .Values.portalCatalog.waitAttempts }} attempts"; exit 1; }
+                echo "waiting for the portal database ($i)…"; sleep 5
+              done
+              # the schema may not be loaded yet either (the chart's schema Job
+              # is a pre-phase hook, but a fresh install can race it)
+              i=0
+              until psql "$PGURL" -c 'select 1 from catalog_applications limit 1' >/dev/null 2>&1; do
+                i=$((i+1))
+                [ "$i" -ge {{ .Values.portalCatalog.waitAttempts }} ] && {
+                  echo "catalog schema absent after {{ .Values.portalCatalog.waitAttempts }} attempts — is catalog.database.applySchema on?"; exit 1; }
+                echo "waiting for the catalog schema ($i)…"; sleep 5
+              done
+              # the SQL rides in a ConfigMap rather than a heredoc: a
+              # heredoc terminator inside an indented YAML block scalar is
+              # itself indented, which /bin/sh will never match.
+              psql "$PGURL" -v ON_ERROR_STOP=1 -f /catalog/platform-catalog.sql
+              echo "portal catalog seeded"
+          volumeMounts:
+            - name: catalog
+              mountPath: /catalog
+      volumes:
+        - name: catalog
+          configMap:
+            name: {{ printf "%s-portal-catalog" (include "sri-micro-frontend.fullname" .) | trunc 63 | trimSuffix "-" }}
+{{- end }}

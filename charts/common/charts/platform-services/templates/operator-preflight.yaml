@@ -1,0 +1,184 @@
+{{- /*
+P6(b) — OPERATOR PREFLIGHT (render-time, lookup-based).
+
+common-res installs the cluster-wide operators every product chart depends on
+(cert-manager, CloudNativePG, Strimzi, minio-operator, ingress-nginx,
+reloader). Installing a SECOND copy of a cluster-scoped operator alongside an
+existing one is the failure mode this guards: two controllers reconcile the
+same CRs, CRDs get adopted/overwritten by whichever release applies last, and
+webhooks 409 against each other. None of that is visible until it breaks.
+
+So, per operator (model: cnpg-operator-precheck in charts/common/charts/keycloak):
+
+  enabled=true  + a NON-owned install found  -> FAIL.
+      compatible version   -> "already present and compatible" + the exact
+                              values path to flip so we reuse it instead
+      incompatible version -> FAIL listing found vs required
+  enabled=false + nothing found              -> FAIL (missing dependency)
+  enabled=false + incompatible version found -> FAIL listing found vs required
+
+"NON-owned" = the operator Deployment is not annotated
+meta.helm.sh/release-name=<this release> / release-namespace=<this namespace>,
+i.e. some other release (or a manual install) owns it.
+
+`lookup` returns nothing during offline rendering (helm template / lint /
+package), so everything below is wrapped in a connectivity probe: list all
+CRDs, and if that comes back empty assume no cluster access and skip.
+Escape hatch: preflight.enabled=false.
+*/}}
+{{- if .Values.preflight.enabled }}
+{{- $probe := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "" }}
+{{- if $probe.items }}
+{{- $root := . }}
+{{- range $name, $op := .Values.preflight.operators }}
+{{- if $op.expectedVersion }}
+
+{{- /* ---- locate the operator Deployment among the candidate names ----
+
+     The FIRST candidate is derived from the release name, because that is what
+     these charts actually produce: cert-manager under release `sri` is
+     `sri-cert-manager`, under `sri-common` it is `sri-common-cert-manager`, and
+     under an operators-only release `sri-operators-cert-manager`. A values
+     literal is right for exactly one release name and silently matches NOTHING
+     for every other — and "nothing found" is the branch that PASSES on an
+     install, so the check evaporates without a word. Declared `deployments:`
+     candidates are still searched, for operators installed out of band (a
+     vendor default like cert-manager/cert-manager) and for fixed-name ones
+     (strimzi-cluster-operator, minio-operator).
+  */}}
+{{- $candidates := $op.deployments | default list }}
+{{- if $op.releaseSuffix }}
+{{- $candidates = prepend $candidates (dict "name" (printf "%s-%s" $root.Release.Name $op.releaseSuffix)) }}
+{{- end }}
+{{- $found := dict }}
+{{- range $cand := $candidates }}
+{{- if not $found.obj }}
+{{- $ns := $cand.namespace | default $root.Release.Namespace }}
+{{- $dep := lookup "apps/v1" "Deployment" $ns $cand.name }}
+{{- if $dep }}
+{{- $_ := set $found "obj" $dep }}
+{{- $_ := set $found "ns" $ns }}
+{{- $_ := set $found "name" $cand.name }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /* ---- CRD presence (optional: ingress-nginx and reloader ship none) ---- */}}
+{{- $crdPresent := true }}
+{{- if $op.crd }}
+{{- $crdPresent = not (not (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" $op.crd)) }}
+{{- end }}
+
+{{- $present := and $crdPresent (hasKey $found "obj") }}
+
+{{- /* ---- ownership + version of what we found ---- */}}
+{{- $owned := false }}
+{{- $version := "" }}
+{{- if $present }}
+{{- $ann := ($found.obj.metadata.annotations | default dict) }}
+{{- if and (eq (index $ann "meta.helm.sh/release-name" | default "") $root.Release.Name) (eq (index $ann "meta.helm.sh/release-namespace" | default "") $root.Release.Namespace) }}
+{{- $owned = true }}
+{{- end }}
+{{- /* the named container if it is there, else the first one — an out-of-band
+     install may prefix container names differently than we do */}}
+{{- $img := "" }}
+{{- range $c := $found.obj.spec.template.spec.containers }}
+{{- if and (not $img) $op.container (eq $c.name $op.container) }}
+{{- $img = $c.image }}
+{{- end }}
+{{- end }}
+{{- if not $img }}
+{{- $img = (first $found.obj.spec.template.spec.containers).image }}
+{{- end }}
+{{- /* image ref -> tag: drop any @sha256 digest, take the part after the last ":", drop a leading "v" */}}
+{{- $ref := (splitList "@" $img) | first }}
+{{- $parts := splitList ":" $ref }}
+{{- if gt (len $parts) 1 }}
+{{- $version = (last $parts) | trimPrefix "v" }}
+{{- end }}
+{{- end }}
+
+{{- $compatible := eq $version $op.expectedVersion }}
+{{- $where := printf "%s/%s" ($found.ns | default "-") ($found.name | default "-") }}
+
+{{- if and $op.enabled $present (not $owned) }}
+{{- if $compatible }}
+{{- fail (printf `
+
+PREFLIGHT FAILED (%s): the operator is ALREADY PRESENT AND COMPATIBLE.
+
+  found      %s  version %s  (Deployment %s, owned by another release/install)
+  required   version %s
+
+This release would install a SECOND copy of a cluster-scoped operator on top of
+it — two controllers reconciling the same CRs, and whichever release applies
+last owns the CRDs.
+
+Reuse the existing one instead:
+
+  set %s=false
+
+(and leave the CRDs alone — they belong to the other install). Re-run the
+upgrade afterwards. To skip every preflight check: preflight.enabled=false.
+` $name $name $version $where $op.expectedVersion $op.enabledPath) }}
+{{- else }}
+{{- fail (printf `
+
+PREFLIGHT FAILED (%s): an INCOMPATIBLE install of this operator already exists.
+
+  found      version %s  (Deployment %s, owned by another release/install)
+  required   version %s
+
+Installing our version alongside it would leave two controllers fighting over
+the same CRs and CRDs. Resolve the conflict first — either upgrade the existing
+operator to %s and then set %s=false to reuse it, or remove it so this release
+can install its own.
+
+Expected versions are declared in preflight.operators.<name>.expectedVersion
+(charts/common/charts/platform-services/values.yaml) and documented in
+deploy/sri-dev-centraindia/README.md. To skip every check:
+preflight.enabled=false.
+` $name $version $where $op.expectedVersion $op.expectedVersion $op.enabledPath) }}
+{{- end }}
+{{- end }}
+
+{{- if and (not $op.enabled) (not $present) }}
+{{- $missing := list }}
+{{- if and (ne ($op.crd | default "") "") (not $crdPresent) }}
+{{- $missing = append $missing (printf "CRD %s not found" $op.crd) }}
+{{- end }}
+{{- if not (hasKey $found "obj") }}
+{{- $missing = append $missing (printf "no operator Deployment at any of: %s" (include "platform-services.preflightCandidates" $op)) }}
+{{- end }}
+{{- fail (printf `
+
+PREFLIGHT FAILED (%s): MISSING DEPENDENCY.
+
+%s is disabled, so this release expects the operator to exist already — but:
+
+  %s
+
+Product charts in this release depend on it. Either enable it (%s=true) or
+install it out of band at version %s, then retry.
+To skip every preflight check: preflight.enabled=false.
+` $name $op.enabledPath (join "; " $missing) $op.enabledPath $op.expectedVersion) }}
+{{- end }}
+
+{{- if and (not $op.enabled) $present (not $compatible) }}
+{{- fail (printf `
+
+PREFLIGHT FAILED (%s): the existing operator is an INCOMPATIBLE version.
+
+  found      version %s  (Deployment %s)
+  required   version %s
+
+%s is disabled, so this release reuses that install — but the products here are
+only validated against %s. Upgrade it, or set %s=true to install our own
+version, then retry. To skip every preflight check: preflight.enabled=false.
+` $name (default "unknown" $version) $where $op.expectedVersion $op.enabledPath $op.expectedVersion $op.enabledPath) }}
+{{- end }}
+
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

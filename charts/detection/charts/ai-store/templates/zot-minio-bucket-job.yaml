@@ -1,0 +1,109 @@
+{{- /* in-tree patch: own toggle. Where a PLATFORM provisioner already creates
+     the bucket and the tenant user (SRI: platform-services ensure-minio-<product>)
+     this Job is redundant AND harmful: it authenticates as the tenant user, so if
+     that provisioner has not run yet it retries forever and, being a post-install
+     hook helm WAITS on, it hangs the whole release. In multi-namespace mode the
+     provisioner lives in another release entirely, which makes the ordering
+     circular. Default stays true so a standalone ai-store install is unchanged. */}}
+{{- /* NB: `default true .Values.x` is WRONG for booleans — Helm's `default`
+     treats `false` as empty and hands back the default, so an explicit
+     `enabled: false` is silently ignored. Check for the key instead. */}}
+{{- $bj := .Values.zot.bucketJob | default dict -}}
+{{- $bjEnabled := true -}}
+{{- if hasKey $bj "enabled" }}{{- $bjEnabled = $bj.enabled -}}{{- end }}
+{{- if and (default false .Values.internalServices.zot.enabled) $bjEnabled }}
+{{- $minioVals := .Values.minio | default dict }}
+{{- $mc := index $minioVals "mcImage" | default dict }}
+{{- $mcRepo := index $mc "repository" | default "quay.io/minio/mc" }}
+{{- $mcTag := index $mc "tag" | default "RELEASE.2024-11-21T17-21-54Z" }}
+{{- /* in-tree patch (P5): one endpoint helper for every MinIO consumer, so
+     the bucket can be created on a shared/platform object store */}}
+{{- $minioEndpoint := include "model-store.minioEndpoint" . }}
+{{- $bucket := .Values.zot.s3Bucket | default "zot-oci" }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-zot-minio-bucket
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot-minio-bucket
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    # After MinIO's own post-job (weight -5); before Zot Deployment hook (weight 25).
+    helm.sh/hook-weight: "15"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  # 7200, not 600: a TTL shorter than helm's wait deletes a completed Job
+  # while the watcher still needs it, and the release fails as NotFound
+  ttlSecondsAfterFinished: 7200
+  backoffLimit: 20
+  template:
+    metadata:
+      labels:
+        {{- include "model-store.labels" . | nindent 8 }}
+        app.kubernetes.io/component: zot-minio-bucket
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: mc
+          image: "{{ $mcRepo }}:{{ $mcTag }}"
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: MINIO_ENDPOINT
+              value: {{ $minioEndpoint | quote }}
+            - name: ZOT_BUCKET
+              value: {{ $bucket | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              MC="$(command -v mc 2>/dev/null || echo /usr/bin/mc)"
+              EP="${MINIO_ENDPOINT}"
+              # Same keys as Zot (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in modelhub-secrets).
+              ACCESS="$(tr -d '\n\r' </secrets/aws-access-key-id)"
+              SECRET="$(tr -d '\n\r' </secrets/aws-secret-access-key)"
+              echo "Ensuring MinIO bucket ${ZOT_BUCKET} at ${EP} (mc=${MC})..."
+              ATTEMPTS=0
+              until "${MC}" --insecure alias set myminio "${EP}" "${ACCESS}" "${SECRET}"; do
+                ATTEMPTS=$((ATTEMPTS+1))
+                if [ "$ATTEMPTS" -gt 90 ]; then echo "MinIO unreachable"; exit 1; fi
+                sleep 2
+              done
+              "${MC}" --insecure ls myminio >/dev/null || true
+              if "${MC}" --insecure stat "myminio/${ZOT_BUCKET}" >/dev/null 2>&1; then
+                echo "Bucket ${ZOT_BUCKET} already exists."
+              else
+                echo "Creating bucket ${ZOT_BUCKET}..."
+                "${MC}" --insecure mb "myminio/${ZOT_BUCKET}"
+              fi
+              "${MC}" --insecure stat "myminio/${ZOT_BUCKET}"
+              "${MC}" --insecure anonymous set none "myminio/${ZOT_BUCKET}" || true
+              echo "Bucket ready."
+          volumeMounts:
+            - name: secrets
+              mountPath: /secrets
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ .Values.global.secretName }}
+            items:
+              - key: aws-access-key-id
+                path: aws-access-key-id
+              - key: aws-secret-access-key
+                path: aws-secret-access-key
+{{- end }}

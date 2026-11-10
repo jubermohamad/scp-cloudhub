@@ -1,0 +1,26 @@
+{{- if and .Values.calicoNetworkPolicy.enabled (.Capabilities.APIVersions.Has "crd.projectcalico.org/v1/NetworkPolicy") }}
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "copilot.name" . }}-policy
+  namespace: {{ .Release.Namespace }}
+spec:
+  types:
+    {{- if .Values.calicoNetworkPolicy.ingress }}
+    - Ingress
+    {{- end }}
+    - Egress
+  selector: app.kubernetes.io/name == '{{ include "copilot.name" . }}'
+  {{- if .Values.calicoNetworkPolicy.ingress }}
+  {{- with  .Values.calicoNetworkPolicy.ingress }}
+  ingress:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.calicoNetworkPolicy.egress }}
+  {{- with  .Values.calicoNetworkPolicy.egress }}
+  egress:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+{{- end }}

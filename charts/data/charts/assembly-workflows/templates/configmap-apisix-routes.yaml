@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aw.prefix" . }}-apisix-routes
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+data:
+  # Pure render — no `lookup`, so `helm template` == `helm upgrade`. TLS material
+  # is NEVER inlined here: in mode "apisix" APISIX serves the cert from the
+  # mounted `existingSecret` (see apisix.yaml), and in mode "ingress" the
+  # ingress-nginx controller terminates TLS. `ssls: []` stays empty in both.
+  apisix-routes.yaml: |-
+    {{- tpl (.Files.Get "files/apisix-routes.yaml") . | nindent 4 }}

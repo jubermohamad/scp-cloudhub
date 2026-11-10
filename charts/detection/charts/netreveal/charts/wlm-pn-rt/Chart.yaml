@@ -1,0 +1,7 @@
+apiVersion: v2
+name: wlm-pn-rt
+appVersion: "9.4.0.0"
+description: A Helm chart WLM 24/7 Processing Node RT (Solution 9.4.0.0; Platform 9.4.0.*)
+# netreveal chart version: 1.0.20
+version: 1.0.18
+type: application

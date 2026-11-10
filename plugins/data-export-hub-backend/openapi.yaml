@@ -1,0 +1,1005 @@
+openapi: 3.0.3
+info:
+  title: CloudHub Data Export Hub API
+  version: 1.0.0
+  description: |
+    Control plane for scheduled exports from SymphonyAI product databases across AKS clusters.
+    CloudHub never executes SQL: it stores the catalog, export profiles, destinations and the
+    cluster/agent registries, schedules jobs, and tracks execution. Cluster agents
+    (services/data-export-agent) claim jobs, run read-only extracts and deliver files.
+
+    Served by the Backstage backend under `/api/data-export`.
+
+    **Callers**
+    - Users — Backstage sign-in. Roles from Entra groups:
+      platform admin `CloudHub.DataExport.Admin` (all tenants, catalog, clusters, agents, shared destinations);
+      tenant admin `CloudHub.DataExport.Tenant.<tenant>.Admin` (manage that tenant's exports, destinations, jobs);
+      tenant user `CloudHub.DataExport.Tenant.<tenant>.User` (read that tenant's data).
+      Records outside the caller's tenants return **404**.
+    - Agents — `/agent/*`, Entra access token from the agent's Azure Workload Identity, verified by
+      Backstage `backend.auth.externalAccess` (jwks, subjectPrefix `data-export-agent`). The token
+      subject must match a registered agent whose cluster is not retired.
+    - Scheduler plugin — `/internal/*`, Backstage service token of `plugin:data-export-scheduler`.
+
+    **Lists** accept `page` (0-based), `pageSize` (1–200, default 25), `sortBy` (whitelisted per
+    list; others → 400), `sortOrder` (asc|desc), `search`, and the filters listed per endpoint, and
+    return `{ items, total, page, pageSize }`.
+servers:
+  - url: /api/data-export
+security:
+  - backstageUser: []
+
+components:
+  securitySchemes:
+    backstageUser:
+      type: http
+      scheme: bearer
+      description: Backstage user identity token.
+    agentWorkloadIdentity:
+      type: http
+      scheme: bearer
+      description: Entra access token for the CloudHub API audience, issued to the agent's workload identity.
+    schedulerService:
+      type: http
+      scheme: bearer
+      description: Backstage service token of the data-export-scheduler plugin.
+
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    Page: { name: page, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+    PageSize: { name: pageSize, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 25 } }
+    SortOrder: { name: sortOrder, in: query, schema: { type: string, enum: [asc, desc] } }
+    Search: { name: search, in: query, schema: { type: string, maxLength: 200 } }
+    TenantId: { name: tenantId, in: query, schema: { type: string } }
+    ClusterId: { name: clusterId, in: query, schema: { type: string, format: uuid } }
+    DatasetId: { name: datasetId, in: query, description: Catalog dataset UUID., schema: { type: string, format: uuid } }
+    Environment: { name: environment, in: query, schema: { $ref: '#/components/schemas/Environment' } }
+    From: { name: from, in: query, schema: { type: string, format: date-time } }
+    To: { name: to, in: query, schema: { type: string, format: date-time } }
+
+  responses:
+    BadRequest: { description: Validation failed, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Unauthorized: { description: No valid credentials, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Forbidden: { description: The caller lacks the role this action needs, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    NotFound: { description: Unknown id, or outside the caller's tenants, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+    Conflict: { description: Duplicate, invalid state transition, or resource in use, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        details: { type: array, items: { type: string } }
+    Environment: { type: string, enum: [PRODUCTION, STAGING, SIT, DEVELOPMENT] }
+    Health:
+      type: string
+      enum: [HEALTHY, WARNING, CRITICAL, OFFLINE]
+      description: From heartbeat age — < 5 min HEALTHY (WARNING if the agent reports DEGRADED), 5–10 WARNING, 10–15 CRITICAL, > 15 or never OFFLINE.
+    JobStatus: { type: string, enum: [CREATED, QUEUED, ASSIGNED, RUNNING, UPLOADING, COMPLETED, FAILED, CANCELLED] }
+    PageMeta:
+      type: object
+      required: [total, page, pageSize]
+      properties:
+        total: { type: integer }
+        page: { type: integer }
+        pageSize: { type: integer }
+
+    Me:
+      type: object
+      properties:
+        actor: { type: string }
+        isPlatformAdmin: { type: boolean }
+        tenantAdminOf: { type: array, items: { type: string } }
+        tenantMemberOf: { type: array, items: { type: string } }
+
+    FilterOptions:
+      type: object
+      properties:
+        tenants: { type: array, items: { type: string } }
+        clusters:
+          type: array
+          items: { type: object, properties: { id: { type: string }, clusterName: { type: string }, tenantId: { type: string } } }
+        datasets:
+          type: array
+          items: { type: object, properties: { id: { type: string }, datasetId: { type: string }, displayName: { type: string } } }
+        owners: { type: array, items: { type: string } }
+
+    Dashboard:
+      type: object
+      properties:
+        generatedAt: { type: string, format: date-time }
+        windowDays: { type: integer, description: Window of the "top" widgets. }
+        kpis:
+          type: object
+          properties:
+            healthyClusters: { type: integer }
+            registeredClusters: { type: integer }
+            connectedAgents: { type: integer, description: Heartbeat within 5 minutes. }
+            registeredAgents: { type: integer }
+            configuredExports: { type: integer }
+            runningExports: { type: integer, description: Jobs ASSIGNED, RUNNING or UPLOADING. }
+            queuedJobs: { type: integer, description: Jobs CREATED or QUEUED. }
+            completedJobsToday: { type: integer }
+            failedJobsToday: { type: integer }
+            datasetsPublished: { type: integer }
+            destinationsConfigured: { type: integer }
+            rowsExportedToday: { type: integer }
+            bytesExportedToday: { type: integer }
+        clusterHealth:
+          type: object
+          properties: { HEALTHY: { type: integer }, WARNING: { type: integer }, CRITICAL: { type: integer }, OFFLINE: { type: integer } }
+        executionActivity:
+          type: object
+          properties: { COMPLETED: { type: integer }, RUNNING: { type: integer }, QUEUED: { type: integer }, FAILED: { type: integer } }
+        topDatasets:
+          type: array
+          items:
+            type: object
+            properties: { id: { type: string }, datasetId: { type: string }, displayName: { type: string }, executionCount: { type: integer }, rowsExported: { type: integer } }
+        topTenants:
+          type: array
+          items: { type: object, properties: { tenantId: { type: string }, exports: { type: integer }, bytesExported: { type: integer } } }
+        topDestinations:
+          type: array
+          items: { type: object, properties: { id: { type: string }, name: { type: string }, type: { type: string }, filesDelivered: { type: integer } } }
+        queueDepth:
+          type: array
+          description: Global queue depth samples for 24 hours (platform admins only; empty otherwise).
+          items: { type: object, properties: { capturedAt: { type: string, format: date-time }, value: { type: number } } }
+
+    DatasetColumn:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        type: { type: string }
+        description: { type: string }
+        nullable: { type: boolean }
+        pii: { type: boolean }
+    DatasetFields:
+      type: object
+      properties:
+        displayName: { type: string }
+        businessDescription: { type: string, nullable: true }
+        sourceProduct: { type: string, enum: [NETREVEAL, SRI, AISTORE, EUREKA, SENSAAI_SANCTIONS] }
+        sourceDomain: { type: string, nullable: true }
+        category: { type: string, enum: [ALERTS, CASES, CUSTOMERS, CDD, WORKFLOW, SCREENING, AUDIT, REFERENCE_DATA] }
+        ownerTeam: { type: string, nullable: true }
+        supportEmail: { type: string, format: email, nullable: true }
+        classification: { type: string, enum: [PUBLIC, INTERNAL, CONFIDENTIAL, RESTRICTED] }
+        containsPii: { type: boolean, description: A dataset with PII cannot be PUBLIC. }
+        containsSensitiveData: { type: boolean }
+        estimatedDailyVolume: { type: integer, nullable: true, description: Rows per day. }
+        refreshPattern: { type: string, nullable: true }
+        retentionDays: { type: integer, minimum: 1, maximum: 3650, nullable: true }
+        supportsIncremental: { type: boolean, description: Requires watermarkColumn. }
+        watermarkColumn: { type: string, nullable: true }
+        watermarkStrategy: { type: string, nullable: true }
+        primaryKeys: { type: array, items: { type: string } }
+        sourceTables: { type: array, items: { type: string } }
+        columnMetadata: { type: array, maxItems: 1000, items: { $ref: '#/components/schemas/DatasetColumn' } }
+        sampleSchema: { type: object, nullable: true, additionalProperties: true }
+        sqlTemplate: { type: string, nullable: true, description: A single SELECT or WITH … SELECT. Executed by agents in a read-only session. }
+        dependsOn: { type: array, items: { type: string, format: uuid }, description: Upstream datasets. Cycles are rejected. }
+        enabled: { type: boolean }
+    Dataset:
+      allOf:
+        - $ref: '#/components/schemas/DatasetFields'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            datasetId: { type: string, example: NR_V_CASES }
+            updatedAt: { type: string, format: date-time }
+    DatasetRegistration:
+      allOf:
+        - $ref: '#/components/schemas/DatasetFields'
+        - type: object
+          required: [datasetId, displayName, category]
+          properties:
+            datasetId: { type: string, pattern: '^[A-Z][A-Z0-9_]{1,127}$' }
+    DatasetLineage:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items: { type: object, properties: { id: { type: string }, datasetId: { type: string }, displayName: { type: string }, category: { type: string }, enabled: { type: boolean } } }
+        edges:
+          type: array
+          items: { type: object, properties: { from: { type: string, description: Upstream dataset. }, to: { type: string, description: Dependent dataset. } } }
+
+    Destination:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, description: ADLS_GEN2 or SFTP. Legacy rows may carry other types, which cannot run. }
+        name: { type: string }
+        configuration: { type: object, additionalProperties: { type: string } }
+        enabled: { type: boolean }
+        owner: { type: string, nullable: true }
+        tenantId: { type: string, nullable: true, description: null = shared, platform-managed. Files still go under tenant/<tenant>/. }
+        status: { type: string, enum: [HEALTHY, DEGRADED, FAILED, UNKNOWN], description: Last live check reported by an agent. }
+        lastTestAt: { type: string, format: date-time, nullable: true }
+        lastTestMessage: { type: string, nullable: true }
+        updatedAt: { type: string, format: date-time }
+    DestinationInput:
+      type: object
+      required: [type, name, configuration]
+      properties:
+        type: { type: string, enum: [ADLS_GEN2, SFTP] }
+        name: { type: string, maxLength: 120 }
+        tenantId: { type: string, nullable: true, description: Omit for a shared destination (platform admin only). }
+        owner: { type: string }
+        configuration:
+          type: object
+          additionalProperties: { type: string }
+          description: |
+            ADLS_GEN2 — accountName, fileSystem (default data-export-hub), path (optional prefix). Uses the agent's workload identity.
+            SFTP — host, port (default 22), username, remotePath, secretRef `kv://<vault>/<secret>` (private key in Key Vault),
+            hostKeyFingerprint `SHA256:<base64>` (required; the agent refuses unpinned hosts).
+            Keys that look like credentials (password, token, sasKey, …) are rejected.
+    DestinationTestResult:
+      type: object
+      properties:
+        destinationId: { type: string, nullable: true }
+        status: { type: string, enum: [HEALTHY, DEGRADED, FAILED] }
+        message: { type: string }
+        checkedAt: { type: string, format: date-time }
+
+    ClusterInput:
+      type: object
+      required: [clusterName, environment, tenantId]
+      properties:
+        clusterName: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$' }
+        subscriptionId: { type: string, format: uuid, nullable: true }
+        resourceGroup: { type: string, nullable: true }
+        environment: { $ref: '#/components/schemas/Environment' }
+        region: { type: string, nullable: true }
+        tenantId: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    Cluster:
+      allOf:
+        - $ref: '#/components/schemas/ClusterInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            platformRegistryId: { type: string, nullable: true, description: Set when synced from Platform Registry; such clusters are read-only here. }
+            isRetired: { type: boolean }
+            retiredAt: { type: string, format: date-time, nullable: true }
+            lastSyncedAt: { type: string, format: date-time, nullable: true }
+            health: { $ref: '#/components/schemas/Health' }
+            agentVersion: { type: string, nullable: true }
+            lastHeartbeat: { type: string, format: date-time, nullable: true }
+            agentCount: { type: integer }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    ClusterDetail:
+      allOf:
+        - $ref: '#/components/schemas/Cluster'
+        - type: object
+          properties: { agents: { type: array, items: { $ref: '#/components/schemas/Agent' } } }
+    ClusterSyncResult:
+      type: object
+      properties:
+        created: { type: integer }
+        updated: { type: integer }
+        retired: { type: integer }
+        restored: { type: integer }
+        skipped: { type: array, items: { type: object, properties: { clusterName: { type: string }, reason: { type: string } } } }
+        ranAt: { type: string, format: date-time }
+
+    Agent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        agentName: { type: string, nullable: true }
+        clusterId: { type: string, format: uuid }
+        clusterName: { type: string }
+        tenantId: { type: string }
+        identitySubject: { type: string, description: Entra object id of the agent's workload identity. }
+        agentVersion: { type: string, nullable: true }
+        reportedStatus: { type: string, enum: [ONLINE, DEGRADED, OFFLINE, UNKNOWN] }
+        health: { $ref: '#/components/schemas/Health' }
+        lastSeen: { type: string, format: date-time, nullable: true }
+        capabilities: { type: object, additionalProperties: true }
+        createdAt: { type: string, format: date-time }
+    AgentDetail:
+      allOf:
+        - $ref: '#/components/schemas/Agent'
+        - type: object
+          properties:
+            heartbeats:
+              type: array
+              items: { type: object, properties: { heartbeatTime: { type: string }, status: { type: string }, version: { type: string, nullable: true } } }
+    AgentInput:
+      type: object
+      properties:
+        agentName: { type: string, nullable: true }
+        identitySubject: { type: string, format: uuid }
+
+    ExportInput:
+      type: object
+      required: [name, tenantId, environment, clusterId, schedule, fileFormat, destinationId, datasetIds]
+      description: |
+        Caller must be an admin of tenantId. The cluster must be registered for that tenant and environment and not retired.
+        The destination must be shared or the tenant's own, enabled, ADLS_GEN2 or SFTP. Every dataset must be enabled and have
+        a SQL template; INCREMENTAL also needs supportsIncremental and a watermark column.
+      properties:
+        name: { type: string, maxLength: 120 }
+        tenantId: { type: string }
+        environment: { $ref: '#/components/schemas/Environment' }
+        clusterId: { type: string, format: uuid }
+        namespace: { type: string, nullable: true }
+        schedule: { type: string, enum: [HOURLY, DAILY, WEEKLY, MONTHLY, CUSTOM_CRON], description: Evaluated in UTC. }
+        cronExpression: { type: string, description: Required for CUSTOM_CRON (5 fields). }
+        exportMode: { type: string, enum: [FULL, INCREMENTAL, SNAPSHOT], default: FULL }
+        fileFormat: { type: string, enum: [PARQUET, CSV, TSV, JSON], default: PARQUET }
+        compression: { type: string, enum: [NONE, GZIP, SNAPPY], description: Default SNAPPY for PARQUET, GZIP otherwise. SNAPPY only for PARQUET. }
+        retentionDays: { type: integer, minimum: 1, maximum: 3650, nullable: true }
+        watermarkStrategy: { type: string, enum: [GREATER_THAN, GREATER_OR_EQUAL], nullable: true, description: INCREMENTAL only; default GREATER_THAN. }
+        destinationId: { type: string, format: uuid }
+        datasetIds: { type: array, minItems: 1, maxItems: 50, items: { type: string, format: uuid } }
+        enabled: { type: boolean, default: true }
+    ExportProfile:
+      allOf:
+        - $ref: '#/components/schemas/ExportInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            ownerId: { type: string }
+            createdBy: { type: string, nullable: true }
+            clusterName: { type: string }
+            destinationName: { type: string, nullable: true }
+            destinationType: { type: string, nullable: true }
+            lastRunAt: { type: string, format: date-time, nullable: true }
+            lastRunStatus: { allOf: [{ $ref: '#/components/schemas/JobStatus' }], nullable: true }
+            nextRunAt: { type: string, format: date-time, nullable: true }
+            datasets:
+              type: array
+              items: { type: object, properties: { id: { type: string }, datasetId: { type: string }, displayName: { type: string } } }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+
+    Job:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        profileId: { type: string, format: uuid }
+        exportName: { type: string }
+        tenantId: { type: string }
+        clusterId: { type: string, format: uuid }
+        clusterName: { type: string }
+        datasetId: { type: string, description: Catalog code, e.g. NR_V_CASES. }
+        datasetDisplayName: { type: string }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        trigger: { type: string, enum: [SCHEDULE, MANUAL, RETRY] }
+        priority: { type: integer }
+        scheduledTime: { type: string, format: date-time }
+        assignedTime: { type: string, format: date-time, nullable: true }
+        startedTime: { type: string, format: date-time, nullable: true }
+        completedTime: { type: string, format: date-time, nullable: true }
+        durationSeconds: { type: integer, nullable: true }
+        retryCount: { type: integer }
+        maxRetries: { type: integer }
+        rowsExported: { type: integer, nullable: true }
+        bytesExported: { type: integer, nullable: true }
+        filesDelivered: { type: integer, nullable: true }
+        errorMessage: { type: string, nullable: true }
+        assignedAgentName: { type: string, nullable: true }
+        requestedBy: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    JobDetail:
+      allOf:
+        - $ref: '#/components/schemas/Job'
+        - type: object
+          properties:
+            watermarkFrom: { type: string, nullable: true }
+            watermarkTo: { type: string, nullable: true }
+            outputFiles: { type: array, items: { $ref: '#/components/schemas/DeliveredFile' } }
+            manifest: { type: object, nullable: true, additionalProperties: true }
+            logs: { type: string, nullable: true }
+
+    AuditEvent:
+      type: object
+      properties:
+        id: { type: string }
+        occurredAt: { type: string, format: date-time }
+        actor: { type: string }
+        action: { type: string, example: export.created }
+        entityType: { type: string, enum: [dataset, destination, cluster, agent, export, job, system] }
+        entityId: { type: string, nullable: true }
+        tenantId: { type: string, nullable: true }
+        details: { type: object, additionalProperties: true }
+
+    # ---------- agent protocol (services/data-export-agent/src/protocol.ts) ----------
+    HeartbeatRequest:
+      type: object
+      required: [agentName, version, status]
+      properties:
+        protocolVersion: { type: integer, enum: [1] }
+        agentName: { type: string, maxLength: 255 }
+        version: { type: string, maxLength: 50 }
+        status: { type: string, enum: [ONLINE, DEGRADED] }
+        capabilities: { type: object, additionalProperties: true, description: At most 8 KB. }
+        destinationChecks:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            properties:
+              destinationId: { type: string, format: uuid }
+              status: { type: string, enum: [HEALTHY, FAILED] }
+              message: { type: string }
+              checkedAt: { type: string, format: date-time }
+    HeartbeatResponse:
+      type: object
+      properties:
+        agentId: { type: string }
+        clusterId: { type: string }
+        clusterName: { type: string }
+        tenantId: { type: string }
+        heartbeatIntervalSeconds: { type: integer, example: 60 }
+        pollIntervalSeconds: { type: integer, example: 15 }
+        destinationsToCheck:
+          type: array
+          items: { $ref: '#/components/schemas/DestinationDescriptor' }
+    DestinationDescriptor:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [ADLS_GEN2, SFTP] }
+        configuration: { type: object, additionalProperties: { type: string } }
+    JobSpec:
+      type: object
+      properties:
+        jobId: { type: string }
+        attempt: { type: integer }
+        tenantId: { type: string }
+        scheduledTime: { type: string, format: date-time }
+        profile:
+          type: object
+          properties:
+            id: { type: string }
+            name: { type: string }
+            exportMode: { type: string, enum: [FULL, INCREMENTAL, SNAPSHOT] }
+            fileFormat: { type: string, enum: [PARQUET, CSV, TSV, JSON] }
+            compression: { type: string, enum: [NONE, GZIP, SNAPPY] }
+            retentionDays: { type: integer, nullable: true }
+            watermarkStrategy: { type: string, nullable: true }
+            namespace: { type: string, nullable: true }
+        dataset:
+          type: object
+          properties:
+            id: { type: string }
+            datasetId: { type: string }
+            sqlTemplate: { type: string }
+            watermarkColumn: { type: string, nullable: true }
+            primaryKeys: { type: array, items: { type: string } }
+        watermark: { type: object, properties: { lastSuccessValue: { type: string, nullable: true } } }
+        destination: { $ref: '#/components/schemas/DestinationDescriptor' }
+        outputPrefix: { type: string, example: tenant/metrobank/exports/daily-cases-1a2b3c4d/2026/10/20/5f0c… }
+        profilePrefix: { type: string, example: tenant/metrobank/exports/daily-cases-1a2b3c4d }
+    DeliveredFile:
+      type: object
+      required: [name, path, sizeBytes, sha256]
+      properties:
+        name: { type: string }
+        path: { type: string }
+        sizeBytes: { type: integer }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        records: { type: integer }
+    Manifest:
+      type: object
+      description: Written as manifest.json, last, after the data files and checksum.sha256.
+      properties:
+        manifestVersion: { type: integer, enum: [1] }
+        tenant: { type: string }
+        profile: { type: string }
+        profileId: { type: string }
+        dataset: { type: string }
+        runId: { type: string }
+        attempt: { type: integer }
+        status: { type: string, enum: [COMPLETED] }
+        exportMode: { type: string }
+        format: { type: string }
+        compression: { type: string }
+        records: { type: integer }
+        bytes: { type: integer }
+        watermark: { type: object, properties: { column: { type: string, nullable: true }, from: { type: string, nullable: true }, to: { type: string, nullable: true } } }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        files:
+          type: array
+          items: { type: object, properties: { name: { type: string }, sha256: { type: string }, bytes: { type: integer }, records: { type: integer } } }
+        generatedBy: { type: object, properties: { agent: { type: string }, version: { type: string }, cluster: { type: string } } }
+
+paths:
+  /me:
+    get:
+      summary: Caller identity and roles
+      responses:
+        '200': { description: Caller, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /dashboard:
+    get:
+      summary: Operational dashboard, scoped to the caller's tenants
+      responses:
+        '200': { description: Dashboard, content: { application/json: { schema: { $ref: '#/components/schemas/Dashboard' } } } }
+  /filters:
+    get:
+      summary: Values for filter drop-downs, scoped to the caller
+      responses:
+        '200': { description: Options, content: { application/json: { schema: { $ref: '#/components/schemas/FilterOptions' } } } }
+  /audit:
+    get:
+      summary: Audit trail (platform admins all; tenant admins their tenants; others 403)
+      description: 'sortBy: occurredAt (default desc), action, actor. Filters: tenantId, entityType, from, to.'
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - { name: sortBy, in: query, schema: { type: string, enum: [occurredAt, action, actor] } }
+        - $ref: '#/components/parameters/SortOrder'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/TenantId'
+        - { name: entityType, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: Page of events
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageMeta'
+                  - { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/AuditEvent' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /datasets:
+    get:
+      summary: Data catalog
+      description: 'sortBy: datasetId (default asc), displayName, sourceProduct, category, classification, updatedAt. Filters: sourceProduct, category, classification, status (ENABLED|DISABLED), containsPii (true|false).'
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - { name: sortBy, in: query, schema: { type: string, enum: [datasetId, displayName, sourceProduct, category, classification, updatedAt] } }
+        - $ref: '#/components/parameters/SortOrder'
+        - $ref: '#/components/parameters/Search'
+        - { name: sourceProduct, in: query, schema: { type: string } }
+        - { name: category, in: query, schema: { type: string } }
+        - { name: classification, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [ENABLED, DISABLED] } }
+        - { name: containsPii, in: query, schema: { type: string, enum: ['true', 'false'] } }
+        - { name: supportsIncremental, in: query, schema: { type: string, enum: ['true', 'false'] } }
+        - { name: hasSqlTemplate, in: query, description: Only datasets that can be exported., schema: { type: string, enum: ['true'] } }
+      responses:
+        '200':
+          description: Page of datasets
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageMeta'
+                  - { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Dataset' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    post:
+      summary: Register a dataset (platform admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DatasetRegistration' } } } }
+      responses:
+        '201': { description: Registered, content: { application/json: { schema: { $ref: '#/components/schemas/Dataset' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /datasets/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Dataset detail
+      responses:
+        '200': { description: Dataset, content: { application/json: { schema: { $ref: '#/components/schemas/Dataset' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update catalog fields (platform admin). datasetId cannot change.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DatasetFields' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Dataset' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /datasets/{id}/lineage:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Upstream and downstream dependency graph
+      responses:
+        '200': { description: Lineage, content: { application/json: { schema: { $ref: '#/components/schemas/DatasetLineage' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /destinations:
+    get:
+      summary: Destinations (shared plus the caller's tenants)
+      description: 'sortBy: name (default asc), type, tenantId, status, lastTestAt. Filters: tenantId, status, type.'
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - { name: sortBy, in: query, schema: { type: string, enum: [name, type, tenantId, status, lastTestAt] } }
+        - $ref: '#/components/parameters/SortOrder'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/TenantId'
+        - { name: status, in: query, schema: { type: string } }
+        - { name: type, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Page of destinations
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageMeta'
+                  - { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Destination' } } } }
+    post:
+      summary: Create a destination (tenant admin; platform admin for shared)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/DestinationInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Destination' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /destinations/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Destination detail
+      responses:
+        '200': { description: Destination, content: { application/json: { schema: { $ref: '#/components/schemas/Destination' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Rename, enable or disable, change owner
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { name: { type: string }, enabled: { type: boolean }, owner: { type: string, nullable: true } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Destination' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /destinations/test:
+    post:
+      summary: Validate a destination
+      description: |
+        `{ id }` validates a stored destination and reports its last live check from an agent;
+        `{ type, configuration }` validates an unsaved configuration. Connectivity itself is checked by
+        agents from inside the cluster network (every 15 minutes for destinations in use).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - { type: object, required: [id], properties: { id: { type: string, format: uuid } } }
+                - { type: object, required: [type, configuration], properties: { type: { type: string }, configuration: { type: object } } }
+      responses:
+        '200': { description: Result, content: { application/json: { schema: { $ref: '#/components/schemas/DestinationTestResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /clusters:
+    get:
+      summary: Cluster registry with derived health
+      description: 'sortBy: clusterName (default asc), tenantId, environment, region, health, lastHeartbeat. Filters: tenantId, environment, status (a Health), includeRetired=true.'
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - { name: sortBy, in: query, schema: { type: string, enum: [clusterName, tenantId, environment, region, health, lastHeartbeat] } }
+        - $ref: '#/components/parameters/SortOrder'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/Environment'
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/Health' } }
+        - { name: includeRetired, in: query, schema: { type: string, enum: ['true'] } }
+      responses:
+        '200':
+          description: Page of clusters
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageMeta'
+                  - { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Cluster' } } } }
+    post:
+      summary: Register a cluster manually (platform admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ClusterInput' } } } }
+      responses:
+        '201': { description: Registered, content: { application/json: { schema: { $ref: '#/components/schemas/ClusterDetail' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /clusters/sync:
+    post:
+      summary: Sync clusters from Platform Registry now (platform admin). Also runs every 30 minutes.
+      responses:
+        '200': { description: Result, content: { application/json: { schema: { $ref: '#/components/schemas/ClusterSyncResult' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /clusters/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Cluster detail with agents
+      responses:
+        '200': { description: Cluster, content: { application/json: { schema: { $ref: '#/components/schemas/ClusterDetail' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Update a manually registered cluster (platform admin). Synced clusters return 409.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ClusterInput' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/ClusterDetail' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /clusters/{id}/retire:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Retire a cluster (platform admin). Clusters are never deleted.
+      responses:
+        '200': { description: Retired, content: { application/json: { schema: { $ref: '#/components/schemas/ClusterDetail' } } } }
+  /clusters/{id}/restore:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Return a retired cluster to service (platform admin)
+      responses:
+        '200': { description: Restored, content: { application/json: { schema: { $ref: '#/components/schemas/ClusterDetail' } } } }
+  /clusters/{id}/agents:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Register an agent identity on a cluster (platform admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentInput' } } } }
+      responses:
+        '201': { description: Registered, content: { application/json: { schema: { $ref: '#/components/schemas/Agent' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /agents:
+    get:
+      summary: Agent registry
+      description: 'sortBy: clusterName (default asc), agentName, tenantId, agentVersion, lastSeen, health. Filters: tenantId, clusterId, status (a Health).'
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - { name: sortBy, in: query, schema: { type: string, enum: [clusterName, agentName, tenantId, agentVersion, lastSeen, health] } }
+        - $ref: '#/components/parameters/SortOrder'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ClusterId'
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/Health' } }
+      responses:
+        '200':
+          description: Page of agents
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageMeta'
+                  - { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Agent' } } } }
+  /agents/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Agent detail with recent heartbeats
+      responses:
+        '200': { description: Agent, content: { application/json: { schema: { $ref: '#/components/schemas/AgentDetail' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Rename an agent or change its identity (platform admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/AgentInput' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Agent' } } } }
+    delete:
+      summary: Deregister an agent (platform admin)
+      responses:
+        '204': { description: Removed }
+
+  /exports:
+    get:
+      summary: Export profiles in the caller's tenants
+      description: 'sortBy: name (default asc), tenantId, environment, exportMode, fileFormat, enabled, lastRunAt, createdAt, updatedAt. Filters: tenantId, clusterId, environment, status (ACTIVE|DISABLED), datasetId, ownerId.'
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - { name: sortBy, in: query, schema: { type: string, enum: [name, tenantId, environment, exportMode, fileFormat, enabled, lastRunAt, createdAt, updatedAt] } }
+        - $ref: '#/components/parameters/SortOrder'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ClusterId'
+        - $ref: '#/components/parameters/Environment'
+        - { name: status, in: query, schema: { type: string, enum: [ACTIVE, DISABLED] } }
+        - $ref: '#/components/parameters/DatasetId'
+        - { name: ownerId, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Page of exports
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageMeta'
+                  - { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/ExportProfile' } } } }
+    post:
+      summary: Create an export (tenant admin)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ExportInput' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/ExportProfile' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /exports/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Export detail
+      responses:
+        '200': { description: Export, content: { application/json: { schema: { $ref: '#/components/schemas/ExportProfile' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Replace an export (tenant admin; both tenants when moving)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ExportInput' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/ExportProfile' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      summary: Delete an export and its job history (tenant admin)
+      responses:
+        '204': { description: Deleted }
+  /exports/{id}/enabled:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    put:
+      summary: Enable or disable (tenant admin). Re-enabling never back-fills missed runs.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [enabled], properties: { enabled: { type: boolean } } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/ExportProfile' } } } }
+  /exports/{id}/run:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Queue one high-priority job per dataset now (tenant admin)
+      responses:
+        '202': { description: Jobs queued, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Job' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /jobs:
+    get:
+      summary: Executions in the caller's tenants
+      description: 'sortBy: createdAt (default desc), scheduledTime, startedTime, completedTime, status, rowsExported, bytesExported, durationSeconds, exportName, tenantId. Filters: tenantId, clusterId, status, datasetId, exportId, from, to (createdAt).'
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - { name: sortBy, in: query, schema: { type: string, enum: [createdAt, scheduledTime, startedTime, completedTime, status, rowsExported, bytesExported, durationSeconds, exportName, tenantId] } }
+        - $ref: '#/components/parameters/SortOrder'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/TenantId'
+        - $ref: '#/components/parameters/ClusterId'
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/JobStatus' } }
+        - $ref: '#/components/parameters/DatasetId'
+        - { name: exportId, in: query, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: Page of jobs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PageMeta'
+                  - { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Job' } } } }
+  /jobs/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Job detail with files, manifest and logs
+      responses:
+        '200': { description: Job, content: { application/json: { schema: { $ref: '#/components/schemas/JobDetail' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /jobs/{id}/retry:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Re-queue a FAILED or CANCELLED job (tenant admin)
+      responses:
+        '200': { description: Re-queued, content: { application/json: { schema: { $ref: '#/components/schemas/JobDetail' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /jobs/{id}/cancel:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Cancel an unfinished job (tenant admin). A running agent stops at its next progress report.
+      responses:
+        '200': { description: Cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/JobDetail' } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /jobs/{id}/manifest:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Download the manifest (attachment)
+      responses:
+        '200': { description: Manifest, content: { application/json: { schema: { $ref: '#/components/schemas/Manifest' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /jobs/{id}/logs:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      summary: Download the job log tail (attachment)
+      responses:
+        '200': { description: Log, content: { text/plain: { schema: { type: string } } } }
+
+  /agent/heartbeat:
+    post:
+      summary: Agent heartbeat (every 60 seconds)
+      security: [{ agentWorkloadIdentity: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/HeartbeatRequest' } } } }
+      responses:
+        '200': { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/HeartbeatResponse' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /agent/jobs/claim:
+    post:
+      summary: Claim the next due job for the agent's cluster
+      security: [{ agentWorkloadIdentity: [] }]
+      responses:
+        '200': { description: Assigned, content: { application/json: { schema: { type: object, properties: { job: { $ref: '#/components/schemas/JobSpec' } } } } } }
+        '204': { description: Nothing to do }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /agent/jobs/{id}/progress:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Report progress (ASSIGNED → RUNNING → UPLOADING)
+      security: [{ agentWorkloadIdentity: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [RUNNING, UPLOADING] }
+                rowsExported: { type: integer }
+                bytesExported: { type: integer }
+                message: { type: string }
+      responses:
+        '200': { description: '`continue: false` when the job was cancelled or reassigned', content: { application/json: { schema: { type: object, properties: { continue: { type: boolean } } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /agent/jobs/{id}/complete:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Complete a job; advances the watermark (INCREMENTAL) in the same transaction
+      security: [{ agentWorkloadIdentity: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rowsExported, bytesExported, files, manifest]
+              properties:
+                rowsExported: { type: integer }
+                bytesExported: { type: integer }
+                files: { type: array, minItems: 1, maxItems: 100, items: { $ref: '#/components/schemas/DeliveredFile' } }
+                manifest: { $ref: '#/components/schemas/Manifest' }
+                watermarkValue: { type: string, nullable: true }
+                logs: { type: string, description: Tail, at most 64 KB kept. }
+      responses:
+        '200': { description: Completed }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /agent/jobs/{id}/fail:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    post:
+      summary: Fail a job; retryable failures are re-queued with backoff (2, 4, 8 … min) while attempts remain
+      security: [{ agentWorkloadIdentity: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [errorMessage, retryable]
+              properties:
+                errorMessage: { type: string }
+                retryable: { type: boolean }
+                logs: { type: string }
+      responses:
+        '200': { description: Recorded, content: { application/json: { schema: { type: object, properties: { willRetry: { type: boolean } } } } } }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /internal/clusters/sync:
+    post:
+      summary: Platform Registry sync, triggered by the scheduler plugin every 30 minutes
+      security: [{ schedulerService: [] }]
+      responses:
+        '200': { description: Result, content: { application/json: { schema: { $ref: '#/components/schemas/ClusterSyncResult' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }

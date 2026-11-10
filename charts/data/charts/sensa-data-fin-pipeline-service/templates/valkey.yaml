@@ -1,0 +1,60 @@
+{{- if .Values.valkey.enabled }}
+# Single-node Valkey with AOF persistence — mirrors the kubectl-applied
+# original (StatefulSet name/serviceName/selector/volumeClaimTemplates are
+# all immutable; keep them identical).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-valkey
+  labels:
+    app: valkey
+spec:
+  replicas: 1
+  serviceName: valkey
+  selector:
+    matchLabels:
+      app: valkey
+  template:
+    metadata:
+      labels:
+        app: valkey
+    spec:
+      containers:
+        - name: valkey
+          image: {{ .Values.valkey.image }}
+          imagePullPolicy: IfNotPresent
+          args: ["--appendonly", "yes"]
+          ports:
+            - containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+            timeoutSeconds: 1
+          volumeMounts:
+            - name: valkey-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: valkey-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.valkey.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-valkey
+  labels:
+    app: valkey
+spec:
+  selector:
+    app: valkey
+  ports:
+    - port: 6379
+      targetPort: 6379
+{{- end }}

@@ -1,0 +1,874 @@
+{{- if .Values.infra.enabled }}
+{{- /* Secrets come EXPLICITLY from values (1Password / bootstrap.sh) — no lookup,
+       so helm template == helm upgrade. Empty values fail render-time validation. */ -}}
+{{- /* PER-COMPONENT SWITCH added for the SRI platform: upstream gates every bundled service behind the single `infra.enabled`, so sharing the platform's Postgres/Keycloak/Redis meant giving up the bundled Temporal too — and the platform has no Temporal. Each service now has its own flag, all defaulting to true so upstream behaviour is unchanged. */}}
+{{- /* THE CREDENTIALS SECRET IS NOT THE BUNDLED POSTGRES.
+     It used to be created only `if infra.postgres.enabled`, but assembly-core,
+     the llm-gateway, pgbouncer, temporal and postgres-temporal all read PGUSER
+     and PGPASSWORD from it UNCONDITIONALLY. So the per-component switch that
+     lets an environment share the platform's Postgres — the whole reason those
+     switches were added — produced a namespace where five workloads reference a
+     Secret nothing creates. Kubernetes reports that as
+     CreateContainerConfigError on each pod: containers that never start, while
+     helm reports the release as deployed.
+
+     It now follows `infra.enabled`, and carries whichever credentials the
+     components should present: the bundled Postgres's own when it runs, or the
+     shared server's role when it does not. */}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "aw.postgresSecretName" . }}
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  username: {{ .Values.infra.postgres.username | default "assembly" | quote }}
+  password: {{ .Values.infra.postgres.password | required "infra.postgres.password is required when infra.enabled=true — it is the password the Assembly components present to Postgres, bundled or shared" | quote }}
+---
+{{- if .Values.infra.postgres.enabled }}
+# --- Postgres ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres-pvc
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+  annotations:
+    # Backstop against the infra.enabled foot-gun: if an upgrade renders
+    # without infra (overlay dropped, flag flipped), helm must orphan this
+    # PVC rather than delete the application database with it.
+    "helm.sh/resource-policy": keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.infra.postgres.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.infra.postgres.storage }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres-init-sql
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+data:
+  create_llm_gateway_tables.sql: |
+    {{- .Files.Get "files/create_llm_gateway_tables.sql" | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres
+  labels:
+    app: assembly-postgres
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: assembly-postgres
+  template:
+    metadata:
+      labels:
+        app: assembly-postgres
+        {{- include "aw.infraSingletonSpreadLabel" . | nindent 8 }}
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      {{- include "aw.infraSingletonAntiAffinity" . | nindent 6 }}
+      containers:
+        - name: {{ include "aw.prefix" . }}-postgres
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgres.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          args: ["-c", "max_connections=500", "-c", "shared_buffers=128MB", "-c", "work_mem=4MB"]
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+            - name: POSTGRES_DB
+              value: assembly_db
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+          resources:
+            {{- toYaml .Values.infra.postgres.resources | nindent 12 }}
+          # startupProbe gates liveness until the DB is accepting connections — gives WAL recovery time
+          # on a non-clean PVC. Without it, a DB that needs >45s to recover (dirty WAL after a crash) gets
+          # killed mid-recovery by livenessProbe → crash-loop (observed 2026-06-14, playbook 42 §L).
+          # 30×10s = up to 5m to start; liveness only runs after it passes.
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", "assembly", "-d", "assembly_db"]
+            failureThreshold: 30
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "assembly", "-d", "assembly_db"]
+            initialDelaySeconds: 45
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "assembly", "-d", "assembly_db"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: {{ include "aw.prefix" . }}-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres
+  labels:
+    app: assembly-postgres
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: assembly-postgres
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres-init
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  # TTL must outlast the deploy `--wait` (deploy.yml: --timeout 12m = 720s). This is a
+  # REGULAR, helm-`--wait`-tracked Job (not a hook); a shorter TTL lets it self-delete
+  # while --wait is still polling on a slow rollout -> "Job NotFound, not ready" ->
+  # spurious UPGRADE FAILED + skipped post-upgrade hooks (dev-assembly, 2026-08-05).
+  # See tests/test_bootstrap_job_ttl.py.
+  ttlSecondsAfterFinished: 1800
+  template:
+    metadata:
+      labels:
+        # Required by allow-app-same-namespace-ingress, which keys on `app`
+        # Exists at BOTH ends: without it this Job cannot reach Postgres or
+        # Temporal once a policy engine enforces (#2111). It polls in an
+        # `until` loop, so it would hang forever rather than fail.
+        app: assembly-postgres-init
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      restartPolicy: OnFailure
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      containers:
+        - name: {{ include "aw.prefix" . }}-postgres-init
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgres.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ include "aw.prefix" . }}-postgres
+            - name: PGUSER
+              value: assembly
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+            - name: PGDATABASE
+              value: assembly_db
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Waiting for PostgreSQL..."
+              until pg_isready -h $PGHOST -U $PGUSER; do sleep 2; done
+              echo "PostgreSQL ready."
+              psql -c 'CREATE DATABASE keycloak_db;' || true
+              psql -c 'CREATE DATABASE temporal;' || true
+              psql -c 'CREATE DATABASE temporal_visibility;' || true
+              psql -c 'CREATE DATABASE {{ .Values.infra.postgres.databaseName }};' || true
+              for DB in "$PGDATABASE" keycloak_db {{ .Values.infra.postgres.databaseName }}; do
+                psql -d "$DB" -c 'CREATE EXTENSION IF NOT EXISTS "uuid-ossp";' || true
+              done
+              if [ -f /init-sql/create_llm_gateway_tables.sql ]; then
+                for DB in "$PGDATABASE" {{ .Values.infra.postgres.databaseName }}; do
+                  echo "Applying create_llm_gateway_tables.sql to $DB"
+                  grep -v '^\\c ' /init-sql/create_llm_gateway_tables.sql \
+                    | psql -d "$DB" -v ON_ERROR_STOP=0 || true
+                done
+              fi
+              echo "Init complete."
+          volumeMounts:
+            - name: init-sql
+              mountPath: /init-sql
+          resources:
+            requests: { memory: 64Mi, cpu: 10m }
+            limits: { memory: 128Mi, cpu: 100m }
+      volumes:
+        - name: init-sql
+          configMap:
+            name: {{ include "aw.prefix" . }}-postgres-init-sql
+---
+{{- end }}
+{{- if .Values.infra.redis.enabled }}
+# --- Redis ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-redis
+  labels:
+    app: assembly-redis
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-redis
+  template:
+    metadata:
+      labels:
+        app: assembly-redis
+        {{- include "aw.infraSingletonSpreadLabel" . | nindent 8 }}
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      {{- include "aw.infraSingletonAntiAffinity" . | nindent 6 }}
+      containers:
+        - name: {{ include "aw.prefix" . }}-redis
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.redis.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          {{- with .Values.infra.redis.maxmemory }}
+          args: ["--maxmemory", "{{ . }}", "--maxmemory-policy", "noeviction"]
+          {{- end }}
+          ports:
+            - containerPort: 6379
+          resources:
+            {{- toYaml .Values.infra.redis.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-redis
+  labels:
+    app: assembly-redis
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: 6379
+  selector:
+    app: assembly-redis
+---
+{{- end }}
+{{- if .Values.infra.keycloak.enabled }}
+# --- Keycloak ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aw.prefix" . }}-keycloak-realm
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+data:
+  realm-export.json: |
+    {
+      "id": {{ .Values.externalInfra.keycloak.realm | quote }},
+      "realm": {{ .Values.externalInfra.keycloak.realm | quote }},
+      "displayName": "Assembly Platform",
+      "enabled": true,
+      "sslRequired": "external",
+      "registrationAllowed": false,
+      "registrationEmailAsUsername": true,
+      "rememberMe": true,
+      "verifyEmail": false,
+      "loginWithEmailAllowed": true,
+      "duplicateEmailsAllowed": false,
+      "resetPasswordAllowed": true,
+      "bruteForceProtected": true,
+      "permanentLockout": false,
+      "defaultRoles": ["offline_access", "uma_authorization", "user"],
+      "requiredCredentials": ["password"],
+      "roles": {
+        "realm": [
+          {"name": "user", "description": "Standard user role"},
+          {"name": "admin", "description": "Administrator role"},
+          {"name": "developer", "description": "Developer role"}
+        ]
+      },
+      "clients": [
+        {
+          "clientId": "assembly-platform-backend",
+          "name": "Assembly Platform Backend",
+          "enabled": true,
+          "clientAuthenticatorType": "client-secret",
+          "redirectUris": {{ include "aw.keycloak.seedRedirectUris" . }},
+          "webOrigins": {{ include "aw.keycloak.seedWebOrigins" . }},
+          "publicClient": false,
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": true,
+          "serviceAccountsEnabled": true,
+          "protocol": "openid-connect",
+          "fullScopeAllowed": true
+        },
+        {
+          "clientId": "assembly-platform-frontend",
+          "name": "Assembly Platform Frontend",
+          "enabled": true,
+          "publicClient": true,
+          "redirectUris": {{ include "aw.keycloak.seedRedirectUris" . }},
+          "webOrigins": {{ include "aw.keycloak.seedWebOrigins" . }},
+          "standardFlowEnabled": true,
+          "directAccessGrantsEnabled": true,
+          "frontchannelLogout": true,
+          "protocol": "openid-connect",
+          "attributes": {
+            "pkce.code.challenge.method": "S256",
+            {{/* Keycloak parses post.logout.redirect.uris as a `##`-DELIMITED list
+                 (OIDCAdvancedConfigWrapper joins/splits on "##"). With commas the whole
+                 string is one opaque "URI" that matches nothing, so every logout was
+                 rejected with "Invalid redirect uri" -- confirmed live on dev-assembly.
+                 Verified by GETting the full client via kcadm: `--fields attributes`
+                 misleadingly prints `{}` even when the attribute is set. The `##` join
+                 lives in aw.keycloak.seedPostLogoutRedirectUris, shared with the reconcile
+                 Job (aw.keycloak.frontendClientPatchJson) so both stay consistent. */}}
+            "post.logout.redirect.uris": {{ include "aw.keycloak.seedPostLogoutRedirectUris" . | toJson }}
+          },
+          "fullScopeAllowed": true
+        }{{- if .Values.infra.keycloak.flowsIntegration.enabled }},
+        {{ include "aw.keycloak.flowsClientJson" . }}
+        {{- end }}
+      ],
+      "users": [
+        {
+          "username": "admin@assembly.dev",
+          "email": "admin@assembly.dev",
+          "emailVerified": true,
+          "firstName": "Admin",
+          "lastName": "User",
+          "enabled": true,
+          "realmRoles": ["admin", "user"],
+          "credentials": [{"type": "password", "value": {{ .Values.secrets.bootstrapAdminPassword | default "assembly-admin-rotateme" | quote }}, "temporary": false}]
+        }{{- if .Values.infra.keycloak.flowsIntegration.enabled }},
+        {{- /* withPassword=false: never embed the flows service-user password in this
+               realm-import JSON — it is a ConfigMap (plaintext, broadly readable) and
+               is redundant, since the keycloak-flows-integration Job seeds the password
+               via `kcadm set-password` (from a secretKeyRef) and adds the realm role
+               after import. Keeps the credential out of the ConfigMap. */}}
+        {{ include "aw.keycloak.flowsUserJson" (dict "ctx" $ "withPassword" false) }}
+        {{- end }}
+      ]
+    }
+---
+{{- end }}
+{{- /* THE KEYCLOAK CREDENTIAL, OUTSIDE THE BUNDLED-KEYCLOAK GATE — same fault as
+     postgres-secret, one component along. assembly-core and the flows-integration
+     Job read admin-password from this Secret UNCONDITIONALLY, while it was created
+     only `if infra.keycloak.enabled`. So an environment sharing the platform's
+     Keycloak (which is the point of the per-component switch) got
+
+       Error: secret "keycloak-secret" not found
+
+     on every assembly-core pod: a container that never starts, under a release
+     helm calls deployed. The password is whichever admin the components should
+     authenticate AS — the bundled Keycloak's own, or the shared one's. */}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "aw.prefix" . }}-keycloak-secret
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  admin-password: {{ .Values.infra.keycloak.adminPassword | default "changeme" | quote }}
+  {{- if .Values.infra.keycloak.flowsIntegration.enabled }}
+  # Shared ROPC contract with InvHub's `flows` Secret; the Job reads THIS key.
+  invhub-service-user-password: {{ .Values.secrets.invhubServiceUserPassword | quote }}
+  {{- end }}
+---
+{{- if .Values.infra.keycloak.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-keycloak
+  labels:
+    app: assembly-keycloak
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-keycloak
+  template:
+    metadata:
+      labels:
+        app: assembly-keycloak
+        {{- include "aw.infraSingletonSpreadLabel" . | nindent 8 }}
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      {{- include "aw.infraSingletonAntiAffinity" . | nindent 6 }}
+      initContainers:
+        - name: wait-for-keycloak-db
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgres.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ include "aw.prefix" . }}-postgres
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+          command: ["/bin/sh", "-c", "until psql -h $PGHOST -U $PGUSER -d keycloak_db -c 'SELECT 1' >/dev/null 2>&1; do echo 'waiting for keycloak_db...'; sleep 3; done"]
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 64Mi, cpu: 100m }
+      containers:
+        - name: {{ include "aw.prefix" . }}-keycloak
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.keycloak.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          args: ["start", "--import-realm"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: KEYCLOAK_ADMIN
+              value: admin
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.prefix" . }}-keycloak-secret
+                  key: admin-password
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: jdbc:postgresql://{{ include "aw.prefix" . }}-postgres:5432/keycloak_db
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: username
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            - name: KC_HOSTNAME_STRICT_HTTPS
+              value: "false"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_PROXY
+              value: edge
+          resources:
+            {{- toYaml .Values.infra.keycloak.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 90
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          volumeMounts:
+            - name: realm-config
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+      volumes:
+        - name: realm-config
+          configMap:
+            name: {{ include "aw.prefix" . }}-keycloak-realm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-keycloak
+  labels:
+    app: assembly-keycloak
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8091
+      targetPort: 8080
+  selector:
+    app: assembly-keycloak
+{{- end }}
+{{- if .Values.infra.temporal.enabled }}
+# --- Dedicated Temporal PG (optional, improves throughput ~60%) ---
+{{- if .Values.infra.postgresTemporal.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres-temporal-init
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+data:
+  create-visibility-db.sql: |
+    SELECT 'CREATE DATABASE temporal_visibility'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'temporal_visibility')\gexec
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres-temporal-pvc
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+  annotations:
+    # Same backstop as postgres-pvc: workflow histories survive an upgrade
+    # that renders without infra. Also protects the immutable
+    # numHistoryShards value frozen in this database.
+    "helm.sh/resource-policy": keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.infra.postgresTemporal.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.infra.postgresTemporal.storage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres-temporal
+  labels:
+    app: assembly-postgres-temporal
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: assembly-postgres-temporal
+  template:
+    metadata:
+      labels:
+        app: assembly-postgres-temporal
+        {{- include "aw.infraSingletonSpreadLabel" . | nindent 8 }}
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      {{- include "aw.pgTemporalScheduling" . | nindent 6 }}
+      {{- include "aw.infraSingletonAntiAffinity" . | nindent 6 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "aw.prefix" . }}-postgres-temporal-pvc
+        - name: init-visibility
+          configMap:
+            name: {{ include "aw.prefix" . }}-postgres-temporal-init
+      containers:
+        - name: {{ include "aw.prefix" . }}-postgres
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgresTemporal.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 5432
+          args:
+            - "-c"
+            - "shared_buffers={{ .Values.infra.postgresTemporal.sharedBuffers | default "2GB" }}"
+            {{- if .Values.infra.postgresTemporal.pgStatStatements }}
+            # Query attribution for perf windows (CREATE EXTENSION afterwards).
+            - "-c"
+            - "shared_preload_libraries=pg_stat_statements"
+            {{- end }}
+            - "-c"
+            - "synchronous_commit={{ if .Values.infra.postgresTemporal.syncCommitOff }}off{{ else }}on{{ end }}"
+            - "-c"
+            - "max_wal_size={{ .Values.infra.postgresTemporal.maxWalSize | default "4GB" }}"
+            - "-c"
+            - "checkpoint_timeout=600"
+            - "-c"
+            - "wal_buffers=64MB"
+            - "-c"
+            - "effective_cache_size={{ .Values.infra.postgresTemporal.effectiveCacheSize | default (ternary "24GB" "3GB" .Values.infra.postgresTemporal.enabled) }}"
+            - "-c"
+            - "random_page_cost=1.1"
+            - "-c"
+            - "max_connections=800"
+            - "-c"
+            - "checkpoint_completion_target=0.9"
+            - "-c"
+            - "autovacuum_naptime=5s"
+            - "-c"
+            - "autovacuum_max_workers=6"
+            - "-c"
+            - "autovacuum_vacuum_cost_delay=0"
+            - "-c"
+            - "work_mem={{ .Values.infra.postgresTemporal.workMem | default "16MB" }}"
+            - "-c"
+            - "maintenance_work_mem=256MB"
+            - "-c"
+            - "effective_io_concurrency=200"
+            - "-c"
+            - "wal_writer_delay=10ms"
+            - "-c"
+            - "commit_delay=100"
+            - "-c"
+            - "commit_siblings=5"
+            # bgwriter — aggressive flushing to prevent backend-driven buffer writes under
+            # high-concurrency write bursts. Verified: cuts sleep5 500-concurrent P95 70s → 19s.
+            - "-c"
+            - "bgwriter_lru_maxpages={{ .Values.infra.postgresTemporal.bgwriterLruMaxpages | default 100 }}"
+            - "-c"
+            - "bgwriter_delay={{ .Values.infra.postgresTemporal.bgwriterDelay | default "200ms" }}"
+            - "-c"
+            - "bgwriter_lru_multiplier={{ .Values.infra.postgresTemporal.bgwriterLruMultiplier | default "2.0" }}"
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: username
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+            - name: POSTGRES_DB
+              value: temporal
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init-visibility
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            {{- toYaml .Values.infra.postgresTemporal.resources | nindent 12 }}
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "assembly"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres-temporal
+  labels:
+    app: assembly-postgres-temporal
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:
+    app: assembly-postgres-temporal
+{{- end }}
+---
+{{- if ne .Values.infra.temporal.mode "split" }}
+---
+# --- Temporal (auto-setup single-process mode) ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal
+  labels:
+    app: assembly-temporal
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-temporal
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+        # #1322: temporal-dynamic-config is subPath-mounted (kubelet never live-refreshes those)
+        # and had no checksum annotation to force a rollout when its content changes via `helm
+        # upgrade` -- same bug class as #1319/#1321.
+        checksum/temporal-dynamic-config: {{ include (print $.Template.BasePath "/configmap-temporal-dynamic-config.yaml") . | sha256sum }}
+      labels:
+        app: assembly-temporal
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      volumes:
+        - name: dynamic-config
+          configMap:
+            name: {{ include "aw.prefix" . }}-temporal-dynamic-config
+      containers:
+        - name: {{ include "aw.prefix" . }}-temporal
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.temporal.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 7233
+            - containerPort: 8000
+              name: metrics
+          env:
+            # Tier-2 §2.4: auto-setup wires this into
+            # global.metrics.prometheus.listenAddress.
+            - name: PROMETHEUS_ENDPOINT
+              value: "0.0.0.0:8000"
+            - name: DB
+              value: postgres12
+            - name: POSTGRES_SEEDS
+              value: {{ if .Values.infra.postgresTemporal.enabled }}{{ include "aw.prefix" . }}-postgres-temporal{{ else }}{{ include "aw.prefix" . }}-postgres{{ end }}
+            - name: DB_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: username
+            - name: POSTGRES_PWD
+              {{- if .Values.infra.postgresTemporal.enabled }}
+              value: {{ .Values.infra.postgresTemporal.password | default .Values.infra.postgres.password | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+              {{- end }}
+            - name: NUM_HISTORY_SHARDS
+              value: {{ .Values.infra.temporal.numHistoryShards | quote }}
+            - name: DYNAMIC_CONFIG_FILE_PATH
+              value: /etc/temporal/config/dynamicconfig/docker.yaml
+            {{- if .Values.infra.postgresTemporal.enabled }}
+            - name: VISIBILITY_DBNAME
+              value: temporal_visibility
+            - name: DBNAME
+              value: temporal
+            {{- end }}
+            {{- if .Values.infra.temporal.gomaxprocs }}
+            - name: GOMAXPROCS
+              value: {{ .Values.infra.temporal.gomaxprocs | quote }}
+            {{- end }}
+            # Without this the Go runtime doesn't target the container's cgroup memory limit and
+            # lets the heap grow more liberally under sustained load (relying only on default GC
+            # heuristics) — the same growth pattern that caused a documented OOM on split-mode
+            # Temporal history pods (see values-prod-perf.yaml's split.history.gomemlimit comment),
+            # which is why that path already sets this. This single-process auto-setup deployment
+            # never had the equivalent fix (#1280): a sustained load test on assembly-perf-small
+            # showed steady, non-plateauing growth (268MB->1080MB over ~17.5min against a 2Gi
+            # limit) with no sign of leveling off. Default sized to ~88% of the chart-default 2Gi
+            # limit (same ratio as split-mode's history: 3600MiB/4Gi) — override via
+            # infra.temporal.gomemlimit if you raise infra.temporal.resources.limits.memory.
+            - name: GOMEMLIMIT
+              value: {{ .Values.infra.temporal.gomemlimit | default "1800MiB" | quote }}
+            {{- with .Values.infra.temporal.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.infra.temporal.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 7233
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: 7233
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          volumeMounts:
+            - name: dynamic-config
+              mountPath: /etc/temporal/config/dynamicconfig/docker.yaml
+              subPath: docker.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal
+  labels:
+    app: assembly-temporal
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 7233
+      targetPort: 7233
+  selector:
+    app: assembly-temporal
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-namespace-setup
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  backoffLimit: 6
+  # TTL must outlast the deploy `--wait` (see postgres-init above): a REGULAR,
+  # helm-`--wait`-tracked Job whose 300s TTL fired mid-wait on a slow rollout and
+  # spuriously failed the upgrade (dev-assembly, 2026-08-05). tests/test_bootstrap_job_ttl.py.
+  ttlSecondsAfterFinished: 1800
+  template:
+    metadata:
+      labels:
+        # Required by allow-app-same-namespace-ingress, which keys on `app`
+        # Exists at BOTH ends: without it this Job cannot reach Postgres or
+        # Temporal once a policy engine enforces (#2111). It polls in an
+        # `until` loop, so it would hang forever rather than fail.
+        app: assembly-temporal-namespace-setup
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      restartPolicy: OnFailure
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      containers:
+        - name: {{ include "aw.prefix" . }}-temporal-namespace-setup
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.temporal.adminToolsImage "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Temporal..."
+              until temporal operator namespace describe -n default --address {{ include "aw.prefix" . }}-temporal:7233 >/dev/null 2>&1; do sleep 5; done
+              retention={{ .Values.infra.temporal.namespaceRetention | quote }}
+              for ns in {{ .Values.externalInfra.temporal.agentBuilderNamespace }} autonomous-executor sandbox; do
+                if ! temporal operator namespace describe -n $ns --address {{ include "aw.prefix" . }}-temporal:7233 2>/dev/null; then
+                  temporal operator namespace create -n $ns --address {{ include "aw.prefix" . }}-temporal:7233 --retention "$retention"
+                  echo "Created temporal namespace: $ns with retention $retention"
+                else
+                  temporal operator namespace update -n $ns --address {{ include "aw.prefix" . }}-temporal:7233 --retention "$retention"
+                  echo "Updated temporal namespace retention: $ns -> $retention"
+                fi
+              done
+              echo "Temporal namespace setup complete"
+          resources:
+            requests: { memory: 64Mi, cpu: 10m }
+            limits: { memory: 128Mi, cpu: 200m }
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,75 @@
+# Render the registry pull secrets (global.pullSecrets) in this release?
+# false only where ANOTHER chart in the SAME release already renders them
+# — i.e. the umbrella, where all four domains share one release.
+pullSecrets:
+  render: true
+
+common-res:
+  enabled: true
+
+  # ── NAMING, Tier 3: `sri-operator-<name>`, NO env token ──────────────────
+  # docs/ARCHITECTURE.md "Resource naming standard". Operators are
+  # cluster-scoped singletons — one per CLUSTER, whatever environment is
+  # installed on it — so unlike every product component they carry no <env>,
+  # and unlike every platform service they must NOT follow the release name.
+  #
+  # This is why the names live HERE, in the domain chart, and not in
+  # deploy/<env>/values.yaml where the rest of the migration's names sit: the
+  # operators layer is installed from charts/common as its OWN release
+  # (`{prefix}-operators`, see provisioner/release-sri/products/operators/),
+  # so a deploy-values entry would reach only the umbrella. A name with no
+  # environment in it belongs to the chart anyway.
+  #
+  # Four of the six are reachable this way. The other two are NOT, and are
+  # standing exceptions rather than backlog (docs/NAMING-MIGRATION.md §4,
+  # Risks #4 and #5): strimzi-cluster-operator's Deployment name is a literal
+  # in the vendored chart's template, and the MinIO Operator's
+  # `minio-operator`/`operator`/`console` objects are literals too — that chart
+  # ships fullname helpers and then never calls them.
+  #
+  # ⚠️ The operator preflight matches by DEPLOYMENT NAME. Its candidate list
+  # (charts/common/charts/platform-services/values.yaml) and the two
+  # installation-configs carry these same names, and its first candidate is
+  # derived from the RELEASE name — which a fullnameOverride deliberately
+  # stops matching. All of those moved in the same commit as this.
+  cert-manager:
+    fullnameOverride: sri-operator-cert-manager
+  cloudnative-pg:
+    fullnameOverride: sri-operator-cloudnative-pg
+  ingress-nginx:
+    # the chart appends the component: `-controller`, `-controller-admission`,
+    # `-controller-metrics`, and the admission webhook `-admission`
+    fullnameOverride: sri-operator-ingress-nginx
+  reloader:
+    fullnameOverride: sri-operator-reloader
+  # Moved in beside the other five (USER: "all opertore fromm common-rse"). It
+  # was a dependency of the PARENT chart, which in the two-release split meant
+  # the product release installed it — see charts/common-res/Chart.yaml.
+  #
+  # HISTORY, because the warning this override replaces is still true: it used to
+  # read `dethub-spark-operator` and was marked "deliberate, do not tidy", on the
+  # grounds that created ServiceAccounts and webhook configuration names derive
+  # from it. Both facts still hold; what changed is that they were checked rather
+  # than assumed:
+  #   * the ServiceAccount that SparkApplication run templates in the
+  #     `sparktemplates` bucket name VERBATIM is `spark-operator-manipulator`,
+  #     which detectionhub's own chart renders and this does NOT touch. The
+  #     chart's own derived job SA had no consumer anywhere in the repo, so it is
+  #     pinned to a readable name below rather than left as
+  #     `sri-operator-spark-spark`.
+  #   * the webhook configuration name IS load-bearing — it is the delete target
+  #     of platform-services' webhookEnforcerOptOut, and a miss there does not
+  #     fail loudly, it silently reintroduces the AKS admissionsenforcer conflict.
+  spark-operator:
+    fullnameOverride: sri-operator-spark
+    spark:
+      serviceAccount:
+        # the ServiceAccount spark JOBS run as, created in every
+        # `spark.jobNamespaces`. Pinned because the chart would otherwise derive
+        # `<fullname>-spark` — `sri-operator-spark-spark`.
+        name: sri-operator-spark-jobs
+
+sri-micro-frontend:
+  enabled: true
+keycloak:
+  enabled: true

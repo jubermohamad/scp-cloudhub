@@ -1,0 +1,55 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  labels:
+    {{- $name := .Values.global.kafkaClusterName | default .Values.name }}
+    strimzi.io/cluster: {{ required "Cluster name should be provided with .Values.name" $name }}
+    {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 4 }}
+spec:
+  template:
+    pod:
+      {{- include "detectionhub.imagePullSecrets" . | indent 6 }}
+  replicas: {{ .Values.replicas }}
+  template:
+    pod:
+      metadata:
+        labels:
+          {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 10 }}
+  roles:
+    - controller
+    - broker
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: {{ .Values.kafka.storage.size }}
+        deleteClaim: {{ .Values.kafka.storage.deleteClaim | default false}}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  {{- $name := .Values.global.kafkaClusterName | default .Values.name }}
+  name: {{ required "Cluster name should be provided with .Values.name" $name }}
+  labels:
+  {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 4 }}
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    version: {{ .Values.kafka.version }}
+    listeners:
+      {{- range .Values.kafka.listeners }}
+      - name: {{ .name }}
+        port: {{ .port }}
+        type: {{ .type }}
+        tls: {{ .tls }}
+        {{- if .networkPolicyPeers }}
+        networkPolicyPeers:
+          {{ .networkPolicyPeers | toYaml | nindent 10 }}
+        {{- end }}
+      {{- end }}
+    config:
+      {{- toYaml .Values.kafka.config | nindent 6 }}

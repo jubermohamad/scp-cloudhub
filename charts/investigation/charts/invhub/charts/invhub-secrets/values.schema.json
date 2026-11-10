@@ -1,0 +1,127 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "copilotv2": {
+            "type": "object",
+            "properties": {
+                "copilot": {
+                    "type": "object",
+                    "properties": {
+                        "dbname": {
+                            "type": "string"
+                        },
+                        "host": {
+                            "type": "string"
+                        },
+                        "port": {
+                            "type": "string"
+                        },
+                        "username": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "copilotDataAdapter": {
+                    "type": "object",
+                    "properties": {
+                        "dbname": {
+                            "type": "string"
+                        },
+                        "host": {
+                            "type": "string"
+                        },
+                        "port": {
+                            "type": "string"
+                        },
+                        "username": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "global": {
+            "type": "object",
+            "properties": {
+                "COPILOT_DB_HOST": {
+                    "type": "string"
+                },
+                "COPILOT_DB_SSLMODE": {
+                    "type": "string"
+                },
+                "COPILOT_DB_SSLROOTCERT": {
+                    "type": "string"
+                },
+                "COPILOT_DB_TYPE": {
+                    "type": "string"
+                },
+                "COPILOT_DB_USER": {
+                    "type": "string"
+                },
+                "DB_HOST": {
+                    "type": "string"
+                },
+                "DB_NAME": {
+                    "type": "string"
+                },
+                "DB_PORT": {
+                    "type": "string"
+                },
+                "DB_SSLMODE": {
+                    "type": "string"
+                },
+                "DB_SSLROOTCERT": {
+                    "type": "string"
+                },
+                "DB_TYPE": {
+                    "type": "string"
+                },
+                "DB_USER": {
+                    "type": "string"
+                },
+                "INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH": {
+                    "type": "boolean"
+                },
+                "MINIO_USER": {
+                    "type": "string"
+                },
+                "PASSWORD": {
+                    "type": "string"
+                },
+                "TRANSACTIONS_API_DB_HOST": {
+                    "type": "string"
+                },
+                "TRANSACTIONS_API_DB_NAME": {
+                    "type": "string"
+                },
+                "TRANSACTIONS_API_DB_PORT": {
+                    "type": "string"
+                },
+                "TRANSACTIONS_API_DB_SSLMODE": {
+                    "type": "string"
+                },
+                "TRANSACTIONS_API_DB_SSLROOTCERT": {
+                    "type": "string"
+                },
+                "TRANSACTIONS_API_DB_TYPE": {
+                    "type": "string"
+                },
+                "TRANSACTIONS_API_DB_USER": {
+                    "type": "string"
+                },
+                "secrets": {
+                    "type": "object",
+                    "properties": {
+                        "adoptExisting": {
+                            "type": "boolean"
+                        },
+                        "rotationId": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

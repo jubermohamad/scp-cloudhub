@@ -1,0 +1,8 @@
+apiVersion: v2
+name: cluster-issuer
+description: A Helm chart to deploy cert-manager selfSigned and CA issuers
+
+type: application
+# netreveal chart version: 1.0.0
+version: 1.0.0
+appVersion: "1.10.1" # version of the cert-manager

@@ -1,0 +1,6 @@
+# Future addons (NOT enabled yet):
+# argocd:        { enabled: false }
+# certManager:   { enabled: false }
+# externalDns:   { enabled: false }
+# kyverno:       { enabled: false }
+# serviceMesh:   { enabled: false }

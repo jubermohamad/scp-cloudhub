@@ -1,0 +1,6 @@
+apiVersion: v2
+name: terrarium
+description: A Helm chart for terrarium component
+type: application
+version: 0.29.1
+appVersion: v2026.07.1

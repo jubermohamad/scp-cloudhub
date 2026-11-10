@@ -1,0 +1,7 @@
+# ESLint ignores
+node_modules/
+dist-types/
+.yarn/
+.pytest_cache/
+dist/
+coverage/

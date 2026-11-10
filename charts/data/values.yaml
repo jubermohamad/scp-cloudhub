@@ -1,0 +1,38 @@
+# Render the registry pull secrets (global.pullSecrets) in this release?
+# false only where ANOTHER chart in the SAME release already renders them
+# — i.e. the umbrella, where all four domains share one release.
+pullSecrets:
+  render: true
+
+# Assembly Workflows is OFF here and must stay an EXPLICIT false: a helm
+# dependency whose `condition:` path is ABSENT renders as ENABLED, so omitting
+# this key would silently add the whole Assembly stack to every existing
+# environment. (Same trap as dxv's network policies, which shipped enabled for
+# exactly this reason.) An environment turns it on in its own values.
+assembly-workflows:
+  enabled: false
+
+dxv:
+  enabled: true
+sensa-data-fin-data-service:
+  enabled: true
+sensa-data-fin-cra-service:
+  enabled: false
+# RETIRED 2026-08-24, replaced by sensa-data-foundational-platform (prism).
+# Left in the chart so old data stays readable if an environment re-enables it.
+sensa-data-ontology:
+  enabled: false
+sensa-data-foundational-platform:
+  enabled: false
+sensa-data-explorer:
+  enabled: false
+sensa-data-counterparty-resolution:
+  enabled: false
+# real charts now (vendored 2026-08-20) — explicit false, same absent-condition
+# trap as assembly-workflows above; environments opt in via their own values
+sensa-data-fin-pipeline-service:
+  enabled: false
+sensa-data-watchlist-management:
+  enabled: false
+sensa-data-pipeline:
+  enabled: false

@@ -1,0 +1,57 @@
+application: '' # logical app name (required)
+namespace: '' # target namespace (required, must already exist)
+owner: ''
+businessUnit: ''
+environment: ''
+costCenter: ''
+
+image:
+  repository: ''
+  tag: 'latest'
+  pullPolicy: IfNotPresent
+
+replicas: 2
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: false
+  className: nginx
+  host: ''
+  path: '/'
+  tls: false
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+serviceAccountName: app
+
+deploymentLabels: {}
+deploymentAnnotations: {}
+podLabels: {}
+podAnnotations: {}
+
+env: [] # list of {name, value}
+envFrom: [] # list of {configMapRef|secretRef: {name}}
+
+configMap:
+  enabled: false
+  data: {}
+
+# Reference (do not embed) external secrets.
+secretRefs: []

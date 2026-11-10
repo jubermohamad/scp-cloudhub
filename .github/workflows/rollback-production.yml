@@ -1,0 +1,114 @@
+name: Rollback CloudHub Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Rollback strategy
+        required: true
+        default: swap-back
+        type: choice
+        options:
+          - swap-back
+          - redeploy-version
+      version:
+        description: Known version to stage when mode is redeploy-version
+        required: false
+        default: 0.9.0-beta.13
+        type: string
+      promote_after_staging:
+        description: Swap the redeployed version into production after smoke tests
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloudhub-production-rollback
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-cfe-apps-mj
+  REGISTRY: symphonyfs.azurecr.io
+  FRONTEND_REPOSITORY: cloudhub-platform/frontend
+  BACKEND_REPOSITORY: cloudhub-platform/backend
+  FRONTEND_WEBAPP_NAME: cloudhub-frontend
+  BACKEND_WEBAPP_NAME: cloudhub-backend
+  SLOT_NAME: staging
+
+jobs:
+  rollback:
+    name: Rollback production
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+      - name: Authenticate to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Validate required slots
+        run: |
+          set -euo pipefail
+          for app in "$BACKEND_WEBAPP_NAME" "$FRONTEND_WEBAPP_NAME"; do
+            az webapp show -g "$RESOURCE_GROUP" -n "$app" --slot "$SLOT_NAME" -o none || { echo "::error::Missing ${app}/${SLOT_NAME} slot"; exit 1; }
+          done
+      - name: Swap staging back to production
+        if: ${{ inputs.mode == 'swap-back' }}
+        run: |
+          set -euo pipefail
+          az webapp deployment slot swap -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" --target-slot production
+          az webapp deployment slot swap -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" --target-slot production
+      - name: Validate known rollback image
+        if: ${{ inputs.mode == 'redeploy-version' }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^0\.9\.0-beta\.[0-9]+$ ]] || { echo "::error::Version must match 0.9.0-beta.N"; exit 1; }
+          for pair in "$BACKEND_REPOSITORY:$VERSION" "$FRONTEND_REPOSITORY:$VERSION"; do
+            repo="${pair%:*}"; tag="${pair##*:}"
+            count="$(az acr repository show-tags --name symphonyfs --repository "$repo" --query "[?@=='$tag'] | length(@)" -o tsv)"
+            [[ "$count" == 1 ]] || { echo "::error::Missing ACR image ${REGISTRY}/${repo}:${tag}"; exit 1; }
+          done
+      - name: Redeploy known version to staging
+        if: ${{ inputs.mode == 'redeploy-version' }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          backend_config="$(jq -nc --arg image "${REGISTRY}/${BACKEND_REPOSITORY}:${VERSION}" '{acrUseManagedIdentityCreds:true,linuxFxVersion:("DOCKER|"+$image)}')"
+          frontend_config="$(jq -nc --arg image "${REGISTRY}/${FRONTEND_REPOSITORY}:${VERSION}" '{acrUseManagedIdentityCreds:true,linuxFxVersion:("DOCKER|"+$image)}')"
+          az webapp config set -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" --generic-configurations "$backend_config" -o none
+          az webapp config set -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" --generic-configurations "$frontend_config" -o none
+          az webapp restart -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" -o none
+          az webapp restart -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" -o none
+      - name: Smoke test redeployed staging
+        if: ${{ inputs.mode == 'redeploy-version' }}
+        run: |
+          bash scripts/release/backend-smoke-test.sh "https://$(az webapp show -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" --query defaultHostName -o tsv)"
+          bash scripts/release/frontend-smoke-test.sh "https://$(az webapp show -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" --query defaultHostName -o tsv)"
+      - name: Promote redeployed version after validation
+        if: ${{ inputs.mode == 'redeploy-version' && inputs.promote_after_staging == true }}
+        run: |
+          set -euo pipefail
+          az webapp deployment slot swap -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" --target-slot production
+          az webapp deployment slot swap -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" --target-slot production
+      - name: Publish rollback summary
+        if: always()
+        run: |
+          {
+            echo "## Production Rollback"
+            echo "- Mode: ${{ inputs.mode }}"
+            echo "- Version: ${{ inputs.version }}"
+            echo "- Promote after staging: ${{ inputs.promote_after_staging }}"
+            echo "- Result: ${{ job.status }}"
+            echo "- Actor: ${GITHUB_ACTOR}"
+            echo "- Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_STEP_SUMMARY"

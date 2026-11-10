@@ -1,0 +1,16 @@
+{{- if or .Values.api.enabled (index .Values.tags "separate-api-responsibilities") -}}
+{{- if not (lookup "v1" "ConfigMap" .Release.Namespace (include "api.migrationStateConfigMapName" .)) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "api.migrationStateConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: migrations
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+  annotations:
+    "helm.sh/resource-policy": "keep"
+data: {}
+{{- end }}
+{{- end }}

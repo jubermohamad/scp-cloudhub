@@ -1,0 +1,161 @@
+{{- /*
+AKS admissionsenforcer workaround for the spark-operator webhook configs.
+
+The AKS "admissions enforcer" addon appends its own guard expressions to
+`namespaceSelector` (and rewrites `.rules`) on Validating/Mutating
+WebhookConfigurations. It does so through admission, so the API server records
+IT as the server-side-apply field manager — and the NEXT `helm upgrade` fails:
+
+  conflict with "admissionsenforcer" using admissionregistration.k8s.io/v1:
+  .webhooks[...].namespaceSelector
+
+`admissions.enforcer/disabled: "true"` makes the addon skip an object, and for
+cert-manager that is enough (its chart takes the annotation as a value — see
+deploy/sri-dev-centraindia/values-common-res.yaml). For spark-operator it is
+NOT: the addon re-appends its guards to the pod-intercepting webhooks even with
+the annotation set and the object already scoped to a single namespace. Verified
+on sri-dev-centraindia during the clean reinstall — annotating + stripping
+managedFields bought exactly one apply, then it 409'd again.
+
+So instead we DELETE both webhook configs in `pre-upgrade`, before helm's apply.
+A CREATE cannot conflict, so helm recreates them cleanly every time. spark-operator
+2.3.0 offers no knob to add the guard expressions ourselves (its
+`webhook.annotations` are for the webhook PODS), and disabling the webhook
+outright would remove spark pod mutation, so this is the least-bad option.
+
+Cost: a short window during each upgrade with no spark pod mutation. Acceptable
+here — SparkApplications are submitted on demand, not running continuously.
+
+Only `pre-upgrade` is needed: on a fresh install the objects do not exist yet, so
+helm's create is already conflict-free.
+
+Best-effort by design: it always exits 0, so it can never fail a release. If it
+cannot do its job the upgrade just hits the old 409 and the manual strip loop in
+the deploy README still applies.
+*/}}
+{{- if .Values.webhookEnforcerOptOut.enabled }}
+{{- /* Its OWN ServiceAccount + RBAC, rendered as hooks at a lower weight.
+     The manipulator chart's ServiceAccount is a normal manifest, so it is only
+     applied in the APPLY phase — after pre-upgrade hooks. Referencing it here
+     made the Job uncreatable on a cold install:
+       pods "..." is forbidden: error looking up service account
+       sri/spark-operator-manipulator: serviceaccount not found
+     A hook that runs before the apply phase has to bring its own identity. */}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark-operator-webhook-enforcer-optout
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-22"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: spark-operator-webhook-enforcer-optout-{{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-22"
+    "helm.sh/hook-delete-policy": before-hook-creation
+rules:
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations"]
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: spark-operator-webhook-enforcer-optout-{{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-21"
+    "helm.sh/hook-delete-policy": before-hook-creation
+subjects:
+  - kind: ServiceAccount
+    name: spark-operator-webhook-enforcer-optout
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: spark-operator-webhook-enforcer-optout-{{ .Release.Namespace }}
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spark-operator-webhook-enforcer-optout
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  # 7200, NOT 300: helm4's --wait watcher held this release for its full
+  # 1500s timeout waiting on a Job that had already COMPLETED — the TTL
+  # reaped it before the watcher observed the completion, and from then on
+  # the watcher saw only "status: NotFound". A TTL shorter than the helm
+  # wait fails a working release; 7200 matches the platform convention.
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        app: spark-operator-manipulator
+        app.kubernetes.io/component: webhook-enforcer-optout
+    spec:
+      restartPolicy: Never
+      serviceAccountName: spark-operator-webhook-enforcer-optout
+      {{- with .Values.webhookEnforcerOptOut.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: optout
+          image: {{ .Values.webhookEnforcerOptOut.image | quote }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          command: ["sh", "-c"]
+          args:
+            - |
+              API=https://kubernetes.default.svc
+              TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+              CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              # DELETE, don't patch. Patching the annotation is not enough: AKS
+              # honours admissions.enforcer/disabled for cert-manager but NOT for
+              # spark-operator's pod-intercepting webhooks — it re-appends its
+              # namespaceSelector guards (and rewrites .rules) regardless, and
+              # thereby re-takes SSA ownership, so helm's next apply 409s again.
+              # A CREATE cannot conflict, so we remove the objects here (in
+              # pre-upgrade, before helm's apply) and let helm recreate them.
+              # Cost: a short window each upgrade with no spark pod mutation —
+              # acceptable, since SparkApplications are submitted on demand.
+              for kind in validatingwebhookconfigurations mutatingwebhookconfigurations; do
+                for name in {{ join " " .Values.webhookEnforcerOptOut.webhookNames }}; do
+                  url="$API/apis/admissionregistration.k8s.io/v1/$kind/$name"
+                  code=$(curl -sS -o /tmp/out.json -w "%{http_code}" --max-time 20 \
+                    --cacert "$CA" -H "Authorization: Bearer $TOKEN" \
+                    -X DELETE "$url") || code=000
+                  case "$code" in
+                    200|202) echo "deleted $kind/$name (helm will recreate it)" ;;
+                    404)     echo "absent  $kind/$name (nothing to do)" ;;
+                    *)       echo "WARN    $kind/$name -> HTTP $code"; head -c 300 /tmp/out.json; echo ;;
+                  esac
+                done
+              done
+
+              # never fail a release over a best-effort mitigation
+              exit 0
+{{- end }}

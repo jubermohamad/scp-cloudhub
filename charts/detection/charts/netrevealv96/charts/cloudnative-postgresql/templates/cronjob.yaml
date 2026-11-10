@@ -1,0 +1,62 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: "{{ .Release.Name }}-dbstats-cronjob"
+spec:
+  schedule: {{ .Values.dbstats.schedule | quote }}
+  {{- if .Values.global.timeZone }}
+  timeZone: "{{ .Values.global.timeZone }}"
+  {{- end}}
+  startingDeadlineSeconds: {{ .Values.dbstats.startingDeadlineSeconds }}
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: dbstats-sql
+            image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.cronjob.psqlInitDockerImage }}"
+            command: ["/bin/bash", "-c", "./opt/sql/postgres_db_stats.sh"]
+            volumeMounts:
+            {{ include "postgres.server.secret-mount" . | nindent 12 }}
+            - name: bash-script
+              mountPath: /opt/sql/postgres_db_stats.sh
+              subPath: postgres_db_stats.sh
+            - name: sql-script
+              mountPath: /opt/sql/db_stats.sql
+              subPath: db_stats.sql
+            - name: postgres-credential-apps-user-cnpg
+              mountPath: /home/netreveal/password
+              subPath: password
+            resources:
+              requests:
+                memory: "64Mi"
+                cpu: "250m"
+              limits:
+                memory: "128Mi"
+                cpu: "500m"
+          {{- if eq .Values.global.useImagePullSecrets "true" }}
+          imagePullSecrets:
+          - name: regcred
+          {{- end }}
+          volumes:
+            - name: bash-script
+              configMap:
+                defaultMode: 493
+                name: {{ .Release.Name }}-postgresql-dbstats-configmap
+                items:
+                - key: postgres_db_stats.sh
+                  path: postgres_db_stats.sh
+            - name: sql-script
+              configMap:
+                name: {{ .Release.Name }}-postgresql-dbstats-configmap
+                items:
+                - key: db_stats.sql
+                  path: db_stats.sql
+            - name: postgres-credential-apps-user-cnpg
+              secret:
+                secretName: postgres-credential-apps-user-cnpg
+                items:
+                - key: password
+                  path: password
+            {{ include "postgres.server.secret-volume" . | nindent 12 }}

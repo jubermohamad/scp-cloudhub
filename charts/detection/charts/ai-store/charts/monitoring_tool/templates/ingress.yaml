@@ -1,0 +1,74 @@
+{{- if and .Values.enabled .Values.ingress.enabled .Values.ingress.host }}
+# /docs and /openapi.json are intentionally public (no nginx auth). /mcp is protected at the app layer (API key).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "monitoring-tool.fullname" . }}-public
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "monitoring-tool.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    {{- /*
+      TM-31 / AC-449 (same pattern as the training ingress): throttle a burst of
+      job-triggering submissions (POST /monitoring-job, /schedules) at the edge,
+      per source IP ($binary_remote_addr), independent of caller identity.
+      Applies to the whole monitoring host (docs/mcp/api share it). Empty value
+      => that annotation is omitted (no limit). Mirrors models-mcp-ingress.
+    */}}
+    {{- if .Values.ingress.limitRps }}
+    nginx.ingress.kubernetes.io/limit-rps: {{ .Values.ingress.limitRps | quote }}
+    {{- end }}
+    {{- if .Values.ingress.limitConnections }}
+    nginx.ingress.kubernetes.io/limit-connections: {{ .Values.ingress.limitConnections | quote }}
+    {{- end }}
+    {{- if .Values.ingress.limitBurstMultiplier }}
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: {{ .Values.ingress.limitBurstMultiplier | quote }}
+    {{- end }}
+    {{- if .Values.ingress.limitWhitelist }}
+    nginx.ingress.kubernetes.io/limit-whitelist: {{ .Values.ingress.limitWhitelist | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /docs(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "monitoring-tool.fullname" . }}
+                port:
+                  number: {{ .Values.service.httpPort }}
+          - path: /openapi\.json
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "monitoring-tool.fullname" . }}
+                port:
+                  number: {{ .Values.service.httpPort }}
+          - path: /mcp(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "monitoring-tool.fullname" . }}
+                port:
+                  number: {{ .Values.service.mcpPort }}
+          - path: /.*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "monitoring-tool.fullname" . }}
+                port:
+                  number: {{ .Values.service.httpPort }}
+{{- end }}

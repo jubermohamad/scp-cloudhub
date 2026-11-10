@@ -1,0 +1,7 @@
+apiVersion: v2
+name: cdc
+description: >-
+  A Helm chart for kafka connects and connectors for Investigations Hub and Netreveal integration
+type: application
+version: 0.33.0
+appVersion: v2026.07.1

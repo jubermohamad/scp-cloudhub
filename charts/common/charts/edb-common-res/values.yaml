@@ -1,0 +1,166 @@
+global:
+  imagePullPolicy: Always   # platform default; umbrella global overrides
+  clusterType: "aks"
+
+  nrSubChartSwitches:
+    enableER: false
+
+tags:
+  traces: false
+  metrics: false
+
+cert-manager:
+  enabled: true
+  installCRDs: true
+
+storageclass:
+  enabled: true
+  storageClass:
+    config:
+      scXfsStandardssdLrs:
+        reclaimPolicy: Retain # or Delete
+        volumeBindingMode: WaitForFirstConsumer # or Immediate
+    enable:
+      scAzureNetapFiles: true
+      scAzureFileNfs: true
+      scXfsStandardssdLrs: true
+
+reloader:
+  enabled: true
+
+minio-operator:
+  enabled: true
+
+strimzi-kafka-operator:
+  # Default values for strimzi-kafka-operator.
+  # Enable strimzi-kafka-operator
+  enabled: true
+  # Default replicas for the cluster operator
+  replicas: 2
+
+  # If you set `watchNamespaces` to the same value as ``.Release.Namespace` (e.g. `helm ... --namespace $NAMESPACE`),
+  # the chart will fail because duplicate RoleBindings will be attempted to be created in the same namespace
+  watchNamespaces: []
+  watchAnyNamespace: true
+  # Below property has to be verified. With the current value, the operator is not able to create the Kafka cluster
+  #generateNetworkPolicy: false
+  annotations:
+    ad.datadoghq.com/strimzi-cluster-operator.checks: |
+      {
+        "strimzi": {
+          "instances":[
+            {
+              "cluster_operator_endpoint": "http://%%host%%:8080/metrics"
+            }
+          ]
+        }
+      }
+  resources:
+    limits:
+      memory: 1024Mi
+  extraEnvs:
+    - name: JAVA_OPTS
+      value: "-Xmx512M -Xms256M"
+
+### Default values for nginx ingress
+ingress-nginx:
+  enabled: false
+  ## nginx configuration
+  ## Ref: https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/index.md
+  ##
+
+  ## Overrides for generated resource names
+  # See templates/_helpers.tpl
+  # nameOverride:
+  # fullnameOverride:
+
+  # -- Override the deployment namespace; defaults to .Release.Namespace
+  namespaceOverride: ""
+  ## Labels to apply to all resources
+  ##
+  commonLabels: {}
+  # scmhash: abc123
+  # myLabel: aakkmd
+
+  controller:
+    # -- Global configuration passed to the ConfigMap consumed by the controller. Values may contain Helm templates.
+    # Ref.: https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/configmap/
+    config:
+      server-snippet: |
+        more_set_headers "X-Frame-Options: SAMEORIGIN";
+    # -- Annotations to be added to the controller config configuration configmap.
+    configAnnotations:
+      log-format-upstream: $remote_addr - $remote_user [$time_local] "$request"  $status $body_bytes_sent "$http_referer" "$http_user_agent"  $request_length $request_time [$proxy_upstream_name] [$proxy_alternative_upstream_name] $upstream_addr  $upstream_response_length $upstream_response_time $upstream_status $req_id $namespace $service_name
+
+    podAnnotations:
+      ad.datadoghq.com/controller.checks: |
+        {
+          "nginx": {
+            "instances": [{"nginx_status_url": "http://%%host%%/nginx_status"}]
+          },
+          "nginx_ingress_controller" : {
+            "instances": [{"prometheus_url": "http://%%host%%:10254/metrics"}]
+          }
+        }
+      prometheus.io/port: "10254"
+      prometheus.io/scrape: "true"
+
+    service:
+      # -- Enable controller services or not. This does not influence the creation of either the admission webhook or the metrics service.
+      enabled: true
+      external:
+        # -- Enable the external controller service or not. Useful for internal-only deployments.
+        enabled: false
+      # -- Annotations to be added to the external controller service. See `controller.service.internal.annotations` for annotations to be added to the internal controller service.
+      annotations: {}
+
+    metrics:
+      port: 10254
+      portName: metrics
+      # if this port is changed, change healthz-port: in extraArgs: accordingly
+      enabled: true
+
+    http-snippet: |
+      server {
+        listen 18080;
+        location /nginx_status {
+          allow all;
+          stub_status on;
+        }
+        location / {
+          return 404;
+        }
+      }
+    nginx-status-ipv4-whitelist: "127.0.0.1,10.0.0.0/8"
+
+cloudnative-pg:
+  enabled: true
+  config:
+    data:
+      INHERITED_ANNOTATIONS: "prometheus.io/*, velero.io/*"
+      INHERITED_LABELS: "app.kubernetes.io/*"
+
+argo-workflows:
+  images:
+    tag: "v4.0.1"
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  server:
+    secure: true
+
+cluster-issuers:
+  enabled: false
+  email: ""
+  hostedZoneName: ""
+  resourceGroupName: ""
+  subscriptionID: ""
+  clientID: ""
+
+scupper-operator:
+  enabled: false
+
+edb-postgres-distributed-for-kubernetes:
+  enabled: false
+  image:
+    imageCredentials:
+      username: "k8s_enterprise"
+      password: ""

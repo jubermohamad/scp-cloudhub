@@ -1,0 +1,6 @@
+apiVersion: v2
+name: jaeger
+description: A Helm chart for Jaeger deployment
+type: application
+version: 0.26.0
+appVersion: v2026.07.1

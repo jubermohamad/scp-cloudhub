@@ -1,0 +1,124 @@
+# Git and version control
+.git
+.gitignore
+.gitattributes
+
+# Yarn package manager cache (don't copy - wastes space)
+# NOTE: We DO copy root node_modules (pre-built on host)
+.yarn/cache
+.yarn/install-state.gz
+
+# Frontend build (not needed in backend image)
+# packages/app/dist  <-- removed to allow build-on-host frontend artifacts to be copied into frontend image
+
+# Plugin source code and build outputs (not needed at runtime)
+# NOTE: We DO copy plugins/ directory for package.json manifest
+plugins/*/src
+plugins/*/node_modules
+plugins/*/.eslintrc.json
+plugins/*/.eslintignore
+
+# (Reverted) keep node_modules in context for bind-mount usage by backend Dockerfile
+
+# Development and testing (not needed at runtime)
+tests
+test
+coverage
+.jest-cache
+jest-coverage
+packages/*/tests
+packages/*/.jest-cache
+packages/app/src
+
+# Build caches and temp files (not needed)
+.tsbuildinfo
+*.tsbuildinfo
+.webpack
+.parcel-cache
+
+# Development files and environment (security risk in image)
+.env
+.env.local
+.env.*.local
+.env.production.local
+.DS_Store
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Documentation and verbose files (not needed at runtime)
+docs/
+*.md
+!README.md
+
+# Logs and debug files
+*.log
+logs/
+logs.txt
+
+# CI and build artifacts
+.github
+.gitlab-ci.yml
+.circleci
+travis.yml
+Jenkinsfile
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Temporary and build directories (but NOT packages/backend/dist)
+dist-types
+.cache
+.next
+build/
+tmp/
+temp/
+out/
+
+# TypeScript
+*.d.ts.map
+*.js.map
+tsconfig.tsbuildinfo
+
+# Node package manager files (keep root only)
+package-lock.json
+pnpm-lock.yaml
+*.swp
+*.swo
+*~
+
+# Infrastructure and deployment (not needed for container build)
+scp/
+azure-functions/
+developer-environments/
+infra/
+deployments/
+platform_tools/
+platform-workflows/
+k8s/
+cloudhub-live-infra/
+cloudhub-platform-helm-charts/
+
+# CI/CD
+.github
+.gitlab-ci.yml
+
+# IDE caches
+.pytest_cache
+.eslintignore
+
+# Docker files (don't include docker compose in build context)
+docker-compose.yml
+Dockerfile.*
+
+# Source control
+.github/workflows
+
+# Large example/demo files
+examples-extra
+demos

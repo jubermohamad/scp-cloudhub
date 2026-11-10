@@ -1,0 +1,214 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "generate.name.with.release.name" (list $ . "aap") | quote }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: aap-instance-pod
+    app.kubernetes.io/name: {{ .Release.Name }}-aap
+    {{- include "common.helm.metadata.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.pod.replicas }}
+  serviceName: {{ .Release.Name }}-aap
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: aap-instance-pod
+  template:
+    metadata:
+      labels:
+        app: aap-instance-pod
+    spec:
+      hostname: aap
+      terminationGracePeriodSeconds: 1
+      securityContext:
+        runAsUser: 200
+        runAsGroup: 200
+        fsGroup: 200
+        fsGroupChangePolicy: OnRootMismatch
+      volumes:
+        {{ include "postgres.server.secret-volume" . | nindent 8 }}
+        - name: {{ .Release.Name }}-aap-log4j2
+          configMap:
+            name: {{ .Release.Name }}-aap-log4j2
+        - name: init-aap-application-config
+          emptyDir: {}
+        - name: "{{ .Release.Name }}-aap-application-config"
+          secret:
+            secretName: "{{ .Release.Name }}-aap-application-config"
+            defaultMode: 493
+        - name: {{ .Release.Name }}-aml-smbd-data-pvc
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "aml-smbd-data-pvc") | quote }}
+        - name: {{ .Release.Name }}-aap-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-aap
+            items:
+            - key: keystore.p12
+              path: server.jks
+        - name: {{ .Release.Name }}-aap-server-jks-patched
+          emptyDir: {}
+      initContainers:
+            - name: patch-server-jks
+              image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+              imagePullPolicy: IfNotPresent
+              command:
+                - sh
+                - -c
+                - |
+                  set +x
+                  set -e
+                  if [ -f /opt/advanced-analytics-platform/conf/server.jks ]
+                  then
+                    rm /opt/advanced-analytics-platform/conf/server.jks
+                  fi
+                  cp /tmp/server.jks /opt/advanced-analytics-platform/conf/server.jks && \
+                  /opt/tools/java/bin/keytool -changealias -alias 1 -destalias aap -keystore /opt/advanced-analytics-platform/conf/server.jks -storepass $JKS_PASSWORD
+              env:
+              - name: JKS_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: {{ .Release.Name }}-jks-password
+                    key: password
+              volumeMounts:
+              - name: {{ .Release.Name }}-aap-server-jks
+                mountPath: /tmp/server.jks
+                subPath: server.jks
+              - name: {{ .Release.Name }}-aap-server-jks-patched
+                mountPath: /opt/advanced-analytics-platform/conf
+            - name: folder-init
+              image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+              imagePullPolicy: IfNotPresent
+              command: ['sh', '-c', 'chown -R 200:200 /opt/advanced-analytics-platform']
+              securityContext:
+                {{- if .Values.global.useRootAccountForInit }}
+                runAsUser: 0
+                {{- end }}
+                allowPrivilegeEscalation: false
+                {{- if not .Values.global.useRootAccountForInit }}
+                runAsNonRoot: true
+                {{- end }}
+              volumeMounts:
+              - name: {{ include "generate.name.with.release.name" (list $ . "aap-data") | quote }}
+                mountPath: "/opt/advanced-analytics-platform/logs"
+                subPath: logs
+              - name: {{ include "generate.name.with.release.name" (list $ . "aap-data") | quote }}
+                mountPath: "/opt/advanced-analytics-platform/data"
+                subPath: data
+            - name: aap-application-config-init
+              image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+              imagePullPolicy: IfNotPresent
+              command: ['/bin/bash', '-c', 'cp /tmp/application-config/application_init.json /tmp/application-config/application.json']
+              volumeMounts:
+              - name: init-aap-application-config
+                mountPath: /tmp/application-config
+              - name: "{{ .Release.Name }}-aap-application-config"
+                mountPath: "/tmp/application-config/application_init.json"
+                subPath: application.json
+              - name: {{ .Release.Name }}-aap-server-jks-patched
+                mountPath: /opt/advanced-analytics-platform/conf/server.jks
+                subPath: server.jks
+            - name: wait-for-postgresql-schema-job-completion
+              image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+              command:
+                - /bin/bash
+                - -exec
+                - |
+                  /wait-for-it/wait-for-it.sh {{ include "db.url" . }} --timeout=500 && \
+                  timeout 800 bash -c 'while [ ! -f /opt/advanced-analytics-platform/db-file-flag/aap_db_job_completed.flag ]; do echo "Wait for the db init job to complete"; sleep 2; done'
+              volumeMounts:
+              - name: {{ .Release.Name }}-aml-smbd-data-pvc
+                mountPath: "/opt/advanced-analytics-platform/db-file-flag"
+                subPath: db-file-flag
+
+{{- include "image.pull.secrets" . | nindent 6 }}
+
+      containers:
+      - name: aap
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+        imagePullPolicy: IfNotPresent
+        {{- if eq .Values.global.useResourceConstraints "true" }}
+        resources:
+          requests:
+            memory: {{ .Values.pod.resources.requests.memory }}
+            cpu: {{ .Values.pod.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.pod.resources.limits.memory }}
+            cpu: {{ .Values.pod.resources.limits.cpu }}
+        {{- end }}
+        ports:
+        - containerPort: 6789
+          name: aapweb
+        - containerPort: 5080
+          name: resourcemanager
+        volumeMounts:
+          {{ include "postgres.server.secret-mount" . | nindent 10 }}
+          - name: {{ .Release.Name }}-aap-log4j2
+            mountPath: /opt/advanced-analytics-platform/conf/log4j2
+          - name: {{ .Release.Name }}-aap-application-config
+            mountPath: /opt/advanced-analytics-platform/conf/application.json
+            subPath: application.json
+          - name: {{ include "generate.name.with.release.name" (list $ . "aap-data") | quote }}
+            mountPath: "/opt/advanced-analytics-platform/logs"
+            subPath: logs
+          - name: {{ include "generate.name.with.release.name" (list $ . "aap-data") | quote }}
+            mountPath: "/opt/advanced-analytics-platform/data"
+            subPath: data
+          - name: {{ .Release.Name }}-aml-smbd-data-pvc
+            mountPath: "/opt/netreveal/amlsmbd/profile_storage"
+            subPath: profile_storage
+          - name: {{ .Release.Name }}-aap-server-jks-patched
+            mountPath: /opt/advanced-analytics-platform/conf/server.jks
+            subPath: server.jks
+        {{- if .Values.pod.startupProbe }}
+        startupProbe:
+          httpGet:
+            path: /analytics/login
+            port: 6789
+            scheme: HTTPS
+          {{- toYaml .Values.pod.startupProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.readinessProbe }}
+        readinessProbe:
+          httpGet:
+            path: /analytics/login
+            port: 6789
+            scheme: HTTPS
+          {{- toYaml .Values.pod.readinessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.livenessProbe }}
+        livenessProbe:
+          httpGet:
+            path: /analytics/login
+            port: 6789
+            scheme: HTTPS
+          {{- toYaml .Values.pod.livenessProbe | nindent 10 }}
+        {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            ./advanced-analytics-platform.sh
+      restartPolicy: Always
+  volumeClaimTemplates:
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "aap-data") | quote }}
+      {{- if .Values.global.database.testBackupMode }}
+      annotations:
+        helm.sh/resource-policy: keep
+      {{- include "storage.pvc.annotations" (list $ . "without-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+      {{- else }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+      {{- end }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" .  | indent 6 }}
+      resources:
+        requests:
+          storage: {{ .Values.storage.storage  }}

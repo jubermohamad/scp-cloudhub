@@ -1,0 +1,692 @@
+{{- $solution := "wlm-pn-sa-sim" -}}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim") | quote }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-wlm-pn-sa-sim-instance"
+  annotations:
+    ad.datadoghq.com/wlm-pn-sa-sim.logs: |
+      [
+          {
+              "source": "nri-{{ .Release.Name }}-k8s-wlm-pn-sa-sim",
+              "service": "nri-{{ .Release.Name }}-k8s-wlm-pn-sa-sim",
+              "log_processing_rules": [
+                  {
+                      "type": "multi_line",
+                      "name": "java_log_format",
+                      "pattern": "(app)\\s-\\s(\\d{2}-[A-Za-z]{3}-\\d{4}\\s\\d{2}:\\d{2}:\\d{2},\\d{3})\\s+-\\s+-\\s+(\\w+)\\s+([A-Za-z]+:\\d+)"
+                  }
+              ]
+          },
+          {
+              "source": "nri-{{ .Release.Name }}-k8s-wlm-pn-sa-sim",
+              "service": "nri-{{ .Release.Name }}-k8s-wlm-pn-sa-sim",
+              "log_processing_rules": [
+                  {
+                      "type": "multi_line",
+                      "name": "java_stats_log_format",
+                      "pattern": "((appmsg)|(appfunc))\\s-\\s(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}),+(.*)"
+                  }
+              ]
+          }
+      ]
+    reloader.stakater.com/search: "true"
+    secret.reloader.stakater.com/reload: "{{ .Release.Name }}-jks-password,{{ .Release.Name }}-cert-nr-ui,{{ .Release.Name }}-cert-wlm-pn-rt"
+    configmap.reloader.stakater.com/reload: "{{ .Release.Name }}-wlm-pn-sa-sim-base-config-property"
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-wlm-pn-sa-sim-instance-pod
+  serviceName: {{ .Release.Name }}-wlm-pn-sa-sim
+  replicas: {{ .Values.pod.replicas }}
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      namespace: {{ .Values.global.namespace }}
+      labels:
+        app: {{ .Release.Name }}-wlm-pn-sa-sim-instance-pod
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway #
+          labelSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-wlm-pn-sa-sim-instance-pod
+      {{- if or (eq .Values.pod.antiAffinity "hard") (eq .Values.pod.antiAffinity "soft") (eq .Values.pod.antiAffinity "custom") }}
+      affinity:
+        podAntiAffinity:
+      {{- end }}
+      {{- if eq .Values.pod.antiAffinity "soft" }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ .Release.Name }}-wlm-pn-sa-sim-instance-pod
+                topologyKey: topology.kubernetes.io/zone
+      {{- else if eq .Values.pod.antiAffinity "hard" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: {{ .Release.Name }}-wlm-pn-sa-sim-instance-pod
+              topologyKey: topology.kubernetes.io/zone
+      {{- else if eq .Values.pod.antiAffinity "custom" }}
+{{- tpl (toYaml .Values.pod.customAffinityRules) . | nindent 10 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 1
+      securityContext:
+        runAsUser: 200
+        runAsGroup: 200
+        fsGroup: 200
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+      - name: keystore-cert-init
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnSaDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/sh
+          - -c
+          - |
+            set +x
+            set -e
+
+            cp /opt/tools/java/lib/security/cacerts /opt/netreveal/standaloneHome/server.jks
+            keytool -storepasswd -new $KEYSTORE_PASS -keystore /opt/netreveal/standaloneHome/server.jks -storepass changeit
+
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/nr-ui.jks -srcalias 1 -destkeystore /opt/netreveal/standaloneHome/server.jks -destalias nrui -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/wlm-pn-rt.jks -srcalias 1 -destkeystore /opt/netreveal/standaloneHome/server.jks -destalias wlm24procrt -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            echo "Certificate import finished."
+        env:
+        - name: KEYSTORE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-jks-password
+              key: password
+        volumeMounts:
+        - name: {{ .Release.Name }}-nr-ui-server-jks
+          mountPath: /tmp/nr-ui.jks
+          subPath: nr-ui.jks
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-jks
+          mountPath: /tmp/wlm-pn-rt.jks
+          subPath: wlm-pn-rt.jks
+        - name: {{ .Release.Name }}-wlm-merged-keystore
+          mountPath: /opt/netreveal/standaloneHome
+
+      {{- include "init-container.kafka.jks" (merge (dict "solution" $solution) . ) | nindent 6 }}
+      - name: wait-for-nr-ui
+        imagePullPolicy: IfNotPresent
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnSaDockerImage }}"
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            /wait-for-it/wait-for-it.sh {{ .Release.Name }}-nr-ui.{{ .Values.global.namespace }}.svc.cluster.local:8443 --timeout=1100
+      - name: init-wlm-pn-sa-sim
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnSaDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          {{- if .Values.global.useRootAccountForInit }}
+          runAsUser: 0
+          {{- end }}
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          {{- if not .Values.global.useRootAccountForInit }}
+          runAsNonRoot: true
+          {{- end }}
+        volumeMounts:
+        - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-logs") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/logs
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-java-tmp
+          mountPath: /opt/netreveal/standaloneHome/java
+        - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-hsqldb") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/hsqldb
+        - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-conf-wlm") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/conf/wlm
+        {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnSaSim .Values.global.override.chartEnable.wlmPnSaSimVersions.configuration) }}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-conf-override
+          mountPath: /opt/conf-override
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-lib-override
+          mountPath: /opt/lib-override
+        {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            {{- if .Values.global.useRootAccountForInit }}
+            echo "Enable 'chown' for the standalone container."
+            export RUN_CHOWN="true"
+            {{- else }}
+            echo "Disable 'chown' for the standalone container."
+            export RUN_CHOWN="false"
+            {{- end }}
+            echo "Run the init script."
+            /opt/docker/initApplication.sh
+            {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnSaSim .Values.global.override.chartEnable.wlmPnSaSimVersions.configuration) }}
+            echo "Prepare override 'conf' directory."
+            cp -r /opt/netreveal/standaloneHome/conf/. /opt/conf-override
+            echo "prepare override 'lib' directory."
+            cp -r /opt/netreveal/standaloneHome/lib/. /opt/lib-override
+
+            if [ ! -f /opt/netreveal/standaloneHome/logs/overrideList.txt ]; then
+              echo "Create /opt/netreveal/standaloneHome/logs/overrideList.txt"
+              touch /opt/netreveal/standaloneHome/logs/overrideList.txt
+            fi
+
+            echo "Processed versions:"
+            echo ">>>>>"
+            cat /opt/netreveal/standaloneHome/logs/overrideList.txt
+            echo "<<<<<"
+
+            if [ -f /opt/netreveal/standaloneHome/logs/imageVersion.properties ]; then
+              echo "Check if the Docker image is present in the /opt/netreveal/standaloneHome/logs/imageVersion.properties file."
+              if [ "$(cat /opt/netreveal/standaloneHome/logs/imageVersion.properties)" != "${IMAGE_VERSION}" ]; then
+                if [ -f /opt/netreveal/standaloneHome/logs/overrideList.txt ]; then
+                  echo "Remove the overrideList.txt file."
+                  echo -n "" > /opt/netreveal/standaloneHome/logs/overrideList.txt
+                fi
+              fi
+            else
+                if [ -f /opt/netreveal/standaloneHome/logs/overrideList.txt ]; then
+                  echo "Remove the overrideList.txt file."
+                  echo -n "" > /opt/netreveal/standaloneHome/logs/overrideList.txt
+                fi
+            fi
+            if [ -f /opt/netreveal/standaloneHome/logs/overrideImage.properties ]; then
+              echo "Check if the Override Docker image is present in the /opt/netreveal/standaloneHome/logs/overrideImage.properties file."
+              if [ "$(cat /opt/netreveal/standaloneHome/logs/overrideImage.properties)" != "${OVERRIDE_IMAGE_VERSION}" ]; then
+                if [ -f /opt/netreveal/standaloneHome/logs/overrideList.txt ]; then
+                  echo "Remove the overrideList.txt file."
+                  echo -n "" > /opt/netreveal/standaloneHome/logs/overrideList.txt
+                fi
+              fi
+            else
+              if [ -f /opt/netreveal/standaloneHome/logs/overrideList.txt ]; then
+                echo "Remove the overrideList.txt file."
+                echo -n "" > /opt/netreveal/standaloneHome/logs/overrideList.txt
+              fi
+            fi
+
+            {{- if .Values.global.useRootAccountForInit }}
+            echo "Change the owner of the /opt/netreveal/standaloneHome/logs directory."
+            chown -R 200:200 /opt/netreveal/standaloneHome/logs
+            echo "Change the owner of the /opt/conf-override directory."
+            chown -R 200:200 /opt/conf-override
+            chown -R 200:200 /opt/lib-override
+            {{- end }}
+            {{- end }}
+        env:
+        - name: IMAGE_VERSION
+          value: "{{ .Values.pod.wlmPnSaDockerImage }}"
+        - name: OVERRIDE_IMAGE_VERSION
+          value: "{{ .Values.global.override.overrideDockerImageName }}"
+
+      ##############################
+      # NROD OVERRIDE
+      ##############################
+      {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnSaSim .Values.global.override.chartEnable.wlmPnSaSimVersions.configuration) }}
+      - name: nrod-conf-override
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        volumeMounts:
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-conf-wlm") | quote }}
+            mountPath: /opt/netreveal/standaloneHome/conf/wlm
+          - name: {{ .Release.Name }}-wlm-pn-sa-sim-conf-override
+            mountPath: /opt/conf-override
+          - name: {{ .Release.Name }}-wlm-pn-sa-sim-lib-override
+            mountPath: /opt/lib-override
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-logs") | quote }}
+            mountPath: /opt/netreveal/standaloneHome/logs
+          - name: {{ .Release.Name }}-wlm-pn-sa-sim-import-export
+            mountPath: /opt/netreveal/standaloneHome/importExport
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            if [ -f /opt/override/override_version.properties ]; then
+              echo "Copy override_version.properties to /opt/conf-override."
+              echo ">>>>>"
+              cat /opt/override/override_version.properties
+              echo "<<<<<"
+              cp /opt/override/override_version.properties /opt/conf-override
+            else
+              echo "/opt/override/override_version.properties does not exist."
+            fi
+
+            if [ -d /opt/override/conf/wlm-pn-sa-sim ]; then
+              echo "Copy /opt/override/conf/wlm-pn-sa-sim to /opt/conf-override."
+              echo ">>>>>"
+              find /opt/override/conf/wlm-pn-sa-sim
+              echo "<<<<<"
+              cp -r /opt/override/conf/wlm-pn-sa-sim/. /opt/conf-override
+            else
+              echo "No /opt/override/conf/wlm-pn-sa-sim directory."
+            fi
+
+            if [ -d /opt/override/conf/wlm-pn-sa-sim/wlm ]; then
+              echo "Copy /opt/override/conf/wlm-pn-sa-sim/wlm to /opt/netreveal/standaloneHome/conf/wlm."
+              echo ">>>>>"
+              find /opt/override/conf/wlm-pn-sa-sim/wlm
+              echo "<<<<<"
+              cp -r /opt/override/conf/wlm-pn-sa-sim/wlm/. /opt/netreveal/standaloneHome/conf/wlm
+            else
+              echo "/opt/override/conf/wlm-pn-sa-sim/wlm directory does not exist."
+            fi
+
+            # base_config.properties cannot be overwritten.
+            if [ -f /opt/conf-override/base_config.properties ]; then
+              echo "Override 'base_config.properties' file exists. Remove it."
+              rm -f /opt/conf-override/base_config.properties
+            fi
+
+            {{- if gt (len .Values.global.override.chartEnable.wlmPnSaSimVersions.configuration) 0 }}
+            echo "Remove overrideImport.lst and overridePostImport.lst files."
+            rm -f /opt/netreveal/standaloneHome/importExport/overrideImport.lst 2>/dev/null
+            rm -f /opt/netreveal/standaloneHome/importExport/overridePostImport.lst 2>/dev/null
+
+            echo "Initialise import configuration."
+            {{- range $item := .Values.global.override.chartEnable.wlmPnSaSimVersions.configuration }}
+            fullVersion={{ $item }}
+            echo "====>Processing: ${fullVersion}"
+            version=${fullVersion%:*}
+            reInstall=${fullVersion#*:}
+            echo "version: ${version}"
+            echo "reInstall: ${reInstall}"
+            processVersion="false"
+
+            if [ "${version}" != "${reInstall}" -a "${reInstall}" == "reinstall" ]; then
+              echo "Version is defined with 'reinstall' adding it to the runOverrideConfiguration.flag file."
+              if ! grep -q "configuration#${version}#" /opt/netreveal/standaloneHome/logs/overrideList.txt; then
+                echo "Version was not processed before. Add it to the list."
+                echo "configuration#${version}#" >> /opt/netreveal/standaloneHome/logs/overrideList.txt
+              fi
+              echo "configuration#${version}#" >> /opt/netreveal/standaloneHome/logs/overrideList.txt
+              processVersion="true"
+            else
+              if ! grep -q "configuration#${version}#" /opt/netreveal/standaloneHome/logs/overrideList.txt; then
+                echo "Version was not processed before. Add it to the list."
+                echo "configuration#${version}#" >> /opt/netreveal/standaloneHome/logs/overrideList.txt
+                processVersion="true"
+              else
+                echo "Version was processed before. Skip it."
+              fi
+            fi
+
+            if [ "${processVersion}" == "true" ]; then
+              if [ -d /opt/override/configuration/wlm-pn-sa-sim/${version} ]; then
+                echo "Copy /opt/override/configuration/wlm-pn-sa-sim/${version} to /opt/netreveal/standaloneHome/importExport/${version}."
+                echo ">>>>>"
+                find /opt/override/configuration/wlm-pn-sa-sim/${version}/.
+                echo "<<<<<"
+                cp -r /opt/override/configuration/wlm-pn-sa-sim/${version}/. /opt/netreveal/standaloneHome/importExport/${version}/
+              else
+                echo "/opt/override/configuration/wlm-pn-sa-sim/${version} does not exist."
+              fi
+              if [ -f /opt/override/configuration/wlm-pn-sa-sim/${version}/import.lst ]; then
+                echo "Copy /opt/override/configuration/wlm-pn-sa-sim/${version}/import.lst to /opt/netreveal/standaloneHome/importExport/overrideImport.lst."
+                echo ">>>>>"
+                cat /opt/override/configuration/wlm-pn-sa-sim/${version}/import.lst
+                echo "<<<<<"
+                cat /opt/override/configuration/wlm-pn-sa-sim/${version}/import.lst >> /opt/netreveal/standaloneHome/importExport/overrideImport.lst
+                echo "" >> /opt/netreveal/standaloneHome/importExport/overrideImport.lst
+                cat /opt/override/configuration/wlm-pn-sa-sim/${version}/import.lst >> /opt/netreveal/standaloneHome/importExport/overrideImport.lst
+              else
+                echo "/opt/override/configuration/wlm-pn-sa-sim/${version}/import.lst does not exist."
+              fi
+              if [ -f /opt/override/configuration/wlm-pn-sa-sim/${version}/postImport.lst ]; then
+                echo "Copy /opt/override/configuration/wlm-pn-sa-sim/${version}/postImport.lst to /opt/netreveal/standaloneHome/importExport/overridePostImport.lst."
+                echo ">>>>>"
+                cat /opt/override/configuration/wlm-pn-sa-sim/${version}/postImport.lst
+                echo "<<<<<"
+                cat /opt/override/configuration/wlm-pn-sa-sim/${version}/postImport.lst >> /opt/netreveal/standaloneHome/importExport/overridePostImport.lst
+                echo "" >> /opt/netreveal/standaloneHome/importExport/overridePostImport.lst
+                cat /opt/override/configuration/wlm-pn-sa-sim/${version}/postImport.lst >> /opt/netreveal/standaloneHome/importExport/overridePostImport.lst
+              else
+                echo "/opt/override/configuration/wlm-pn-sa-sim/${version}/postImport.lst does not exist."
+              fi
+            fi
+            {{- end }}
+
+            {{- end }}
+            # lib directory override
+            if [ -d /opt/override/customcode/common/lib ]; then
+              countFiles=$(find /opt/override/customcode/common/lib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/common/lib to /opt/lib-override"
+                cp -r /opt/override/customcode/common/lib/. /opt/lib-override
+                echo ">>>>"
+                find /opt/override/customcode/common/lib -type f ! -name ".*"
+                echo "<<<<"
+              else
+                echo "No files found in /opt/override/customcode/common/lib"
+              fi
+            fi
+
+            if [ -d /opt/override/customcode/wlm-pn-sa-sim ]; then
+              countFiles=$(find /opt/override/customcode/wlm-pn-sa-sim -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/wlm-pn-sa-sim to /opt/lib-override"
+                cp -r /opt/override/customcode/wlm-pn-sa-sim/. /opt/lib-override
+                echo ">>>>"
+                find /opt/override/customcode/wlm-pn-sa-sim -type f ! -name ".*"
+                echo "<<<<"
+              else
+                echo "No files found in /opt/override/customcode/wlm-pn-sa-sim"
+              fi
+            fi
+      {{- end }}
+
+      {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnSaSim .Values.global.override.chartEnable.wlmPnSaSimVersions.configuration) }}
+      - name: nrod-import-configuration-sim
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnSaDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        volumeMounts:
+          - name: {{ .Release.Name }}-wlm-pn-sa-sim-import-export
+            mountPath: /opt/netreveal/standaloneHome/importExport
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-logs") | quote }}
+            mountPath: /opt/netreveal/standaloneHome/logs
+          - name: {{ .Release.Name }}-wlm-pn-sa-sim-java-tmp
+            mountPath: /opt/netreveal/standaloneHome/java
+          - name: {{ .Release.Name }}-wlm-pn-sa-sim-temp-reports
+            mountPath: /opt/netreveal/standaloneHome/temp/reports
+          - name: {{ .Release.Name }}-wlm-pn-sa-sim-conf-temp
+            mountPath: /opt/netreveal/standaloneHome/conf/temp
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-hsqldb") | quote }}
+            mountPath: /opt/netreveal/standaloneHome/hsqldb
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-conf-wlm") | quote }}
+            mountPath: /opt/netreveal/standaloneHome/conf/wlm
+          - name: {{ .Release.Name }}-wlm-pn-sa-sim-import-base-config-property
+            mountPath: /opt/netreveal/standaloneHome/conf/base_config.properties
+            subPath: base_config.properties
+          - name: {{ .Release.Name }}-wlm-indexes
+            mountPath: /opt/WLM
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            if [ -f /opt/netreveal/standaloneHome/importExport/overrideImport.lst ]; then
+              echo "Import overrideImport.lst file."
+              echo ">>>>>"
+              cat /opt/netreveal/standaloneHome/importExport/overrideImport.lst
+              echo "<<<<<"
+              status="success"
+              /opt/netreveal/standaloneHome/importExport.sh /opt/netreveal/standaloneHome/importExport/overrideImport.lst | tail -n1 | grep -v 0 && status="failed"
+              if [ "${status}" == "failed" ]; then
+                echo "Import failed."
+                cat /opt/netreveal/standaloneHome/logs/importexport.log
+                rm /opt/netreveal/standaloneHome/logs/importexport.log
+                exit 1
+              fi
+            else
+              echo "No overrideImport.lst file."
+            fi
+            if [ -f /opt/netreveal/standaloneHome/importExport/overridePostImport.lst ]; then
+              echo "Import overridePostImport.lst file."
+              echo ">>>>>"
+              cat /opt/netreveal/standaloneHome/importExport/overridePostImport.lst
+              echo "<<<<<"
+              status="success"
+              /opt/netreveal/standaloneHome/importExport.sh /opt/netreveal/standaloneHome/importExport/overridePostImport.lst | tail -n1 | grep -v 0 && status="failed"
+              if [ "${status}" == "failed" ]; then
+                echo "Import failed."
+                cat /opt/netreveal/standaloneHome/logs/importexport.log
+                rm /opt/netreveal/standaloneHome/logs/importexport.log
+                exit 1
+              fi
+            else
+              echo "No overridePostImport.lst file."
+            fi
+
+            if [ -f /opt/netreveal/standaloneHome/importExport/overrideImport.lst -o -f /opt/netreveal/standaloneHome/importExport/overridePostImport.lst ]; then
+              cat /opt/netreveal/standaloneHome/logs/importexport.log
+              rm /opt/netreveal/standaloneHome/logs/importexport.log
+            fi
+
+            echo "${IMAGE_VERSION}" > /opt/netreveal/standaloneHome/logs/imageVersion.properties
+            echo "${OVERRIDE_IMAGE_VERSION}" > /opt/netreveal/standaloneHome/logs/overrideImage.properties
+        env:
+        - name: IMPORT_EXPORT_HEAP_MAX
+          value: {{ .Values.pod.java.importExportHeapMax }}
+        - name: IMPORT_EXPORT_HEAP_MIN
+          value: {{ .Values.pod.java.importExportHeapMin }}
+        - name: JAVA_OPTS
+          value: " -Djava.io.tmpdir=/opt/netreveal/standaloneHome/java/tmpWlmPnSaSimImp "
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: IMAGE_VERSION
+          value: "{{ .Values.pod.wlmPnSaDockerImage }}"
+        - name: OVERRIDE_IMAGE_VERSION
+          value: "{{ .Values.global.override.overrideDockerImageName }}"
+      {{- end }}
+
+{{- include "image.pull.secrets" . | nindent 6 }}
+
+      containers:
+      - name: wlm-pn-sa-sim
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnSaDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        {{- if eq .Values.global.useResourceConstraints "true" }}
+        resources:
+          requests:
+            memory: {{ .Values.pod.resources.requests.memory }}
+            cpu: {{ .Values.pod.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.pod.resources.limits.memory }}
+            cpu: {{ .Values.pod.resources.limits.cpu }}
+        {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            export JAVA_OPTS="${JAVA_OPTS} {{ .Values.pod.java.extraJavaOpts }} -XX:MaxRAM={{ .Values.pod.java.standaloneMaxRam }} "
+            export JAVA_OPTS="${JAVA_OPTS} -Djava.io.tmpdir=/opt/netreveal/standaloneHome/java/tmp "
+            export JAVA_OPTS="${JAVA_OPTS} -Djavax.net.ssl.trustStore=/opt/netreveal/standaloneHome/server.jks -Djavax.net.ssl.trustStorePassword=${KEYSTORE_PASS} "
+            export JAVA_OPTS="${JAVA_OPTS} "
+            {{- if eq .Values.pod.java.switchOnDebug true }}
+            export JAVA_OPTS="${JAVA_OPTS} -Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=0.0.0.0:8788 "
+            {{- end }}
+            /opt/netreveal/standaloneHome/standalone-start.sh
+        env:
+        - name: KEYSTORE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-jks-password
+              key: password
+        - name: STANDALONE_RUNNER_HEAP_MAX
+          value: {{ .Values.pod.java.standaloneRunnerHeapMax }}
+        - name: STANDALONE_RUNNER_HEAP_MIN
+          value: {{ .Values.pod.java.standaloneRunnerHeapMin }}
+        - name: IMPORT_EXPORT_HEAP_MAX
+          value: {{ .Values.pod.java.importExportHeapMax }}
+        - name: IMPORT_EXPORT_HEAP_MIN
+          value: {{ .Values.pod.java.importExportHeapMin }}
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        {{- if eq .Values.pod.java.switchOnDebug true }}
+        ports:
+        - containerPort:  8788
+        {{- end }}
+        volumeMounts:
+       {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnSaSim .Values.global.override.chartEnable.wlmPnSaSimVersions.configuration) }}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-conf-override
+          mountPath: /opt/netreveal/standaloneHome/conf
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-lib-override
+          mountPath: /opt/netreveal/standaloneHome/lib
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-import-export
+          mountPath: /opt/netreveal/standaloneHome/importExport
+        {{- end }}
+        - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-logs") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/logs
+        {{- include "wlm.pn.sa.sim.log4j2.volume.mount" . | indent 8 }}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-java-tmp
+          mountPath: /opt/netreveal/standaloneHome/java
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-temp-reports
+          mountPath: /opt/netreveal/standaloneHome/temp/reports
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-conf-temp
+          mountPath: /opt/netreveal/standaloneHome/conf/temp
+        - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-hsqldb") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/hsqldb
+        - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-conf-wlm") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/conf/wlm
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-server-base-config-properties
+          mountPath: /opt/netreveal/standaloneHome/conf/base_config.properties
+          subPath: base_config.properties
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+        - name: {{ .Release.Name }}-wlm-merged-keystore
+          mountPath: /opt/netreveal/standaloneHome/server.jks
+          subPath: server.jks
+          readOnly: true
+        {{- if ne $.Values.global.baseConfigProperties.kafka.securityProtocol "PLAINTEXT" }}
+        - name: {{ .Release.Name }}-kafka-wlm-pn-sa-sim-jks-volume
+          mountPath: /opt/netreveal/standaloneHome/conf/keys/kafka.keystore.jks
+          subPath: kafka.keystore.jks
+        - name: {{ .Release.Name }}-kafka-wlm-pn-sa-sim-jks-volume
+          mountPath: /opt/netreveal/standaloneHome/conf/keys/kafka.truststore.jks
+          subPath: kafka.truststore.jks
+        {{- end }}
+        {{- if .Values.pod.livenessProbe }}
+        livenessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - '-c'
+              - ps -ef | grep 'standaloneRunner' && exit 0 || exit 1
+          {{- toYaml .Values.pod.livenessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.readinessProbe }}
+        readinessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - '-c'
+              - ps -ef | grep 'standaloneRunner' && exit 0 || exit 1
+          {{- toYaml .Values.pod.readinessProbe | nindent 10 }}
+        {{- end }}
+      volumes:
+        {{ include "secret-volumes.kafka.jks" (merge (dict "solution" $solution ) . ) | nindent 8 }}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-java-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-temp-reports
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-conf-temp
+          emptyDir: {}
+       {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnSaSim .Values.global.override.chartEnable.wlmPnSaSimVersions.configuration) }}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-conf-override
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-import-export
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-lib-override
+          emptyDir: {}
+        {{- end }}
+        - name: {{ .Release.Name }}-wlm-indexes
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-server-base-config-properties
+          configMap:
+            name: {{ .Release.Name }}-wlm-pn-sa-sim-base-config-property
+            items:
+            - key: base_config.properties
+              path: base_config.properties
+        {{- include "wlm.pn.sa.sim.log4j2.volume" . | indent 8 }}
+        {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnSaSim .Values.global.override.chartEnable.wlmPnSaSimVersions.configuration) }}
+        - name: {{ .Release.Name }}-wlm-pn-sa-sim-import-base-config-property
+          configMap:
+            name: {{ .Release.Name }}-wlm-pn-sa-sim-import-base-config-property
+            items:
+            - key: base_config.properties
+              path: base_config.properties
+        {{- end }}
+        - name: {{ .Release.Name }}-nr-ui-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-nr-ui
+            items:
+            - key: keystore.p12
+              path: nr-ui.jks
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-wlm-pn-rt
+            items:
+            - key: keystore.p12
+              path: wlm-pn-rt.jks
+        - name: {{ .Release.Name }}-wlm-merged-keystore
+          emptyDir: {}
+      restartPolicy: Always
+  volumeClaimTemplates:
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-logs") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "wlmPnSaSim.pvcApplicationLogsStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-conf-wlm") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "wlmPnSaSim.pvcConfWlmStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-sa-sim-hsqldb") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "wlmPnSaSim.pvcHsqldbStorage" . }}

@@ -1,0 +1,60 @@
+{{- if (include "aw.apisixIngressTls" .) }}
+{{- /*
+mode "ingress": front the APISIX gateway with an ingress-nginx Ingress that
+terminates TLS, and let APISIX run plain HTTP behind it (apisix.service stays a
+ClusterIP; the gateway's :443 listener and cert mount are off). This is the
+standard k8s pattern and the way the shared InvHub cluster already does TLS
+(ingress-nginx + cert-manager). With apisix.tls.ingress.clusterIssuer set,
+cert-manager's ingress-shim issues and renews `existingSecret` automatically;
+otherwise `existingSecret` must already exist (e.g. a synced wildcard).
+
+Defaults keep parity with the gateway's own limits: proxy-body-size matches
+APISIX's 64m cap (ingress-nginx defaults to 1m and would 413 the 50 MB agent
+build context first), and the read-timeout + buffering-off keep long SSE
+streams alive. Override any of them via apisix.tls.ingress.annotations.
+*/ -}}
+{{- $tls := .Values.apisix.tls -}}
+{{- $ann := dict
+      "nginx.ingress.kubernetes.io/ssl-redirect" "true"
+      "nginx.ingress.kubernetes.io/proxy-body-size" "64m"
+      "nginx.ingress.kubernetes.io/proxy-read-timeout" "300"
+      "nginx.ingress.kubernetes.io/proxy-buffering" "off" -}}
+{{- if $tls.ingress.clusterIssuer -}}
+{{- $_ := set $ann "cert-manager.io/cluster-issuer" $tls.ingress.clusterIssuer -}}
+{{- end -}}
+{{- /* Deduped: nginx rejects a repeated CIDR. Empty emits no annotation (fail-open). */ -}}
+{{- $allowIPs := concat ($tls.ingress.ingressAllowList.customerIPs | default list) ($tls.ingress.ingressAllowList.platformIPs | default list) | uniq | compact -}}
+{{- if $allowIPs -}}
+{{- $_ := set $ann "nginx.ingress.kubernetes.io/whitelist-source-range" (join "," $allowIPs) -}}
+{{- end -}}
+{{- range $k, $v := ($tls.ingress.annotations | default dict) -}}
+{{- $_ := set $ann $k $v -}}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "aw.prefix" . }}-apisix
+  labels:
+    app: assembly-apisix
+    tier: gateway
+    {{- include "aw.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml $ann | nindent 4 }}
+spec:
+  ingressClassName: {{ $tls.ingress.className }}
+  tls:
+    - hosts:
+        - {{ $tls.publicHostname | quote }}
+      secretName: {{ $tls.existingSecret }}
+  rules:
+    - host: {{ $tls.publicHostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "aw.prefix" . }}-apisix
+                port:
+                  number: 80
+{{- end }}

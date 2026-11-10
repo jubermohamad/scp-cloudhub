@@ -1,0 +1,85 @@
+# zot
+
+![Version: 0.1.104](https://img.shields.io/badge/Version-0.1.104-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v2.1.15](https://img.shields.io/badge/AppVersion-v2.1.15-informational?style=flat-square)
+
+A zot registry helm chart for Kubernetes
+
+## Values
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| configFiles."config.json" | string | `"{\n  \"storage\": { \"rootDirectory\": \"/var/lib/registry\" },\n  \"http\": { \"address\": \"0.0.0.0\", \"port\": \"5000\" },\n  \"log\": { \"level\": \"debug\" }\n}"` |  |
+| deploymentAnnotations | object | `{}` |  |
+| dnsConfig | object | `{}` |  |
+| dnsPolicy | string | `"ClusterFirst"` |  |
+| env | string | `nil` |  |
+| externalSecrets | list | `[]` |  |
+| extraArgs | list | `[]` |  |
+| extraContainers | list | `[]` |  |
+| extraVolumeMounts | list | `[]` |  |
+| extraVolumes | list | `[]` |  |
+| httpGet.port | int | `5000` |  |
+| httpGet.scheme | string | `"HTTP"` |  |
+| httproute | object | `{"annotations":{},"enabled":false,"hostnames":[],"labels":{},"parentRefs":[],"path":"/","pathType":"PathPrefix","rules":[]}` | HTTPRoute configuration for Gateway API (alternative to Ingress). Only enable this if you have Gateway API CRDs installed and a Gateway controller. |
+| httproute.annotations | object | `{}` | Annotations to add to the HTTPRoute resource. |
+| httproute.enabled | bool | `false` | Enable HTTPRoute resource creation instead of (or in addition to) Ingress. |
+| httproute.hostnames | list | `[]` | Hostnames to match for this HTTPRoute. |
+| httproute.labels | object | `{}` | Labels to add to the HTTPRoute resource. |
+| httproute.parentRefs | list | `[]` | Gateway references that the HTTPRoute attaches to. At least one parentRef is required when HTTPRoute is enabled. |
+| httproute.path | string | `"/"` | Path to match when custom rules are not specified. |
+| httproute.pathType | string | `"PathPrefix"` | Path matching type (PathPrefix, Exact, or RegularExpression). |
+| httproute.rules | list | `[]` | Advanced routing rules (optional). If not specified, a default rule matching the path will be created. Note: Any backendRefs in custom rules will be ignored and the zot service will always be used. |
+| image.pullPolicy | string | `"IfNotPresent"` |  |
+| image.repository | string | `"ghcr.io/project-zot/zot"` |  |
+| image.tag | string | `"v2.1.15"` |  |
+| ingress.annotations | object | `{}` |  |
+| ingress.className | string | `"nginx"` |  |
+| ingress.enabled | bool | `false` |  |
+| ingress.hosts[0].host | string | `"chart-example.local"` |  |
+| ingress.hosts[0].paths[0].path | string | `"/"` |  |
+| ingress.pathtype | string | `"ImplementationSpecific"` |  |
+| ingress.tls | list | `[]` |  |
+| metrics.enabled | bool | `false` |  |
+| metrics.serviceMonitor.basicAuth.passwordKey | string | `"password"` |  |
+| metrics.serviceMonitor.basicAuth.secretName | string | `"basic-auth"` |  |
+| metrics.serviceMonitor.basicAuth.usernameKey | string | `"username"` |  |
+| metrics.serviceMonitor.enabled | bool | `false` |  |
+| metrics.serviceMonitor.interval | string | `"30s"` |  |
+| metrics.serviceMonitor.path | string | `"/metrics"` |  |
+| mountConfig | bool | `false` |  |
+| mountSecret | bool | `false` |  |
+| namespace | string | `""` |  |
+| persistence | bool | `false` |  |
+| podAnnotations | object | `{}` |  |
+| podLabels | object | `{}` |  |
+| priorityClassName | string | `""` |  |
+| pvc.accessModes[0] | string | `"ReadWriteOnce"` |  |
+| pvc.create | bool | `true` |  |
+| pvc.name | string | `nil` |  |
+| pvc.storage | string | `"8Gi"` |  |
+| pvc.storageClassName | string | `nil` |  |
+| replicaCount | int | `1` |  |
+| secretFiles.htpasswd | string | `"admin:$2y$05$vmiurPmJvHylk78HHFWuruFFVePlit9rZWGA/FbZfTEmNRneGJtha\nuser:$2y$05$L86zqQDfH5y445dcMlwu6uHv.oXFgT6AiJCwpv3ehr7idc0rI3S2G"` |  |
+| service.annotations | object | `{}` |  |
+| service.clusterIP | string | `nil` |  |
+| service.externalTrafficPolicy | string | `""` |  |
+| service.internalTrafficPolicy | string | `""` |  |
+| service.nodePort | string | `nil` |  |
+| service.port | int | `5000` |  |
+| service.trafficDistribution | string | `""` |  |
+| service.type | string | `"NodePort"` |  |
+| serviceAccount.annotations | object | `{}` |  |
+| serviceAccount.create | bool | `true` |  |
+| serviceAccount.name | string | `""` |  |
+| serviceHeadless.annotations | object | `{}` |  |
+| serviceHeadless.enabled | bool | `false` |  |
+| serviceHeadless.port | int | `5000` |  |
+| startupProbe.failureThreshold | int | `3` |  |
+| startupProbe.initialDelaySeconds | int | `5` |  |
+| startupProbe.periodSeconds | int | `10` |  |
+| strategy.type | string | `"RollingUpdate"` |  |
+| test.image.repository | string | `"alpine"` |  |
+| test.image.tag | string | `"3.18"` |  |
+
+----------------------------------------------
+Autogenerated from chart metadata using [helm-docs v1.14.2](https://github.com/norwoodj/helm-docs/releases/v1.14.2)

@@ -1,0 +1,118 @@
+Thank you for installing Investigation Hub!
+
+Investigation Hub: https://{{ tpl (index .Values "invhub-ingress").host . }}/
+User Guide: https://{{ tpl (index .Values "invhub-ingress").host . }}/help
+REST API docs: https://{{ tpl (index .Values "invhub-ingress").host . }}/docs-api
+Graphql API docs: https://{{ tpl (index .Values "invhub-ingress").host . }}/docs-graphql
+Kafka UI: https://{{ tpl (index .Values "invhub-ingress").host . }}/kafka-ui
+PgAdmin: https://{{ tpl (index .Values "invhub-ingress").host . }}/pgadmin
+
+{{- $g := .Values.global | default dict -}}
+{{- $deprecated := false -}}
+{{- if and (hasKey $g "BASENAME") (ne (get $g "BASENAME") "") (or (not (hasKey $g "basename")) (eq (get $g "basename") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "DOMAIN") (ne (get $g "DOMAIN") "") (or (not (hasKey $g "domain")) (eq (get $g "domain") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "EMAIL_FROM") (ne (get $g "EMAIL_FROM") "") (or (not (hasKey $g "emailFrom")) (eq (get $g "emailFrom") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "EMAIL_HOST") (ne (get $g "EMAIL_HOST") "") (or (not (hasKey $g "emailHost")) (eq (get $g "emailHost") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "EMAIL_PORT") (ne (get $g "EMAIL_PORT") "") (or (not (hasKey $g "emailPort")) (eq (get $g "emailPort") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "EMAIL_USERNAME") (ne (get $g "EMAIL_USERNAME") "") (or (not (hasKey $g "emailUsername")) (eq (get $g "emailUsername") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "EMAIL_FROM_NAME") (ne (get $g "EMAIL_FROM_NAME") "") (or (not (hasKey $g "emailFromName")) (eq (get $g "emailFromName") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "SENSA_EMAIL_PASSWORD") (ne (get $g "SENSA_EMAIL_PASSWORD") "") (or (not (hasKey $g "emailPassword")) (eq (get $g "emailPassword") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "REMOTE_DATA_DB_TYPE") (ne (get $g "REMOTE_DATA_DB_TYPE") "") (or (not (hasKey $g "remoteDataDbType")) (eq (get $g "remoteDataDbType") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "REMOTE_DATA_DB_HOST") (ne (get $g "REMOTE_DATA_DB_HOST") "") (or (not (hasKey $g "remoteDataDbHost")) (eq (get $g "remoteDataDbHost") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "REMOTE_DATA_DB_NAME") (ne (get $g "REMOTE_DATA_DB_NAME") "") (or (not (hasKey $g "remoteDataDbName")) (eq (get $g "remoteDataDbName") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "REMOTE_DATA_DB_PORT") (ne (get $g "REMOTE_DATA_DB_PORT") "") (or (not (hasKey $g "remoteDataDbPort")) (eq (get $g "remoteDataDbPort") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "REMOTE_DATA_DB_USERNAME") (ne (get $g "REMOTE_DATA_DB_USERNAME") "") (or (not (hasKey $g "remoteDataDbUsername")) (eq (get $g "remoteDataDbUsername") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "REMOTE_DATA_DB_PASSWORD") (ne (get $g "REMOTE_DATA_DB_PASSWORD") "") (or (not (hasKey $g "remoteDataDbPassword")) (eq (get $g "remoteDataDbPassword") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "INVHUB_GOOGLE_MAPS_API_KEY") (ne (get $g "INVHUB_GOOGLE_MAPS_API_KEY") "") (or (not (hasKey $g "googleMapsApiKey")) (eq (get $g "googleMapsApiKey") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "INVHUB_PENDO_ACCOUNTID") (ne (get $g "INVHUB_PENDO_ACCOUNTID") "") (or (not (hasKey $g "pendoAccountId")) (eq (get $g "pendoAccountId") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+{{- if and (hasKey $g "INVHUB_PENDO_API_KEY") (ne (get $g "INVHUB_PENDO_API_KEY") "") (or (not (hasKey $g "pendoApiKey")) (eq (get $g "pendoApiKey") "")) -}}
+{{- $deprecated = true -}}
+{{- end -}}
+
+{{- if $deprecated }}
+
+Deprecated global keys detected (supported for now; migrate to camelCase keys):
+{{- if and (hasKey $g "BASENAME") (ne (get $g "BASENAME") "") (or (not (hasKey $g "basename")) (eq (get $g "basename") "")) }}
+- global.BASENAME -> global.basename
+{{- end }}
+{{- if and (hasKey $g "DOMAIN") (ne (get $g "DOMAIN") "") (or (not (hasKey $g "domain")) (eq (get $g "domain") "")) }}
+- global.DOMAIN -> global.domain
+{{- end }}
+{{- if and (hasKey $g "EMAIL_FROM") (ne (get $g "EMAIL_FROM") "") (or (not (hasKey $g "emailFrom")) (eq (get $g "emailFrom") "")) }}
+- global.EMAIL_FROM -> global.emailFrom
+{{- end }}
+{{- if and (hasKey $g "EMAIL_HOST") (ne (get $g "EMAIL_HOST") "") (or (not (hasKey $g "emailHost")) (eq (get $g "emailHost") "")) }}
+- global.EMAIL_HOST -> global.emailHost
+{{- end }}
+{{- if and (hasKey $g "EMAIL_PORT") (ne (get $g "EMAIL_PORT") "") (or (not (hasKey $g "emailPort")) (eq (get $g "emailPort") "")) }}
+- global.EMAIL_PORT -> global.emailPort
+{{- end }}
+{{- if and (hasKey $g "EMAIL_USERNAME") (ne (get $g "EMAIL_USERNAME") "") (or (not (hasKey $g "emailUsername")) (eq (get $g "emailUsername") "")) }}
+- global.EMAIL_USERNAME -> global.emailUsername
+{{- end }}
+{{- if and (hasKey $g "EMAIL_FROM_NAME") (ne (get $g "EMAIL_FROM_NAME") "") (or (not (hasKey $g "emailFromName")) (eq (get $g "emailFromName") "")) }}
+- global.EMAIL_FROM_NAME -> global.emailFromName
+{{- end }}
+{{- if and (hasKey $g "SENSA_EMAIL_PASSWORD") (ne (get $g "SENSA_EMAIL_PASSWORD") "") (or (not (hasKey $g "emailPassword")) (eq (get $g "emailPassword") "")) }}
+- global.SENSA_EMAIL_PASSWORD -> global.emailPassword
+{{- end }}
+{{- if and (hasKey $g "REMOTE_DATA_DB_TYPE") (ne (get $g "REMOTE_DATA_DB_TYPE") "") (or (not (hasKey $g "remoteDataDbType")) (eq (get $g "remoteDataDbType") "")) }}
+- global.REMOTE_DATA_DB_TYPE -> global.remoteDataDbType
+{{- end }}
+{{- if and (hasKey $g "REMOTE_DATA_DB_HOST") (ne (get $g "REMOTE_DATA_DB_HOST") "") (or (not (hasKey $g "remoteDataDbHost")) (eq (get $g "remoteDataDbHost") "")) }}
+- global.REMOTE_DATA_DB_HOST -> global.remoteDataDbHost
+{{- end }}
+{{- if and (hasKey $g "REMOTE_DATA_DB_NAME") (ne (get $g "REMOTE_DATA_DB_NAME") "") (or (not (hasKey $g "remoteDataDbName")) (eq (get $g "remoteDataDbName") "")) }}
+- global.REMOTE_DATA_DB_NAME -> global.remoteDataDbName
+{{- end }}
+{{- if and (hasKey $g "REMOTE_DATA_DB_PORT") (ne (get $g "REMOTE_DATA_DB_PORT") "") (or (not (hasKey $g "remoteDataDbPort")) (eq (get $g "remoteDataDbPort") "")) }}
+- global.REMOTE_DATA_DB_PORT -> global.remoteDataDbPort
+{{- end }}
+{{- if and (hasKey $g "REMOTE_DATA_DB_USERNAME") (ne (get $g "REMOTE_DATA_DB_USERNAME") "") (or (not (hasKey $g "remoteDataDbUsername")) (eq (get $g "remoteDataDbUsername") "")) }}
+- global.REMOTE_DATA_DB_USERNAME -> global.remoteDataDbUsername
+{{- end }}
+{{- if and (hasKey $g "REMOTE_DATA_DB_PASSWORD") (ne (get $g "REMOTE_DATA_DB_PASSWORD") "") (or (not (hasKey $g "remoteDataDbPassword")) (eq (get $g "remoteDataDbPassword") "")) }}
+- global.REMOTE_DATA_DB_PASSWORD -> global.remoteDataDbPassword
+{{- end }}
+{{- if and (hasKey $g "INVHUB_GOOGLE_MAPS_API_KEY") (ne (get $g "INVHUB_GOOGLE_MAPS_API_KEY") "") (or (not (hasKey $g "googleMapsApiKey")) (eq (get $g "googleMapsApiKey") "")) }}
+- global.INVHUB_GOOGLE_MAPS_API_KEY -> global.googleMapsApiKey
+{{- end }}
+{{- if and (hasKey $g "INVHUB_PENDO_ACCOUNTID") (ne (get $g "INVHUB_PENDO_ACCOUNTID") "") (or (not (hasKey $g "pendoAccountId")) (eq (get $g "pendoAccountId") "")) }}
+- global.INVHUB_PENDO_ACCOUNTID -> global.pendoAccountId
+{{- end }}
+{{- if and (hasKey $g "INVHUB_PENDO_API_KEY") (ne (get $g "INVHUB_PENDO_API_KEY") "") (or (not (hasKey $g "pendoApiKey")) (eq (get $g "pendoApiKey") "")) }}
+- global.INVHUB_PENDO_API_KEY -> global.pendoApiKey
+{{- end }}
+{{- end }}

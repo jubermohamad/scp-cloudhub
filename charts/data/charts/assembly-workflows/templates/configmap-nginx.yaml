@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aw.prefix" . }}-frontend-nginx-conf
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    {{- tpl (.Files.Get "files/frontend-nginx-default.conf") . | nindent 4 }}

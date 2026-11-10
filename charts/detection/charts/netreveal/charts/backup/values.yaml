@@ -1,0 +1,11 @@
+minio:
+  enabled: true
+  restore: false
+  image: rclone/rclone
+  schedule: "45 14 * * *"
+
+  minioCredentials:
+    endpoint: "http://minio:80"
+    secretName: minio-creds-rclone
+    accessKeyName: "access_key"
+    secretKeyName: "secret_key"

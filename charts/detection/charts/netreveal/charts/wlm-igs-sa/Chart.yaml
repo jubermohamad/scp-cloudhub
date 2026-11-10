@@ -1,0 +1,7 @@
+apiVersion: v2
+name: wlm-igs-sa
+appVersion: "9.4.0.0"
+description: A Helm chart WLM IGS Standalone (Solution 9.4.0.0; Platform 9.4.0.*)
+# netreveal chart version: 1.0.19
+version: 1.0.15
+type: application

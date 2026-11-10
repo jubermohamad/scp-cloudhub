@@ -1,0 +1,25 @@
+---
+# Private cluster image overrides for symphonyfs.azurecr.io.
+#
+# Apply on top of the default values.yaml:
+#   helm upgrade --install keycloak ./keycloak -f keycloak/values.yaml -f keycloak/values.private-registry.yaml
+#
+# Create regcred in the install namespace before deploying.
+
+global:
+  imageRegistry: "symphonyfs.azurecr.io"
+  imagePullSecrets:
+    - name: "regcred"
+
+image:
+  registry: "symphonyfs.azurecr.io"
+
+keycloakConfigCli:
+  image:
+    registry: "symphonyfs.azurecr.io"
+
+cn-postgres-keycloak:
+  image:
+    repository: "symphonyfs.azurecr.io/ghcr.io/cloudnative-pg/postgresql"
+  imagePullSecrets:
+    - name: "regcred"

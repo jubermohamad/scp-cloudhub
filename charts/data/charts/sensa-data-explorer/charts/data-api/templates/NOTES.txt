@@ -1,0 +1,8 @@
+{{ include "data-api.fullname" . }} deployed to namespace {{ .Release.Namespace }}.
+
+Check readiness (needs Postgres reachable at the configured DATABASE_URL):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "data-api.fullname" . }} 8080:{{ .Values.service.port }}
+  curl -s localhost:8080/readyz
+
+Data source: schema {{ .Values.database.schema | quote }} via secret
+{{- if .Values.database.existingSecret }} {{ .Values.database.existingSecret }} (pre-existing).{{ else }} {{ include "data-api.fullname" . }}-db (created by this chart).{{ end }}

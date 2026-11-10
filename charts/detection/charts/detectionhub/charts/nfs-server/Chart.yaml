@@ -1,0 +1,5 @@
+apiVersion: v2
+name: nfs-server
+description: A Helm chart to deploy provision storage for Spark apps with optional pod to browse pv contents.
+version: 0.1.1
+appVersion: "0.1.0"

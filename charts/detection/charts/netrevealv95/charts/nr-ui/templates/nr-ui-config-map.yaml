@@ -1,0 +1,398 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-ui-base-config-property"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-ui-base-config-property"
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+  annotations:
+    reloader.stakater.com/match: "true"
+data:
+  base_config.properties: |
+    server.name=Norkom
+    application.name={{ .Values.global.baseConfigProperties.applicationName }}
+    system.default.timezone=UTC
+    system.default.language={{ .Values.global.baseConfigProperties.systemDefaultLanguage }}
+    system.default.country={{ .Values.global.baseConfigProperties.systemDefaultCountry }}
+    system.encoding=UTF8
+    {{- include "saml.base.config.properties" . }}
+    mailserver={{ .Values.global.baseConfigProperties.mail.server }}
+    frommailid={{ .Values.global.baseConfigProperties.mail.fromMailId }}
+    mailpassword={{ .Values.global.baseConfigProperties.mail.password }}
+    mailuser={{ .Values.global.baseConfigProperties.mail.user }}
+    transaction.manager.name=java:jboss/TransactionManager
+    jndi.dataSource=java:/jdbc/ApplicationBaseDS
+    ejb.remote.naming.factory.initial=org.jboss.naming.remote.client.InitialContextFactory
+    ejb.remote.naming.provider.url=remote://${pod.name}:4447
+    jdbc.driver=org.postgresql.Driver
+    jdbc.url=
+    hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+    jdbc.userid=
+    #jdbc.passwd={{ .Values.global.baseConfigProperties.db.postgresql.password }}
+    jdbc.passwd=
+    jdbc.schema=
+    hibernate.show_sql=false
+    hibernate.cache.use_query_cache=true
+    hibernate.cache.use_second_level_cache=true
+    max.threads.batch.processing=5
+    max.threads.batch.transformation=1
+    max.threads.list.import=1
+    dbloader.home=/opt/netreveal/uiHome/conf/monitoring/dbloader
+    dbloader.data=/opt/netreveal/uiHome/data/dbloader
+    notification.email.jndi=java:jboss/mail/Default
+    notification.email.from={{ .Values.global.baseConfigProperties.mail.notificationEmailFrom }}
+    notification.email.subject=Notification
+    scenariomanager.gui.validation=false
+    scenariomanager.gui.debugger=true
+    scenariomanager.gui.debugger.maxrecords=100
+    scenariomanager.gui.background.gradient.begin.color=237,237,237
+    scenariomanager.gui.background.gradient.end.color=237,237,237
+    scenariomanager.gui.control.highlight.color=255,255,255
+    scenariomanager.gui.control.shadow.color=128,128,128
+    scenariomanager.gui.in.focus.color=247,0,74
+    scenariomanager.gui.out.of.focus.color=288,244,0
+    scenariomanager.gui.panel.background.color=237,237,237
+    scenariomanager.gui.panel.text.color=0,28,63
+    scenariomanager.gui.errorpanel.text.color=0,28,63
+    scenariomanager.gui.titlepanel.background.gradient.begin.color=70,103,144
+    scenariomanager.gui.titlepanel.background.gradient.end.color=70,103,144
+    scenariomanager.gui.titlepanel.text.color=255,255,255
+    scenariomanager.gui.row.sortable.header.color=237,237,237
+    scenariomanager.gui.row.sortable.header.text.color=70,103,144
+    scenariomanager.gui.selected.button.color=239,239,239
+    scenariomanager.gui.selected.row.color=240,173,69
+    scenariomanager.gui.table.row.color=209,229,251
+    scenariomanager.gui.toolbar.location=top
+    scenariomanager.gui.graph.logicaloperator.color=220,145,145
+    scenariomanager.gui.graph.numericaloperator.color=220,145,145
+    scenariomanager.gui.graph.identifier.color=145,145,220
+    scenariomanager.gui.graph.literal.color=145,220,145
+    scenariomanager.gui.graph.function.color=220,220,145
+    scenariomanager.gui.graph.listcontains.color=220,145,220
+    scenariomanager.gui.graph.layout=hierarchical
+    scenariomanager.gui.graph.orientation=left_to_right
+    scenariomanager.gui.graph.checkDefinition.layout=hvtree
+    scenariomanager.gui.graph.checkDefinition.orientation=top_to_bottom
+    scenariomanager.gui.graph.checkOverview.layout=hvtree
+    scenariomanager.gui.graph.checkOverview.orientation=top_to_bottom
+    scenariomanager.gui.graph.scenarioChain.layout=hvtree
+    scenariomanager.gui.graph.scenarioChain.orientation=top_to_bottom
+    scenariomanager.gui.graph.configurationVersion.layout=hierarchical
+    scenariomanager.gui.graph.configurationVersion.orientation=left_to_right
+    scenariomanager.gui.graph.layout.animate=false
+    kafka.topic.name.prefix={{ .Values.global.baseConfigProperties.kafka.topicNamePrefix }}
+    filtering.batch.transformer.max_row_count={{ .Values.baseConfigProperties.filteringBatchTransformerMaxRowCount }}
+    filtering.batch.processor.max_processing_row_amount={{ .Values.baseConfigProperties.filteringBatchProcessorMaxProcessingRowAmount }}
+    filtering.editable={{ .Values.baseConfigProperties.filteringEditable }}
+    filtering.editablelists={{ .Values.baseConfigProperties.filteringEditableLists }}
+    filtering.root.dir=/opt/netreveal/uiHome/conf/wlm
+    filtering.24x7.node.type=CENTRAL
+    filtering.initialise.used.indexes=false
+    filtering.staging.dir=/opt/WLM/staging
+    filtering.24x7.staging.sublocation.indexes.dir=indexes
+    filtering.24x7.staging.sublocation.model.dir=model
+    filtering.24x7.wlm.local.repo.basedir=${filtering.root.dir}/localRepo
+    filtering.24x7.ags.backup.recovery.interval={{ .Values.baseConfigProperties.filtering24x7AgsBackupRecorveryInterval }}
+    filtering.24x7.wlm.model.datasource.cache={{ .Values.baseConfigProperties.filtering24x7WlmModelDatasourceCache }}
+    filtering.24x7.wlm.model.datasource.cache.size={{ .Values.baseConfigProperties.filtering24x7WlmModelDatasourceCacheSize }}
+    filter.serializedMessages.dir=${filtering.root.dir}/serializedMessages
+    filtering.build.used.mem.indexes=false
+    filtering.build.indexes.onstartup={{ .Values.baseConfigProperties.filteringBuildIndexesOnStartup }}
+    filtering.db.statement.batch.size={{ .Values.baseConfigProperties.filteringDbStatementBatchSize }}
+    filtering.settings.dir=${filtering.root.dir}/settings
+    filtering.alert.saver.extension.dir=${filtering.root.dir}/alertsaver
+    filtering.alert.saver.extension.config.group=
+    filtering.archive.root.dir=${filtering.root.dir}/archive
+    filtering.archive.lists.dir=${filtering.archive.root.dir}/lists
+    filtering.archive.lists=true
+    filtering.archive.batches.dir=${filtering.archive.root.dir}/batches
+    filtering.archive.batches=true
+    filtering.archive.wlmconfig.dir=${filtering.archive.root.dir}/wlmconfig
+    filtering.archive.wlmconfig=true
+    baseplatform.root.dir=${filtering.root.dir}
+    baseplatform.transliteration.dir=${baseplatform.root.dir}/trans/file
+    eim.entity.archive.dir=/opt/netreveal/uiHome/archives/attachments
+    workflow.enable.rule.scheduler=true
+    filtering.ftp.folder=filterImport
+    filtering.worldcheck.automatic.import.dir=${filtering.root.dir}/worldcheck
+    filtering.batch.watch.import.root.dir=${filtering.root.dir}/batchwatch
+    filtering.custom.list.import.root.dir=${filtering.root.dir}/listImport
+    filtering.shared.dir=${filtering.root.dir}/shared
+    filtering.batch.shared.dir=/opt/WLM/shared
+    filtering.reports.dir=${filtering.root.dir}/reports
+    filtering.templates.dir=${filtering.root.dir}/templates
+    filtering.number.fraction.separator.is.point=true
+    filtering.controller.closesession.rollback=false
+    org.quartz.scheduler.instanceName=FilteringScheduler
+    org.quartz.scheduler.instanceId=one
+    org.quartz.threadPool.class=org.quartz.simpl.SimpleThreadPool
+    org.quartz.threadPool.threadCount=5
+    org.quartz.threadPool.threadPriority=1
+    org.quartz.jobStore.misfireThreshold=5000
+    org.quartz.jobStore.class=org.quartz.simpl.RAMJobStore
+    filtering.statistics.watchlist.matching.skip.scoring=false
+    filtering.wc.list.automatic.build.on.import=true
+    filtering.adapter.name=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.logic.TrxAcqQueue=com.norkom.wlm.business.realtime.LinkRealtimeLogicImpl
+    filtering.realtime.classname.adapter.TrxAcqQueue=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.jmsservice.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeJMSService
+    filtering.default.encoding=UTF-8
+    filtering.xsl.dir=${filtering.root.dir}/config
+    filtering.gsv.transformation.encoding=default
+    filtering.eim.ags.alertSaver.sequenceName.ultimate_default=WLM-Alert-Seq
+    filtering.eim.ags.nonAlertSaver.sequenceName.ultimate_default=WLM-NonAlert-Seq
+    filtering.singlelookup.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.singlelookup.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.realtime.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.realtime.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.batch.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.batch.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.interactive.alert.saver.classname=com.norkom.wlm.business.alert.plugin.InteractiveSearchResultSaver;EIM_WLMAlertSaverExtension.xml
+    acquisition.jms.fallback.response.queue.adapter.name=
+    acquisition.jms.fallback.response.message.transformer.name=
+    acquisition.jms.fallback.response.queue.jndi.name=
+    acquisition.jms.fallback.response.connection.factory.jndi.name=
+    acquisition.jms.fallback.response.connection.factory.user.name=
+    acquisition.jms.fallback.response.connection.factory.password=
+    filtering.fpfa.list.automatic.build.on.import=true
+    filtering.fpfa.automatic.import.dir=${filtering.root.dir}/fpfa
+    filtering.gwl.automatic.import.dir=${filtering.root.dir}/gwl
+    filtering.gwl.list.automatic.build.on.import=true
+    norkom.reports.templates.dir=conf/templates/notifications
+    norkom.velocity.templates.dir=/conf/templates
+    services.errorhandling.enabled=true
+    services.errorhandling.primaryauditor.name=er_database
+    services.errorhandling.er_database.class=com.norkom.acquisition.business.errorauditors.DbAuditor
+    filtering.batch.recovery.location=${filtering.root.dir}/shared/batch-recovery
+    filtering.batch.dbrecovery.location=${filtering.root.dir}/batch/dbrecovery
+    velocity.runtime.log.logsystem.class=org.apache.velocity.runtime.log.NullLogSystem
+    smc.eim.rootPermissions=/Scenario Manager
+    smc.eim.domain=Top Level
+    smc.eim.login.url=https://${pod.name}:8443/netreveal/loginPerform.do
+    smc.eim.user.realm=userRealm
+    smc.eim.jndi.ejb.remote.SecurityLogic=java:app/norkom_base_ejb/SecurityLogicEjb!com.norkom.base.services.SecurityLogic
+    smc.eim.jndi.ejb.remote.PermissionLogic=java:app/norkom_base_ejb/PermissionLogicEjb!com.norkom.base.services.PermissionLogic
+    smc.eim.jndi.ejb.remote.ScenarioLogic=java:app/norkom_scenariomanager_ejb/ScenarioLogicEjb!com.norkom.monitoring.services.external.ScenarioLogic
+    smc.eim.jndi.ejb.remote.AnalyticsLogic=java:app/norkom_scenariomanager_ejb/AnalyticsLogicEjb!com.norkom.monitoring.services.external.AnalyticsLogic
+    {{- include "nr.ui.elasticsearch.url" . }}
+    netreveal.search.provider.username={{ .Values.baseConfigProperties.elasticsearch.username }}
+    netreveal.search.provider.password={{ .Values.baseConfigProperties.elasticsearch.password }}
+    netreveal.search.index=nr-eim
+    netreveal.search.data.exporter.batch.size=1000
+    netreveal.search.fts.data.exporter.debug.index.record.count=-1
+    licence.file=file://opt/netreveal/uiHome/conf/fts/licence
+    netreveal.search.schema.file.location=/opt/netreveal/uiHome/conf/fts
+    netreveal.search.index.config.file=/opt/netreveal/uiHome/conf/fts/nr-eim_index.json
+    elasticsearch.clustername={{ .Release.Name }}_{{ .Values.global.namespace }}-nr-search
+    sourceApp.sourceName=eim_instance_0
+    elasticsearch.nodenameprefix=eim-exporter-node-
+    searchConfigName=EIMConfig
+    se.configuration=EIMConfig
+    db.logging=false
+    database.type=postgresql
+    datasource.type=webapp
+    se.datasource.jndi.name=java:/jdbc/ApplicationBaseDS
+    se.db.driverClassName=org.postgresql.Driver
+    se.db.url=
+    se.db.user=
+    se.db.password=
+    se.db.poolPreparedStatements= true
+    se.db.maxOpenPreparedStatements= 120
+    se.db.validationQuery= select 1 from dual
+    se.db.testOnBorrow= true
+    netreveal.datasource.jndi.name=java:/jdbc/ApplicationBaseDS
+    netreveal.db.driverClassName=org.postgresql.Driver
+    netreveal.db.url=
+    netreveal.db.user=
+    netreveal.db.password=
+    netreveal.db.queries=netrevealDbQueries.properties
+    netreveal.db.poolPreparedStatements=true
+    netreveal.db.maxOpenPreparedStatements=120
+    netreveal.db.validationQuery=select 1 from dual
+    netreveal.db.testOnBorrow=true
+    jndi.jms.connectionfactory=java:/ConnectionFactory
+    jndi.queue.ScheduleQueue=java:/jms/queue/Norkom/ScheduleQueue
+    jndi.queue.RealTimeQueue=java:/jms/queue/Norkom/RealTimeQueue
+    jndi.queue.RealTimeProcessingAckQueue=java:/jms/queue/Norkom/RealTimeProcessingAckQueue
+    jndi.queue.RealTimeProcessingQueue=java:/jms/queue/Norkom/RealTimeProcessingQueue
+    jndi.queue.NetworkQueue=java:/jms/queue/Norkom/NetworkQueue
+    jndi.queue.ProcessingQueue=java:/jms/queue/Norkom/ProcessingQueue
+    jndi.queue.BatchProcessingQueue=java:/jms/queue/Norkom/BatchProcessingQueue
+    jndi.queue.TrxTimeOutQueue=java:/jms/queue/Norkom/TrxTimeOutQueue
+    jndi.queue.TrxAcqQueue=java:/jms/queue/Norkom/TrxAcqQueue
+    jndi.queue.ListImportQueue=java:/jms/queue/Norkom/ListImportQueue
+    jndi.queue.BatchTransformationQueue=java:/jms/queue/Norkom/BatchTransformationQueue
+    jndi.queue.TrxAcqAckQueue=java:/jms/queue/Norkom/TrxAcqAckQueue
+    jndi.queue.TrxSuspectAckQueue=java:/jms/queue/Norkom/TrxSuspectAckQueue
+    rest.common.service.name=eim-services
+    rest.common.service.version=v1.0.0
+    rest.common.service.rest.url=https://${pod.name}:8443/netreveal/rest
+    rest.common.service.rest.oauth.url=https://${pod.name}:8443/netreveal/rest/oauth/token
+    rest.remote.service.rest.url=https://${pod.name}:8443/netreveal/rest
+    rest.remote.service.rest.oauth.url=https://${pod.name}:8443/netreveal/rest/oauth/token
+    filtering.batch.processing.kafka.consumer.startup=false
+    filtering.batch.transformation.kafka.consumer.startup=true
+    filtering.list.import.kafka.consumer.startup=true
+    filtering.24x7.igs.reply.producer=IGS_REPLY_PRODUCER
+    filtering.24x7.igs.reply.consumer=MASTER_IGS_RESPONSE
+    filtering.24x7.wlm.igs.write.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcWriteSleepTime }}
+    filtering.indexes.dir=${filtering.root.dir}/indexes
+    filtering.24x7.processing.node.registration.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationStartDelay }}
+    filtering.24x7.processing.node.registration.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRetryInterval }}
+    filtering.24x7.processing.node.swift.mt.linking.job.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval }}
+    filtering.24x7.processing.node.swift.mt.linking.job.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay }}
+    mailprotocol={{ .Values.global.baseConfigProperties.mail.protocol }}
+    services.errorhandling.secondaryauditor.name=er_file
+    services.errorhandling.er_file.class=com.norkom.acquisition.business.errorauditors.FileAuditor
+    services.errorhandling.er_file.path=/opt/netreveal/uiHome/logs/services/services-errors.txt
+    http.router.naming.provider.url.1=http://${pod.name}:8443/netreveal/services/process
+    router.dhc.myNode=0
+    apps.performance.monitoring.class.list=
+    jndi.queue.RealTimeFLTSQueue=java:/jms/queue/Norkom/RealTimeFLTSQueue
+    jndi.queue.RealTimeBatchBridgeQueue=java:/jms/queue/Norkom/RealTimeBatchBridgeQueue
+    process.inbound.emails=false
+    smbd.installed=true
+    smc.java.naming.factory.url.pkgs=org.jboss.ejb.client.naming
+    {{- if .Values.global.nrSolutionsSwitches.aml.enabled }}
+    installed.apps.vertical.eimagt=Y
+    installed.apps.vertical.aml=Y
+    installed.apps.vertical.amlagt=Y
+    installed.apps.vertical.amlorch=Y
+    {{- else }}
+    installed.apps.vertical.aml=N
+    installed.apps.vertical.amlagt=N
+    installed.apps.vertical.eimagt=N
+    installed.apps.vertical.amlorch=N
+    {{- end }}
+    installed.apps.vertical.amlorch_cluster={{ .Values.baseConfigProperties.installed.apps.vertical.amlorch_cluster }}
+    {{- if .Values.global.nrSolutionsSwitches.aml.enableAmlAlertGeneration.enabled }}
+    installed.apps.vertical.amldet=Y
+    {{- else }}
+    installed.apps.vertical.amldet=N
+    {{- end }}
+    amldet.smbd.home=/opt/netreveal/amlsmbd
+    amldet.tagging.enabled=true
+    active.apps.vertical.amliet=Y
+    {{- if or .Values.global.nrSolutionsSwitches.aml.amlcb.enabled (not (hasKey .Values.global.nrSolutionsSwitches.aml.amlcb "enabled") ) }}
+    installed.apps.vertical.amlcb=Y
+    installed.apps.vertical.amlcbdet=Y
+    {{- else }}
+    installed.apps.vertical.amlcb=N
+    installed.apps.vertical.amlcbdet=N
+    {{- end }}
+    amlcbdet.smbd.home=/opt/netreveal/amlcbsmbd
+    amlcbdet.tagging.enabled=false
+    {{- if .Values.global.nrSolutionsSwitches.aml.amlcust.enabled }}
+    installed.apps.vertical.amlcustdet=Y
+    {{- else }}
+    installed.apps.vertical.amlcustdet=N
+    {{- end }}
+    amlcustdet.smbd.home=/opt/netreveal/amlcustsmbd
+    amlcustdet.tagging.enabled=false
+    {{- if .Values.global.nrSolutionsSwitches.aml.amlOpt.enabled }}
+    installed.apps.vertical.aml_sim=Y
+    {{- else }}
+    installed.apps.vertical.aml_sim=N
+    {{- end }}
+    amlopt.smbd.home=/opt/netreveal/amloptsmbd
+    amlopt.smbd.alert.prefix={{ .Values.baseConfigProperties.amlopt.smbd.alert.prefix }}
+    {{- if .Values.global.nrSolutionsSwitches.fincen.enabled }}
+    installed.apps.vertical.dfrm=Y
+    installed.apps.vertical.disc=Y
+    {{- else }}
+    installed.apps.vertical.dfrm=N
+    installed.apps.vertical.disc=N
+    {{- end }}
+    Fingerprint_ConnParty_Disc=DisclosureCount
+    Fingerprint_ConnParty=SourceOfFunds,CompanyForm,ComplexStructure,CountryOfOrigin,PartyTypeCode,OrgUnitCode,CountryOfResidence,NationalityCode,PostalCode,Occupation
+    Fingerprint_ConnParty_WLM=BlackListedFlag,SanctionedFlag,PepFlag,PepType,RcaFlag
+    Fingerprint_Customer_Disc=DisclosureCount
+    Fingerprint_Customer=CustomerTypeCode,CompanyForm,IncorporationDate,BusinessSegment1,CountryOfResidence,CountryOfOrigin,NationalityCode,PostalCode,Occupation,EmploymentStatus,EmployeeFlag,ResidenceFlag,FaceToFaceFlag,Channel,NearBorderFlag,BankruptFlag,SourceOfFunds,ComplexStructure,OrgUnitCode,WireInNumber,WireOutNumber,WireInVolume,WireOutVolume,CashInVolume,CashOutVolume,CheckInVolume,CheckOutVolume,OverallScoreAdjustment,IncorporationCountryCode,AdverseMediaFlag
+    Fingerprint_Customer_WLM=BlackListedFlag,SanctionedFlag,PepFlag,PepType,RcaFlag,WlmActiveAlertFlag
+    {{- if .Values.global.nrSolutionsSwitches.cdd.enabled }}
+    installed.apps.vertical.cdd=Y
+    installed.apps.vertical.cddtpdi=Y
+    installed.apps.vertical.cddcnv=Y
+    {{- else }}
+    installed.apps.vertical.cdd=N
+    installed.apps.vertical.cddtpdi=N
+    installed.apps.vertical.cddcnv=N
+    {{- end }}
+    {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    installed.apps.vertical.wlm=Y
+    installed.apps.vertical.wlmags=Y
+    {{- else }}
+    installed.apps.vertical.wlm=N
+    installed.apps.vertical.wlmags=N
+    {{- end }}
+    filtering.server.id=${pod.name}
+    filtering.fpfalist.import.append.stop.on.duplicate.detection=false
+    filtering.fpfalist.import.inmemory.processing=true
+    filtering.fpfa.xmlreader.inputbuffer.size=16384
+    default.timestamp=9999/01/01 00:00:00
+    batch.default.timestamp=1970/01/01 00:00:00
+    wlm.single.pass.mode=Y
+    wlm.wait.for.latest.indexes=Y
+    wlm.batch.proc.group.name=
+    WLM_Fingerprint_Customer=CustomerName,FirstName,LastName,Address,DateOfBirth,CustomerCategoryCode
+    WLM_Fingerprint_CustomerCustomerLink=PercentageOwnership,LinkType
+    WLM_Fingerprint_ConnParty=ConnectedPartyName,FirstName,LastName,Address,DateOfBirth
+    WLM_Fingerprint_ConnPartyCustomerLink=PercentageOwnership,LinkType
+    {{- if .Values.global.nrSolutionsSwitches.wlm.wlmTf.enabled }}
+    installed.apps.vertical.wlmtf=Y
+    {{- else }}
+    installed.apps.vertical.wlmtf=N
+    {{- end }}
+    {{- if .Values.global.nrSolutionsSwitches.wlm.wlmSp.enabled }}
+    installed.apps.vertical.wlmsp=Y
+    {{- else }}
+    installed.apps.vertical.wlmsp=N
+    {{- end }}
+    jndi.queue.SwiftMxAckQueue=java:/jms/queue/Norkom/SwiftMxAckQueue
+    jndi.queue.SwiftMxSuspectAckQueue=java:/jms/queue/Norkom/SwiftMxSuspectAckQueue
+    jndi.queue.GenericTransactionAckQueue=java:/jms/queue/Norkom/GenericTransactionAckQueue
+    jndi.queue.GenericTransactionSuspectQueue=java:/jms/queue/Norkom/GenericTransactionSuspectQueue
+    jndi.queue.SwiftAckQueue=java:/jms/queue/Norkom/SwiftAckQueue
+    jndi.queue.SwiftSuspectQueue=java:/jms/queue/Norkom/SwiftSuspectQueue
+    jndi.queue.SubjectAckQueue=java:/jms/queue/Norkom/SubjectAckQueue
+    jndi.queue.SubjectSuspectQueue=java:/jms/queue/Norkom/SubjectSuspectQueue
+    {{- if and .Values.global.nrSolutionsSwitches.cdd.enabled .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    installed.apps.vertical.cddwlm=Y
+    {{- else }}
+    installed.apps.vertical.cddwlm=N
+    {{- end }}
+    spark.operator.enabled={{ .Values.global.sparkOperator.enabled }}
+    spark.operator.protocol={{ .Values.global.sparkOperator.protocol }}
+    spark.operator.host={{ .Values.global.sparkOperator.host }}
+    spark.operator.port={{ .Values.global.sparkOperator.port }}
+    spark.operator.api.version={{ .Values.global.sparkOperator.apiVersion }}
+    spark.operator.spark.version=3.5.6
+    {{- if eq .Values.global.useImagePullSecrets "true" }}
+    spark.operator.regcred=\"imagePullSecrets\": [\"regcred\"],
+    {{- end }}
+    kafka.producer.EIM-Default-Producer.bootstrap.servers={{ include "kafka.bootstrap.servers.service.name" . }}
+    {{- include "kafka.default.producer.security" (list $ . "/opt/netreveal/uiHome") }}
+    kafka.producer.EIM-Default-Producer.metrics.interval={{ .Values.baseConfigProperties.kafka.producer.EIMDefaultProducer.metricsInterval }}
+    kafka.producer.EIM-Default-Producer.interceptor.enabled={{ .Values.baseConfigProperties.kafka.producer.EIMDefaultProducer.interceptorEnabled }}
+    kafka.consumers.list=CDDSI_ApplicationResponse,WLM_Central_Get_IGS_Response,WLM_Central_Get_PN_Messages,WLM_Central_Get_PN_Registration,WLM_Central_Get_SL_Response,WLM_KafkaInput_Swift,WLM_KafkaInput_Subject,WLM_KafkaInput_GenericTransaction,WLMAI_TF_Release
+    kafka.bootstrap.servers={{ include "kafka.bootstrap.servers.service.name" . }}
+    {{- include "kafka.defult.consumer.security" (list $ . "/opt/netreveal/uiHome") }}
+    kafka.consumer.config.DEFAULT.max.poll.records=1
+    base.normalization.cache=true
+    datasource.dataSource.dbType=PostgreSQL
+    {{- include "base.config.properties.custom.parameters" . | nindent 4 }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-ui-log4j2"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-ui-log4j2"
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+data:
+  log4j2.xml: |
+{{- include "log4j2.xml" . | indent 4 }}

@@ -1,0 +1,96 @@
+{{- if .Values.jobs.resetWorld.enabled }}
+{{- /* The widest blast radius in the chart: it wipes the whole graph AND
+       TRUNCATEs `changeset`, which is TRUTH. Guarded on BOTH stores — an
+       external graph may be shared with other tenants, and an external ledger
+       holds a world this job discards irreversibly. */}}
+{{- include "prism.destructiveGuard" (dict "ctx" $
+      "job" "reset-world"
+      "allowPath" "jobs.resetWorld.allowExternalDestructive"
+      "allow" .Values.jobs.resetWorld.allowExternalDestructive
+      "targets" (list
+        (dict "external" (not .Values.infra.neo4j.enabled)
+              "store" "Neo4j graph"
+              "endpoint" (include "prism.neo4jUri" .)
+              "does" "MATCH (n) DETACH DELETE n over the ENTIRE database")
+        (dict "external" (not .Values.infra.ledgerPostgres.enabled)
+              "store" "ledger Postgres"
+              "endpoint" (include "prism.ledgerHost" .)
+              "does" "TRUNCATE term_version, changeset (the append-only LEDGER — truth)"))) }}
+# DELIBERATE world reset: discard this environment's truth and its projections.
+#
+# The escape hatch the ordinary flow refuses to be. Run it only when the world
+# here is to be REPLACED rather than advanced. Whatever is discarded should
+# already be archived (scripts/export_ledger.py writes a portable,
+# chain-verifiable JSONL).
+#
+# This job only DESTROYS. It installs no world, because the transport is not a
+# file baked into the image: after it completes, push records in with
+#
+#     uv run python scripts/sync_ledger.py
+#
+# and then POST /admin/reconcile (or let the next write catch the graph up).
+# Splitting destroy from install keeps a reset from silently reinstalling a
+# stale artifact, which is exactly how the two sides used to fork.
+#
+# NOT a helm hook — for the obvious reason: a hook would truncate the ledger on
+# every upgrade.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "prism.fullname" . }}-reset-world{{ with .Values.jobs.resetWorld.nameSuffix }}-{{ . }}{{ end }}
+  labels:
+    app: prism-reset-world
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.jobs.resetWorld.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.jobs.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app: prism-reset-world
+        {{- include "prism.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "prism.imagePullSecrets" . | nindent 6 }}
+      {{- include "prism.scheduling" . | nindent 6 }}
+      containers:
+        - name: reset
+          image: {{ include "prism.image" (dict "ctx" $ "name" "prism-api" "tag" .Values.api.image.tag "registry" .Values.api.image.registry "repository" .Values.api.image.repository) }}
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.api.image.pullPolicy) }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              python - << 'PYEOF'
+              import asyncio
+              import psycopg
+              from prism_api.config import Settings
+              from prism_api.db import create_driver
+
+              async def main() -> None:
+                  settings = Settings.from_env()
+                  driver = create_driver(settings)
+                  async with driver.session(database="neo4j") as session:
+                      while True:  # batched: a full-graph delete in one tx can OOM neo4j
+                          rec = await (await session.run(
+                              "MATCH (n) WITH n LIMIT 5000 DETACH DELETE n RETURN count(*) AS d"
+                          )).single()
+                          if rec is None or int(rec["d"]) == 0:
+                              break
+                  await driver.close()
+                  print("graph projection wiped")
+                  async with await psycopg.AsyncConnection.connect(settings.ledger_pg_dsn) as conn:
+                      # TRUNCATE is the sanctioned bypass of the append-only trigger
+                      await conn.execute("TRUNCATE term_version, changeset")
+                  print("LEDGER TRUNCATED — this environment now holds no world")
+                  print("install one with: uv run python scripts/sync_ledger.py")
+
+              asyncio.run(main())
+              PYEOF
+              python scripts/load_constraints.py
+          env:
+            - name: PYTHONPATH
+              value: /app
+            {{- include "prism.graphAndLedgerEnv" . | nindent 12 }}
+{{- end }}

@@ -1,0 +1,13 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-custom-metrics-configmap
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: {{ .Release.Name }}-custom-metrics-configmap
+data:
+  {{- range $index, $script := .Values.sql_scripts }}
+  script-{{ $index }}.sql: |-
+    {{ $script | indent 4 }}
+  {{- end }}

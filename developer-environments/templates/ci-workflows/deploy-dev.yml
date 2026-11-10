@@ -1,0 +1,30 @@
+name: Deploy Shared Dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy
+        required: false
+        default: main
+
+concurrency:
+  group: deploy-sri-investigation-api-sri-investigation-dev
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    uses: company/cloudhub-workflows/.github/workflows/deploy-aks-dev.yml@v1
+    with:
+      component-id: sri-investigation-api
+      source-branch: ${{ github.event.inputs.branch || 'main' }}
+      cluster-name: ${{ vars.SRI_INVESTIGATION_AKS_CLUSTER }}
+      namespace: sri-investigation-dev
+      release-name: sri-investigation-api
+      image-repository: ${{ vars.ACR_LOGIN_SERVER }}/sri/investigation-api
+      image-tag: ${{ github.sha }}
+      image-digest: ''
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

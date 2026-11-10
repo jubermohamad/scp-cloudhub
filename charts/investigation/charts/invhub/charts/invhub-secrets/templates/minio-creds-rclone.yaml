@@ -1,0 +1,13 @@
+{{- $secretName := "minio-creds-rclone" -}}
+{{- $minioCredsSecretName := "minio-creds" -}}
+{{- $minioCredsSecret := (lookup "v1" "Secret" .Release.Namespace $minioCredsSecretName) | default dict -}}
+{{- $minioCredsData := get $minioCredsSecret "data" | default dict -}}
+{{- $password := include "invhub-secrets.getOrGenerateSecretValue" (dict "value" .Values.global.PASSWORD "existingData" $minioCredsData "secretName" $minioCredsSecretName "secretKey" "root-password") -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName | quote }}
+type: Opaque
+stringData:
+  access_key: {{ .Values.global.MINIO_USER | quote }}
+  secret_key: {{ $password | quote }}

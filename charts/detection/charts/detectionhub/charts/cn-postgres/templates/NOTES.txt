@@ -1,0 +1,20 @@
+PostgreSQL cluster has been deployed using CloudNativePG operator.
+
+Connection Details:
+------------------
+Host: {{ include "cn-postgres.fullname" . }}-rw (read-write)
+      {{ include "cn-postgres.fullname" . }}-ro (read-only)
+Port: 5432
+
+Managed roles have been created according to the configuration.
+To get credentials for a specific role, use:
+    kubectl get secret <role-secret-name> -o jsonpath="{.data.password}" | base64 --decode
+
+To check the cluster status:
+    kubectl get cluster {{ include "cn-postgres.fullname" . }}
+
+To view the logs:
+    kubectl logs -l postgresql={{ include "cn-postgres.fullname" . }} -c postgres
+
+For more information about CloudNativePG, visit:
+https://cloudnative-pg.io/documentation/current/

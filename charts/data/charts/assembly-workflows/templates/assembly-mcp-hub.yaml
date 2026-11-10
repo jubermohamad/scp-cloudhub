@@ -1,0 +1,225 @@
+{{- if .Values.mcpHub.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-mcp-hub
+  labels:
+    app: assembly-mcp-hub
+    tier: platform
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.mcpHub.replicas }}
+  revisionHistoryLimit: 3
+  {{- if .Values.mcpHub.persistence.enabled }}
+  # Process-mode server workspaces live on a ReadWriteOnce PVC (see below). A
+  # rolling update would try to attach the disk to the new pod while the old pod
+  # still holds it (Multi-Attach error / stuck rollout), so recreate instead.
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      app: assembly-mcp-hub
+  template:
+    metadata:
+      labels:
+        app: assembly-mcp-hub
+        tier: platform
+        {{- include "aw.labels" . | nindent 8 }}
+      annotations:
+        # Forces a rollout whenever platform-secrets changes -- secretKeyRef env
+        # vars are read once at container start, so without this a secret rotation
+        # never reaches already-running pods (#1325). Secrets are deterministic now
+        # (no randAlphaNum/lookup), so we hash the rendered Secret directly: it
+        # changes iff the actual content changes (incl. database-url, derived from
+        # the pg password) -- no spurious rollout on values-structure changes, and
+        # no need to fold in infra.postgres/externalInfra.
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+    spec:
+      # This workload does not call the Kubernetes API.
+      automountServiceAccountToken: false
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.scheduling" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+        - name: {{ include "aw.prefix" . }}-mcp-hub
+          image: {{ include "aw.image" (dict "registry" .Values.image.registry "repo" .Values.mcpHub.image.repository "default" "assembly-workflows-mcp-hub" "tag" .Values.mcpHub.image.tag "globalTag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: MCP_HUB_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: database-url
+            - name: MCP_HUB_REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: redis-url
+            - name: MCP_HUB_ALLOWED_ORIGINS
+              value: {{ toJson .Values.mcpHub.allowedOrigins | quote }}
+            - name: MCP_HUB_DEBUG
+              value: {{ .Values.mcpHub.debug | quote }}
+            - name: MCP_HUB_MCP_RUNNER_MODE
+              value: {{ .Values.mcpHub.processDeployments.runnerMode | quote }}
+            # Process mode runs uploaded server code in this pod. It is an
+            # explicit opt-in until deployments use a dedicated isolated runner.
+            - name: MCP_HUB_ENABLE_PROCESS_DEPLOYMENTS
+              value: {{ .Values.mcpHub.processDeployments.enabled | quote }}
+            - name: MCP_HUB_PROCESS_AUTOSTART
+              value: {{ .Values.mcpHub.processDeployments.autostart | quote }}
+            # Per-process caps on uploaded code (process mode). The pod's own
+            # resources block is the backstop; these keep one tenant's server from
+            # consuming the whole pod and taking the hub down for everyone.
+            - name: MCP_HUB_PROCESS_MEMORY_LIMIT_MB
+              value: {{ .Values.mcpHub.processDeployments.limits.memoryMb | quote }}
+            - name: MCP_HUB_PROCESS_MAX_PROCS
+              value: {{ .Values.mcpHub.processDeployments.limits.maxProcs | quote }}
+            - name: MCP_HUB_PROCESS_MAX_FILE_SIZE_MB
+              value: {{ .Values.mcpHub.processDeployments.limits.maxFileSizeMb | quote }}
+            - name: MCP_HUB_PROCESS_MAX_OPEN_FILES
+              value: {{ .Values.mcpHub.processDeployments.limits.maxOpenFiles | quote }}
+            # Address other pods (e.g. assembly-engine) use to reach an uploaded
+            # MCP server running as a subprocess in THIS pod. The server binds a
+            # dynamic port not published by the Service, so peers connect to the
+            # pod IP directly over the cluster's flat pod network.
+            - name: MCP_HUB_SELF_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: MCP_HUB_LOG_LEVEL
+              value: INFO
+            - name: KEYCLOAK_SERVER_URL
+              value: {{ include "aw.keycloakServerUrl" . | quote }}
+            {{- with (include "aw.keycloakExpectedIssuer" .) }}
+            - name: KEYCLOAK_EXPECTED_ISSUER
+              value: {{ . | quote }}
+            {{- end }}
+            - name: INTERNAL_SERVICE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: internal-service-api-key
+            - name: FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: fernet-key
+            - name: ASSEMBLY_CORE_URL
+              value: "http://{{ include "aw.prefix" . }}-core:8000"
+            - name: ASSEMBLY_ENGINE_URL
+              value: "http://{{ include "aw.prefix" . }}-engine:8000"
+            # Base URL the engine uses to reach this hub's in-process MCP servers
+            # (platform-tools, memory-store, agent-studio). Must be the Service
+            # DNS:port (8011), not the containerPort (8000) which isn't exposed
+            # cluster-wide (#59).
+            - name: ASSEMBLY_MCP_HUB_INTERNAL_URL
+              value: "http://{{ include "aw.prefix" . }}-mcp-hub:8011"
+            - name: LLM_GATEWAY_URL
+              value: "http://{{ include "aw.prefix" . }}-llm-gateway:8006"
+            - name: AUTH_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: auth-mode
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: jwt-secret
+            {{- if .Values.mcpHub.persistence.enabled }}
+            # Persist process-mode workspaces so uploaded MCP servers survive a
+            # pod restart (issue #407). Must match process_deploy_root.
+            - name: MCP_HUB_PROCESS_DEPLOY_ROOT
+              value: {{ .Values.mcpHub.persistence.mountPath | quote }}
+            {{- end }}
+            {{- if (include "aw.urlValidationAllowHosts" .) }}
+            {{- include "aw.urlValidationEnv" . | trim | nindent 12 }}
+            {{- end }}
+            {{- with .Values.mcpHub.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.mcpHub.resources | nindent 12 }}
+          {{- if .Values.mcpHub.persistence.enabled }}
+          volumeMounts:
+            - name: process-workspaces
+              mountPath: {{ .Values.mcpHub.persistence.mountPath | quote }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /api/v1/mcp/health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/v1/mcp/health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      {{- if .Values.mcpHub.persistence.enabled }}
+      volumes:
+        - name: process-workspaces
+          persistentVolumeClaim:
+            claimName: {{ include "aw.prefix" . }}-mcp-hub-workspaces
+      {{- end }}
+---
+{{- if .Values.mcpHub.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "aw.prefix" . }}-mcp-hub-workspaces
+  labels:
+    app: assembly-mcp-hub
+    {{- include "aw.labels" . | nindent 4 }}
+  annotations:
+    # User MCP workspaces (uploads + per-server venvs) must survive an
+    # upgrade that renders without this PVC — helm orphans, never deletes.
+    "helm.sh/resource-policy": keep
+spec:
+  # ReadWriteOnce: process-mode servers run as subprocesses inside a single pod
+  # (workspace + per-server venv on disk), so the workspace is pod-affine and
+  # does not need ReadWriteMany. This also keeps venvs on a real block device
+  # rather than an SMB share (azurefile), which mishandles exec bits/symlinks.
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.mcpHub.persistence.storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.mcpHub.persistence.size }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-mcp-hub
+  labels:
+    app: assembly-mcp-hub
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8011
+      targetPort: 8000
+    {{- /*
+      Dynamically deployed MCP servers listen on their own port inside the mcp-hub pod
+      (deployment_service allocates from this range), so each needs a Service port to be
+      reachable. A Service cannot express a range — every port is enumerated — which is
+      why this is opt-in and bounded rather than always-on. (demo publishes 9000-9100)
+    */ -}}
+    {{- if .Values.mcpHub.dynamicPorts.enabled }}
+    {{- range $p := untilStep (int .Values.mcpHub.dynamicPorts.from) (int (add1 .Values.mcpHub.dynamicPorts.to)) 1 }}
+    - port: {{ $p }}
+      targetPort: {{ $p }}
+      name: mcp-{{ $p }}
+    {{- end }}
+    {{- end }}
+  selector:
+    app: assembly-mcp-hub
+{{- end }}

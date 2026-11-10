@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "zot.fullname" . }}-test-connection"
+  namespace: {{ .Values.namespace | default .Release.Namespace }}
+  labels:
+    {{- include "zot.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+spec:
+  {{- $pullSecrets := .Values.imagePullSecrets | default list }}
+  {{- if and (eq (len $pullSecrets) 0) .Values.global .Values.global.imagePullSecrets }}
+  {{- $pullSecrets = .Values.global.imagePullSecrets }}
+  {{- end }}
+  {{- if $pullSecrets }}
+  imagePullSecrets:
+    {{- range $pullSecrets }}
+    - name: {{ .name | default . }}
+    {{- end }}
+  {{- end }}
+  containers:
+    - name: wget
+      {{- if and (index .Values "test") (index .Values "test" "image") }}
+      image: {{ .Values.test.image.repository | default "alpine" }}:{{ .Values.test.image.tag | default "3.18" }}
+      imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+      {{- else }}
+      image: alpine:3.18
+      imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+      {{- end }}
+      command:
+      - sh
+      - -c
+      - |
+        scheme="http"
+        {{- if eq $.Values.httpGet.scheme "HTTPS"}}
+          scheme="https"
+        {{- end }}
+        echo "$scheme"
+        {{- if .Values.authHeader }}
+          wget --no-check-certificate --header "Authorization: Basic {{ .Values.authHeader }}" $scheme://{{ include "zot.fullname" . }}:{{ .Values.service.port }}/v2/_catalog
+        {{- else }}
+          wget --no-check-certificate $scheme://{{ include "zot.fullname" . }}:{{ .Values.service.port }}/v2/_catalog
+        {{- end }}
+  restartPolicy: Never

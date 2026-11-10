@@ -1,0 +1,150 @@
+{{- /*
+THE GENERIC GATE — one oauth2-proxy bound to the platform Keycloak, used by any
+ingress that has no native OIDC support, through nginx's auth_request:
+
+    nginx.ingress.kubernetes.io/auth-url:    "https://$host/oauth2/auth"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/oauth2/start?rd=$escaped_request_uri"
+
+Why this exists even though MinIO, pgAdmin and Kafka UI all speak OIDC natively:
+
+  * some consoles never will (a static dashboard, a vendor UI with basic auth),
+    and the alternative is leaving them open;
+  * it is defence in depth for the ones that do — an ingress-level gate fails
+    CLOSED if an app's own auth is misconfigured;
+  * it is the pattern this platform already runs for the AI Store (its
+    oauth2-proxy + dex pair), so operators recognise it.
+
+DEFAULT OFF. Turning it on is two steps, deliberately separate: enable it here,
+then add the two annotations to the ingresses you want gated. An ingress-level
+redirect changes what a health check sees (302 to Keycloak instead of the app's
+own response), so it should never appear by surprise.
+
+⚠️ The `auth-url` above resolves the PUBLIC host from inside the ingress
+controller, so the controller must be able to reach it — and after a DNS
+repoint its resolver cache can hold the old LB IP (this platform hit exactly
+that: every gated host returned nothing until the controller was restarted).
+Prefer the in-cluster form where the proxy is same-namespace:
+`http://<release>-ops-auth-proxy.<ns>.svc.cluster.local/oauth2/auth`.
+*/}}
+{{- if .Values.opsAuthProxy.enabled }}
+{{- $fullname := printf "%s-ops-auth-proxy" .Release.Name | trunc 63 | trimSuffix "-" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform-services.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ops-auth-proxy
+spec:
+  replicas: {{ .Values.opsAuthProxy.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ops-auth-proxy
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ops-auth-proxy
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: ops-auth-proxy
+    spec:
+      {{- with .Values.opsAuthProxy.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: oauth2-proxy
+          image: {{ .Values.opsAuthProxy.image | quote }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          args:
+            - --provider=keycloak-oidc
+            - --oidc-issuer-url={{ .Values.opsAuthProxy.issuerUrl }}
+            - --client-id={{ .Values.opsAuthProxy.clientId }}
+            - --redirect-url={{ .Values.opsAuthProxy.redirectUrl }}
+            - --http-address=0.0.0.0:4180
+            - --email-domain=*
+            - --scope=openid profile email roles
+            # THE GATE: only this realm role may pass. oauth2-proxy reads
+            # Keycloak realm roles as groups of the form `role:<name>`.
+            - --allowed-role={{ .Values.opsAuthProxy.allowedRole }}
+            - --set-xauthrequest=true
+            - --pass-access-token=true
+            - --reverse-proxy=true
+            - --cookie-secure=true
+            - --skip-provider-button=true
+            {{- range .Values.opsAuthProxy.extraArgs }}
+            - {{ . }}
+            {{- end }}
+          env:
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.opsAuthProxy.clientSecret.secretName | quote }}
+                  key: {{ .Values.opsAuthProxy.clientSecret.secretKey | quote }}
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.opsAuthProxy.cookieSecret.secretName | quote }}
+                  key: {{ .Values.opsAuthProxy.cookieSecret.secretKey | quote }}
+          ports:
+            - name: http
+              containerPort: 4180
+          readinessProbe:
+            httpGet: { path: /ping, port: http }
+            initialDelaySeconds: 5
+          resources: {{- toYaml .Values.opsAuthProxy.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform-services.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ops-auth-proxy
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: ops-auth-proxy
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- if .Values.opsAuthProxy.ingress.enabled }}
+---
+{{- /* The /oauth2/* endpoints must be served on the SAME host as the app being
+       gated, otherwise the cookie and the auth_request subrequest do not line
+       up. One Ingress per gated host, hence a list. */}}
+{{- range $host := .Values.opsAuthProxy.ingress.hosts }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ printf "%s-%s" $fullname (regexReplaceAll "\\." $host "-") | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "platform-services.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: ops-auth-proxy
+  annotations:
+    {{- toYaml $.Values.opsAuthProxy.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ $.Values.opsAuthProxy.ingress.className }}
+  {{- with $.Values.opsAuthProxy.ingress.tlsSecretName }}
+  tls:
+    - hosts: [{{ $host | quote }}]
+      secretName: {{ . | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $host | quote }}
+      http:
+        paths:
+          - path: /oauth2
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullname }}
+                port: { number: 80 }
+---
+{{- end }}
+{{- end }}
+{{- end }}

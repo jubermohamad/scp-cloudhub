@@ -1,0 +1,91 @@
+pod:
+  wlmIgsDockerImage: "nri-nrod-k8s-wlm-igs-sa:s1-c9.4.0.0__r9.4.0.0__v9.4.0.35-20260312061440"
+  samlWlmIgsDockerImage: "nri-nrod-k8s-wlm-igs-sa:s1-saml-c9.4.0.0__r9.4.0.0__v9.4.0.35-20260312061440"
+  replicas: 1
+  java:
+    scheduleRunnerHeapMax: "4096M"
+    scheduleRunnerHeapMin: "2048M"
+    standaloneMaxRam: "13g"
+    importExportHeapMax: "2048M"
+    importExportHeapMin: "2048M"
+    extraJavaOpts: ""
+    switchOnDebug: false
+  livenessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    successThreshold: 1
+    timeoutSeconds: 5
+  readinessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    successThreshold: 1
+    timeoutSeconds: 5
+  resources:
+    requests:
+      memory: "10Gi"
+      cpu: "250m"
+    limits:
+      memory: "13Gi"
+      cpu: "500m"
+pvc:
+  applicationLogsStorage: 10Gi
+  confWlmStorage: 10Gi
+pv:
+  hostPath: "/var/nfs_k8s/wlmigs"
+  hostPathMinikube: "/opt/netreveal/wlmigs"
+
+log4j2:
+  functionstatsLogLevel: "info"
+  messagestatsLogLevel: "info"
+  overrideLog4j2: ""
+
+baseConfigProperties:
+  # filtering.build.indexes.onstartup
+  filteringBuildIndexesOnStartup: "false"
+# filtering.batch.transformer.max_row_count
+  filteringBatchTransformerMaxRowCount: "5000"
+# filtering.batch.processor.max_processing_row_amount
+  filteringBatchProcessorMaxProcessingRowAmount: "1000"
+# filtering.editable
+  filteringEditable: "false"
+# filtering.editablelists
+  filteringEditableLists: "true"
+# filtering.db.statement.batch.size
+  filteringDbStatementBatchSize: "100"
+# filtering.24x7.ags.backup.recovery.interval
+  filtering24x7AgsBackupRecorveryInterval: "300000"
+# filtering.24x7.wlm.igs.write.sleep.time
+  filtering24x7WlmProcWriteSleepTime: "1000"
+# filtering.24x7.processing.node.registration.start.delay
+  filtering24x7ProcessingNodeRegistrationStartDelay: "60000"
+# filtering.24x7.processing.node.registration.retry.interval
+  filtering24x7ProcessingNodeRegistrationRetryInterval: "600000"
+# filtering.24x7.processing.node.swift.mt.linking.job.retry.interval
+  filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval: "15000"
+# filtering.24x7.processing.node.swift.mt.linking.job.start.delay
+  filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay: "120000"
+  kafka:
+    producer:
+# kafka.producer.EIM-Default-Producer.interceptor.enabled
+      EIMDefaultProducer:
+        interceptorEnabled: "false"
+# kafka.producer.EIM-Default-Producer.metrics.interval
+        metricsInterval: "1200"
+  hibernate:
+    hikari:
+      autoCommit: "true"
+      connectionTimeout: "30000"
+      idleTimeout: "600000"
+      maxLifetime: "1800000"
+      minimumIdle: "3"
+      maximumPoolSize: "50"
+
+  # Project specific base_config.properties parameters. When it is defined as empty string then no new parameters are added into this file.
+  # To define new parameters please define it as follows:
+  # extraParameters: |
+  #   param1=value1
+  #   param2="value2"
+  #   param3=value3
+  extraParameters: ""

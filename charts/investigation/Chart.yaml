@@ -1,0 +1,10 @@
+apiVersion: v2
+name: investigation
+description: Investigation domain umbrella chart
+type: application
+version: 0.1.1
+appVersion: "0.1.0"
+dependencies:
+  - name: invhub
+    version: 1.397.6
+    condition: invhub.enabled

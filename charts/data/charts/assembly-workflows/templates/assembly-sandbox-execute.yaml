@@ -1,0 +1,196 @@
+{{- if .Values.sandboxExecute.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-sandbox-execute
+  labels:
+    app: assembly-sandbox-execute
+    tier: platform
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.sandboxExecute.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: assembly-sandbox-execute
+  template:
+    metadata:
+      labels:
+        app: assembly-sandbox-execute
+        tier: platform
+        {{- include "aw.labels" . | nindent 8 }}
+      annotations:
+        # Forces a rollout whenever platform-secrets changes -- secretKeyRef env
+        # vars are read once at container start, so without this a secret rotation
+        # never reaches already-running pods (#1325). Secrets are deterministic now
+        # (no randAlphaNum/lookup), so we hash the rendered Secret directly: it
+        # changes iff the actual content changes (incl. database-url, derived from
+        # the pg password) -- no spurious rollout on values-structure changes, and
+        # no need to fold in infra.postgres/externalInfra.
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.sandboxExecuteScheduling" . | nindent 6 }}
+      topologySpreadConstraints:
+        # HARD by default. ScheduleAnyway is a preference the scheduler may
+        # ignore, and once ignored nothing ever restores the spread — k8s does
+        # not move running pods to satisfy a soft constraint. Measured on
+        # assembly-perf-medium (#2123): three replicas bunched on one node did
+        # 1.84 wf/s against 5.55 spread, a 3x swing, larger than the whole CPU
+        # limit ladder from #2118. Every rollout in that session bunched them.
+        #
+        # nodeTaintsPolicy: Honor is the load-bearing part, and it is NOT
+        # optional. The scheduler rejects a node only when
+        #   (pods_there + 1) - min_pods_across_domains > maxSkew
+        # so the minimum-count domain is always spread-feasible and a hard
+        # constraint cannot really deadlock by itself. (Verified: a deployment
+        # pinned 3-on-one-node and switched to a bare DoNotSchedule rolled out
+        # cleanly to 1/1/1 — the stall predicted in #2123 does not happen.)
+        #
+        # It deadlocks when that minimum-count domain is unschedulable for a
+        # DIFFERENT reason, which is precisely node loss: a dead node holds its
+        # slot at zero while carrying node.kubernetes.io/unreachable:NoSchedule,
+        # untolerated by default. It is at once the only domain the constraint
+        # accepts and the one place nothing can land. Reproduced on dev:
+        #   0/3 nodes are available: 1 node(s) had untolerated taint(s),
+        #                            2 node(s) didn't match pod topology spread
+        # Honor drops such nodes from the domain set; the same rollout then
+        # completed 3/3. This is the #1455/#1456 failure that forced
+        # engine-worker's thin-tier soft override.
+        #
+        # matchLabelKeys is the weaker half: it keeps the OUTGOING revision's
+        # placement from steering the incoming one (upstream's guidance for
+        # rolling updates). Correctness of meaning, not deadlock avoidance.
+        #
+        # Still tier-overridable for shapes with too few nodes to absorb it.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: {{ .Values.sandboxExecute.topologySpreadWhenUnsatisfiable | default "DoNotSchedule" }}
+          matchLabelKeys:
+            - pod-template-hash
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels:
+              app: assembly-sandbox-execute
+      containers:
+        - name: {{ include "aw.prefix" . }}-sandbox-execute
+          image: {{ include "aw.image" (dict "registry" .Values.image.registry "repo" .Values.sandboxExecute.image.repository "default" "assembly-workflows-sandbox" "tag" .Values.sandboxExecute.image.tag "globalTag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          securityContext:
+            privileged: true
+          args:
+            - python
+            - -m
+            - uvicorn
+            - app.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8003"
+            - --workers
+            - "4"
+          ports:
+            - containerPort: 8003
+          env:
+            - name: SANDBOX_APP_MODE
+              value: "execute-only"
+            - name: EXECUTE_CODE_BACKEND
+              value: "nsjail"
+            # Packages baked into the sandbox image (see services/assembly-sandbox/Dockerfile).
+            # Listing them here makes the executor STRIP them from a request's
+            # allowed_packages so it skips the per-run `pip install` (the dominant
+            # code-exec latency: the common custom_code default
+            # [pandas, bs4, beautifulsoup4] was ~9s/run of pip vs ~0.5s without).
+            # Keep in sync with the Dockerfile's baked package list.
+            - name: EXECUTE_CODE_PREINSTALLED_PACKAGES
+              value: "numpy,pandas,requests,beautifulsoup4,bs4,soupsieve,lxml"
+            - name: SANDBOX_REQUIRE_NSJAIL
+              value: {{ ternary "true" "false" .Values.sandboxExecute.requireNsjail | quote }}
+            - name: ASSEMBLY_CORE_URL
+              value: "http://{{ include "aw.prefix" . }}-core:8000"
+            {{- with (include "aw.keycloakExpectedIssuer" .) }}
+            - name: KEYCLOAK_EXPECTED_ISSUER
+              value: {{ . | quote }}
+            {{- end }}
+            - name: INTERNAL_SERVICE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: internal-service-api-key
+            - name: ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: environment
+            # Egress filter: lets custom_code reach the PUBLIC internet while a
+            # cgroup-scoped iptables ruleset denies the pod network and cloud
+            # metadata. Without it, allow_network code is refused outright --
+            # measured on demo, that is 338 of 3238 custom_code executions
+            # (10.4%) across 140 traces, in the flagship workflows
+            # (check-detection, Name Screening, Citi L1/L2, AML TM).
+            #
+            # Fails closed: if the cgroup or iptables rules cannot be installed
+            # and verified at startup, host networking stays refused.
+            - name: EXECUTE_CODE_EGRESS_FILTER
+              value: {{ .Values.sandboxExecute.egressFilter.enabled | default false | quote }}
+            # Cluster DNS resolver, allowed on udp/53 ahead of the private-range
+            # denies. Without it the jailed code cannot resolve ANY name, so
+            # public egress is useless.
+            - name: EXECUTE_CODE_EGRESS_FILTER_DNS_IP
+              value: {{ .Values.sandboxExecute.egressFilter.dnsIP | default "" | quote }}
+            # This cluster's OWN public ingress. The six built-in denies cover
+            # private space only, so the platform's public IP was reachable from
+            # a code node, which loops straight back into the public API and
+            # Keycloak from the cluster's trusted egress address (#2131).
+            # Hostnames resolve to every address they carry, at install time.
+            - name: EXECUTE_CODE_EGRESS_FILTER_DENY_HOSTS
+              value: {{ .Values.sandboxExecute.egressFilter.denyHosts | default list | join "," | quote }}
+            {{- with .Values.sandboxExecute.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.sandboxExecute.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/sandbox/api/v1/health
+              port: 8003
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /api/sandbox/api/v1/health
+              port: 8003
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /api/sandbox/api/v1/health
+              port: 8003
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 10
+            failureThreshold: 60
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-sandbox-execute
+  labels:
+    app: assembly-sandbox-execute
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8003
+      targetPort: 8003
+  selector:
+    app: assembly-sandbox-execute
+{{- end }}

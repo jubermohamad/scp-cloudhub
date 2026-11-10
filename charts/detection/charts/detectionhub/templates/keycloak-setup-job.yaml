@@ -1,0 +1,286 @@
+{{- /*
+DetHub's OWN Keycloak provisioning Job (USER REQUIREMENT: "create job in DetHub
+so that can add role etc in sri" — per-product provisioning lives in the
+product's own chart, never folded into a shared one).
+
+WHY THIS EXISTS
+DetHub used to get its Keycloak material from a whole separate realm,
+`SRIDetectionUI`, imported from a realm-export ConfigMap by the server's
+`--import-realm` startup flag. That mechanism has a fatal property: import runs
+ONLY when the realm is ABSENT. Against a realm that already exists it silently
+no-ops, so no edit to DetHub's client could ever ship from the repo — the realm
+export was write-once, and every subsequent change had to be made by hand in the
+admin console. Consolidating onto the single `SRI` realm (the user's "only one
+relam need that is SRi") removes the second realm, and this Job replaces the
+import: it runs on EVERY install and upgrade, against a realm that already
+exists, which is exactly the case `--import-realm` cannot handle.
+
+DIVISION OF OWNERSHIP over realm SRI
+  keycloak-config-cli (hook weight 5)   realm, ops-console OIDC clients, USERS
+  portal keycloak-setup   (weight 10)   client `common-ui`
+  lens keycloak-setup     (weight 10)   clients `lens`, `lens-backend`
+  THIS Job               (weight 10)    SAML client `smui`, its SAML attribute
+                                        mappers, the Detection/Project roles,
+                                        and those roles' user grants
+config-cli runs with IMPORT_MANAGED_*=no-delete precisely so it does not delete
+what this Job owns. See deploy/sri-dev-centraindia/values.yaml.
+
+SAML, NOT OIDC — and that is fine on a shared realm. Protocol is a per-CLIENT
+property in Keycloak, so one realm serves DetHub over SAML while the portal,
+lens and the ops consoles use OIDC. But protocol mappers do NOT carry across:
+the SAML attribute mappers below are authored separately from the OIDC claim
+mappers in values.yaml even though both project the same underlying realm roles.
+*/}}
+{{- if .Values.keycloakSetup.enabled }}
+{{- $ks := .Values.keycloakSetup }}
+{{- if not $ks.internalUrl }}
+{{- fail "detectionhub.keycloakSetup.enabled requires keycloakSetup.internalUrl (the IN-CLUSTER Keycloak URL — the master-realm admin token lives 60s and public-ingress latency has outlived it mid-Job)" }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-keycloak-setup" (include "detectionhub.fullname" .) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "detectionhub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: keycloak-setup
+  annotations:
+    # ALWAYS a post-phase hook: it provisions INTO a realm that another chart's
+    # hook creates, and on a cold install that realm does not exist until the
+    # apply phase has run. A pre-phase hook deadlocks there, waiting for a
+    # server that cannot appear until the hook returns.
+    helm.sh/hook: post-install,post-upgrade
+    # weight 10 = AFTER keycloak-config-cli (weight 5), which creates realm SRI
+    # and its users. Same weight the portal's and lens's setup Jobs learned.
+    helm.sh/hook-weight: "10"
+    # Jobs are immutable; a stranded one blocks the next install outright.
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ $ks.backoffLimit }}
+  {{- if $ks.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ $ks.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: keycloak-setup
+    spec:
+      restartPolicy: Never
+      # via the chart helper, NOT .Values.imagePullSecrets: the pull secret for
+      # this chart is set at global.imagePullSecrets, and the image lives in a
+      # private registry — without this the Job never starts (ImagePullBackOff).
+      {{- include "detectionhub.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: keycloak-setup
+          image: {{ $ks.image | quote }}
+          imagePullPolicy: {{ $ks.imagePullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            # kcadm writes its config (the session token) under $HOME; the image
+            # runs as a non-root user with no writable home, so it must be /tmp.
+            - name: HOME
+              value: /tmp
+            - name: KEYCLOAK_ADMIN_USER
+              value: {{ $ks.adminUser | quote }}
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $ks.adminPasswordSecret.name | quote }}
+                  key: {{ $ks.adminPasswordSecret.key | quote }}
+          volumeMounts:
+            # The SP's signing certificate — the SAME file core-api signs its
+            # AuthnRequests with. Keycloak needs it as the client's
+            # `saml.signing.certificate` to VALIDATE those signatures
+            # (saml.client.signature=true). Deriving it from the Secret rather
+            # than pasting it into values keeps one source of truth: if the
+            # keypair is ever rotated, both sides move together.
+            - name: saml-cert
+              mountPath: /etc/secrets/saml
+              readOnly: true
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              # A past bug on this platform: an entrypoint without `set -e` hid
+              # migration failures. This Job must fail LOUDLY.
+              set -euo pipefail
+
+              KC={{ $ks.internalUrl | quote }}
+              REALM={{ $ks.realm | quote }}
+              ADMIN_REALM={{ $ks.adminRealm | quote }}
+              CLIENT_ID={{ $ks.client.clientId | quote }}
+              KCADM={{ $ks.kcadmPath | quote }}
+
+              login() {
+                "$KCADM" config credentials --server "$KC" \
+                  --realm "$ADMIN_REALM" \
+                  --user "$KEYCLOAK_ADMIN_USER" --password "$KEYCLOAK_ADMIN_PASSWORD"
+              }
+
+              echo "==> Logging in to $KC (admin realm $ADMIN_REALM)"
+              login
+
+              # The realm belongs to another chart's hook. Wait for it rather
+              # than assuming an ordering we do not control.
+              echo "==> Waiting for realm $REALM"
+              i=0
+              until "$KCADM" get "realms/$REALM" >/dev/null 2>&1; do
+                i=$((i+1))
+                if [[ "$i" -ge 60 ]]; then
+                  echo "ERROR: realm $REALM absent after 60 attempts — is the keycloak-config-cli hook enabled?" >&2
+                  exit 1
+                fi
+                sleep 5
+                # the admin token expires in 60s; refresh while waiting
+                login >/dev/null 2>&1 || true
+              done
+
+              # ── 1. REALM ROLES ────────────────────────────────────────────
+              # Idempotent by construction: create only when absent. These are
+              # the roles DetHub's own authorization checks read, carried over
+              # from the retired SRIDetectionUI realm.
+              # DetHub's role names contain spaces ("Project Owner", "Detection
+              # Owner"). `kcadm get roles/<name>` puts the name straight into the
+              # URL PATH unencoded, so a space makes the lookup fail rather than
+              # report "absent" — the else-branch then ran and Keycloak rejected
+              # the duplicate, failing the post-upgrade hook and wedging the
+              # release. Single-word roles passed, which is why this looked
+              # idempotent. So: create unconditionally and treat ONLY "already
+              # exists" as success. No URL path, nothing to encode, and a real
+              # error (bad token, no permission, realm gone) still fails loudly.
+              {{- range $ks.roles }}
+              login >/dev/null
+              echo "==> ensuring role {{ .name | quote }}"
+              if ! out="$("$KCADM" create roles -r "$REALM" \
+                  -s name={{ .name | quote }} \
+                  -s description={{ .description | quote }} 2>&1)"; then
+                case "$out" in
+                  *"already exists"*) echo "    already present" ;;
+                  *) echo "$out" >&2; exit 1 ;;
+                esac
+              fi
+              {{- end }}
+
+              # ── 2. SAML CLIENT ────────────────────────────────────────────
+              # The SP signing certificate as Keycloak wants it: base64 DER, i.e.
+              # the PEM body with the BEGIN/END lines and all newlines removed.
+              SP_CERT="$(grep -v 'CERTIFICATE-----' {{ printf "%s/%s" "/etc/secrets/saml" $ks.samlCertKey | quote }} | tr -d '\n\r')"
+              if [[ -z "$SP_CERT" ]]; then
+                echo "ERROR: SP signing certificate is empty" >&2
+                exit 1
+              fi
+
+              # Written to a file so the cert never appears in a process
+              # argument list, and so create and update share one definition.
+              cat >/tmp/client.json <<JSON
+              {
+                "clientId": {{ $ks.client.clientId | quote }},
+                "name": {{ $ks.client.name | quote }},
+                "description": {{ $ks.client.description | quote }},
+                "enabled": true,
+                "protocol": "saml",
+                "fullScopeAllowed": true,
+                "rootUrl": {{ $ks.client.rootUrl | quote }},
+                "baseUrl": {{ $ks.client.baseUrl | quote }},
+                "adminUrl": {{ $ks.client.assertionConsumerUrl | quote }},
+                "redirectUris": [
+                  {{ printf "%s%s/*" (trimSuffix "/" $ks.client.rootUrl) $ks.client.baseUrl | quote }},
+                  {{ $ks.client.assertionConsumerUrl | quote }}
+                  {{- range $ks.client.extraRedirectUris }},
+                  {{ . | quote }}
+                  {{- end }}
+                ],
+                {{- with $ks.client.webOrigins }}
+                "webOrigins": {{ toJson . }},
+                {{- end }}
+                "attributes": {
+                  "saml.assertion.signature": "true",
+                  "saml.authnstatement": "true",
+                  "saml.client.signature": "true",
+                  "saml.force.post.binding": "true",
+                  "saml.server.signature": "true",
+                  "saml.signature.algorithm": "RSA_SHA256",
+                  "saml_name_id_format": "username",
+                  "saml_force_name_id_format": "true",
+                  "saml_assertion_consumer_url_post": {{ $ks.client.assertionConsumerUrl | quote }},
+                  "saml_single_logout_service_url_post": {{ $ks.client.singleLogoutUrl | quote }},
+                  "saml.signing.certificate": "$SP_CERT"
+                }
+              }
+              JSON
+
+              login >/dev/null
+              CID="$("$KCADM" get clients -r "$REALM" -q clientId="$CLIENT_ID" \
+                      --fields id --format csv --noquotes 2>/dev/null || true)"
+              if [[ -z "$CID" ]]; then
+                echo "==> creating SAML client $CLIENT_ID"
+                CID="$("$KCADM" create clients -r "$REALM" -i -f /tmp/client.json)"
+              else
+                echo "==> updating SAML client $CLIENT_ID ($CID)"
+                "$KCADM" update "clients/$CID" -r "$REALM" -f /tmp/client.json
+              fi
+              echo "==> client id: $CID"
+
+              # ── 3. SAML ATTRIBUTE MAPPERS ─────────────────────────────────
+              # A subresource, so `update clients/<id>` does NOT manage them —
+              # they are reconciled by name, one call each. SAML attribute
+              # mappers are NOT interchangeable with the realm's OIDC claim
+              # mappers: different protocol, different wire format.
+              login >/dev/null
+              EXISTING="$("$KCADM" get "clients/$CID/protocol-mappers/models" -r "$REALM" \
+                           --fields name --format csv --noquotes 2>/dev/null || true)"
+              add_mapper() {
+                local name="$1" mapper="$2" attr="$3" userattr="${4:-}"
+                if printf '%s\n' "$EXISTING" | grep -qx "$name"; then
+                  echo "==> mapper '$name' already present"
+                  return 0
+                fi
+                echo "==> creating mapper '$name'"
+                if [[ "$mapper" == "saml-role-list-mapper" ]]; then
+                  "$KCADM" create "clients/$CID/protocol-mappers/models" -r "$REALM" \
+                    -s name="$name" -s protocol=saml -s protocolMapper="$mapper" \
+                    -s 'config."attribute.nameformat"=Basic' \
+                    -s "config.\"attribute.name\"=$attr" \
+                    -s "config.\"friendly.name\"=$attr" \
+                    -s 'config.single=false'
+                else
+                  "$KCADM" create "clients/$CID/protocol-mappers/models" -r "$REALM" \
+                    -s name="$name" -s protocol=saml -s protocolMapper="$mapper" \
+                    -s 'config."attribute.nameformat"=Basic' \
+                    -s "config.\"attribute.name\"=$attr" \
+                    -s "config.\"friendly.name\"=$attr" \
+                    -s "config.\"user.attribute\"=$userattr"
+                fi
+              }
+              add_mapper 'role list'  saml-role-list-mapper     Role
+              add_mapper 'username'   saml-user-property-mapper username  username
+              add_mapper 'email'      saml-user-property-mapper email     email
+              add_mapper 'first name' saml-user-property-mapper firstName firstName
+              add_mapper 'last name'  saml-user-property-mapper lastName  lastName
+
+              # ── 4. ROLE GRANTS ────────────────────────────────────────────
+              # The users themselves are declared by keycloak-config-cli (hook
+              # weight 5, so they already exist); DetHub grants only ITS OWN
+              # roles to them. A user that is absent is skipped, not fatal —
+              # a standalone DetHub install has no platform user list.
+              {{- range $user, $roles := $ks.roleAssignments }}
+              login >/dev/null
+              UID_="$("$KCADM" get users -r "$REALM" -q username={{ $user | quote }} -q exact=true \
+                       --fields id --format csv --noquotes 2>/dev/null || true)"
+              if [[ -z "$UID_" ]]; then
+                echo "==> user {{ $user }} not present in $REALM — skipping role grant"
+              else
+                echo "==> granting DetHub roles to {{ $user }}"
+                "$KCADM" add-roles -r "$REALM" --uusername {{ $user | quote }}{{ range $roles }} --rolename {{ . | quote }}{{ end }}
+              fi
+              {{- end }}
+
+              echo "==> DetHub Keycloak material provisioned into realm $REALM"
+          {{- with $ks.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: saml-cert
+          secret:
+            secretName: {{ $ks.samlSecret | quote }}
+{{- end }}

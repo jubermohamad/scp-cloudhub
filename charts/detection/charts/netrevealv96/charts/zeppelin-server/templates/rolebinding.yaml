@@ -1,0 +1,12 @@
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: {{ .Release.Name }}-zeppelin-server-role-binding
+  namespace: {{ .Values.global.namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-zeppelin-server
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}-zeppelin-server-role
+  apiGroup: rbac.authorization.k8s.io

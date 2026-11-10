@@ -1,0 +1,5 @@
+organization: Example Company Name
+host: example.com
+issuerRef:
+  name: letsencrypt-staging
+  kind: ClusterIssuer

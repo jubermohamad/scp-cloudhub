@@ -1,0 +1,7 @@
+apiVersion: v2
+name: sensaai-sanctions
+appVersion: "9.4.0.5"
+description: A Helm chart for Sensa AI
+# netreveal chart version: 1.0.19
+version: 1.0.5
+type: application

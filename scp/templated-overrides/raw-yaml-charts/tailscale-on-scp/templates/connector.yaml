@@ -1,0 +1,11 @@
+apiVersion: tailscale.com/v1alpha1
+kind: Connector
+metadata:
+  name: ts-k8s-{{ .Values.clusterName }}-lb-ip
+spec:
+  hostname: ts-k8s-{{ .Values.clusterName }}-lb-ip
+  tags: {{ include "tailscale.tags" . | indent 4 | trimSuffix "\n" }}
+  acceptRoutes: true
+  subnetRouter:
+    advertiseRoutes:
+      - "{{ .Values.lbIp }}/32"

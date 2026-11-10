@@ -1,0 +1,63 @@
+appSCPHelmPipelineRefs:
+  internalNLB: "{{ .Values.internal_NLB_flag }}"
+  internalNLBsubnet: "{{ .Values.internal_NLB_subnet }}"
+  helmChartVersion: "{{ .Values.helm_chart_version }}"
+  helmChartValuesFileRef: "{{ .Values.helm_chart_values_file_ref }}"
+  deploymentDateTimeStamp: "{{ now }}"
+  deploymentFromGithubRepo: '{{ requiredEnv "GITHUB_REPOSITORY" }}'
+  deploymentGitHubAction: '{{ requiredEnv "GITHUB_ACTION" }}'
+  deploymentRepoBranch: '{{ requiredEnv "GITHUB_REF_NAME" }}'
+  deploymentByGithubTriggeringActor: '{{ requiredEnv "GITHUB_TRIGGERING_ACTOR" }}'
+  deploymentGithubRunAttempt: '{{ requiredEnv "GITHUB_RUN_ATTEMPT" }}'
+  deploymentGithubRunnerEnv: '{{ requiredEnv "RUNNER_ENVIRONMENT" }}'
+  deploymentGithubRunnerName: '{{ requiredEnv "RUNNER_NAME" }}'
+
+# Only ingress-nginx is to be enabled, all other components must be disabled.
+ingress-nginx:
+  enabled: true
+  {{- if eq .Values.internal_NLB_flag "true" }}
+  # # # This is required for VPN clusters only, as described on the following page:
+  # # # https://netreveal.atlassian.net/wiki/spaces/NEST/pages/425459881/NROD+Ingress+Nginx+Configuration
+  controller:
+    service:
+      annotations:
+        # # # The "azure-load-balancer-internal-subnet" is the subnet name & not the subnet ID.
+        # # # It is based on this standard naming convention for SCP: <clusterName>-internal-lb-subnet
+        service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "{{ .Values.internal_NLB_subnet }}"
+        service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+        service.beta.kubernetes.io/azure-load-balancer-name: sensa-internal-load-balancer
+        service.beta.kubernetes.io/azure-load-balancer-scheme: internal
+  {{- end }}
+
+global:
+  nrSubChartSwitches:
+    enableER: false
+
+tags:
+  traces: false
+  metrics: false
+
+cert-manager:
+  enabled: false
+  installCRDs: false
+
+storageclass:
+  enabled: false
+
+reloader:
+  enabled: false
+
+minio-operator:
+  enabled: false
+
+strimzi-kafka-operator:
+  enabled: false
+
+cloudnative-pg:
+  enabled: false
+
+argo-workflows:
+  enabled: false
+
+cluster-issuers:
+  enabled: false

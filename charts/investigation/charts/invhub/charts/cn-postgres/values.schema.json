@@ -1,0 +1,142 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "backupConfig": {
+            "type": "object",
+            "properties": {
+                "backup": {
+                    "type": "object",
+                    "properties": {
+                        "barmanObjectStore": {
+                            "type": "object",
+                            "properties": {
+                                "azureCredentials": {
+                                    "type": "object",
+                                    "properties": {
+                                        "storageAccount": {
+                                            "type": "object",
+                                            "properties": {
+                                                "key": {
+                                                    "type": "string"
+                                                },
+                                                "name": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "storageKey": {
+                                            "type": "object",
+                                            "properties": {
+                                                "key": {
+                                                    "type": "string"
+                                                },
+                                                "name": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "destinationPath": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "retentionPolicy": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "schedule": {
+                    "type": "string"
+                }
+            }
+        },
+        "bootstrap": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "clusterName": {
+            "type": "string"
+        },
+        "commonAnnotations": {
+            "type": "object",
+            "properties": {
+                "prometheus.io/port": {
+                    "type": "string"
+                },
+                "prometheus.io/scrape": {
+                    "type": "string"
+                }
+            }
+        },
+        "image": {
+            "type": "object",
+            "properties": {
+                "repository": {
+                    "type": "string"
+                },
+                "tag": {
+                    "type": "string"
+                }
+            }
+        },
+        "imagePullSecrets": {
+            "type": "array"
+        },
+        "instances": {
+            "type": "integer"
+        },
+        "metrics": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "monitoring": {
+            "type": "object",
+            "properties": {
+                "customQueries": {
+                    "type": "array"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "podMonitor": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        }
+                    }
+                },
+                "prometheusRule": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        }
+                    }
+                }
+            }
+        },
+        "storage": {
+            "type": "object",
+            "properties": {
+                "size": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

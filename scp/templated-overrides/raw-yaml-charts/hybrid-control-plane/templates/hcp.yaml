@@ -1,0 +1,112 @@
+apiVersion: edbpgai.edb.com/v1alpha1
+kind: HybridControlPlane
+metadata:
+  name: {{ .Values.name }}
+spec:
+  source:
+    remote: true
+  flavour: aks
+  version: {{ .Values.version | quote }}
+  imageRegistry: {{ .Values.imageRegistry | quote }}
+  imagePullSecrets:
+    - name: edb-cred
+      namespace: edb-hcp-operator-system
+  scenarios:
+{{- if .Values.scenarios }}
+{{ toYaml .Values.scenarios | indent 4 }}
+{{- else }}
+    - core
+    - dbaas
+    - analytics
+{{- end }}
+  globalParameters:
+    internal_backup_folder: {{ .Values.internalBackupFolder | quote }}
+{{- if .Values.metricsStoragePrefix }}
+    metrics_storage_prefix: {{ .Values.metricsStoragePrefix | quote }}
+{{- end }}
+{{- if .Values.logsStoragePrefix }}
+    logs_storage_prefix: {{ .Values.logsStoragePrefix | quote }}
+{{- end }}
+    internal_db_backup_retention: 30d
+    internal_db_backup_compression: gzip
+    portal_domain_name: {{ .Values.portalDomainName | quote }}
+    portal_certificate_secret: beaco-istio-gw-cert
+    portal_port: "443"
+    storage_class: {{ .Values.storageClass | quote }}
+    session_duration_seconds: "86400"
+    dms_domain_name: {{ .Values.dmsDomainName | quote }}
+    load_balancer_provider: azure
+    load_balancer_mode: custom-only
+  componentsParameters:
+    upm-api-pnxt-metric:
+      log_level: info
+      tsdb_host: thanos-query.monitoring.svc.cluster.local
+      tsdb_port: "9090"
+    upm-api-pnxt-pd:
+      log_level: info
+    upm-istio-gateway:
+      cookie_aeskey: "WY0LfJxb4+yg99etFQBkXw+hjC6vR5zdo6WpVA7IMwo="
+      enable_server_session: "true"
+    upm-beacon:
+      beacon_server_memory_requests: "2Gi"
+      beacon_agent_memory_requests: "1.5Gi"
+      server_host: {{ .Values.beaconDomainName | quote }}
+      beacon_server_replicas: "1"
+      external_metrics_replicas: "1"
+      beacon_db_hibernation: '"off"'
+      image_discovery_credentials_secret_name: "edb-cred"
+      beacon_location_id: {{ .Values.beaconLocationId | quote }}
+    upm-prometheus:
+      cpu: 200m
+      memory: 6Gi
+      prometheus_storage_size: 20Gi
+      prometheus_retention_size: 15GB
+    upm-thanos:
+      memcached_cpu: 500m
+      memcached_memory: 2Gi
+      query_frontend_cpu: 200m
+      query_frontend_memory: 128Mi
+{{- if .Values.logsStoragePrefix }}
+    upm-loki:
+      logs_storage_prefix: {{ .Values.logsStoragePrefix | quote }}
+{{- end }}
+    upm-trust-manager:
+      cert_manager_namespace: cert-manager
+    transporter-data-operator:
+      fips_enabled: false
+    edb-migration-portal:
+      enable_pdb: false
+  beaconAgent:
+    applianceProviderEnabled: true
+    logLevel: debug
+    provisioning:
+      provider: azure
+      loadBalancersEnabled: true
+      imageDiscovery: true
+      imagesetDiscoveryContainerRegistryURL: {{ .Values.imageRegistry | quote }}
+      imagesetDiscoveryAuthenticationType: basic
+      openshift: false
+    providers:
+      - appliance
+    transparentDataEncryptionMethods:
+      - passphrase
+      - hashicorp_vault
+      - azure_kms
+  beaconServer:
+    logLevel: debug
+{{- if .Values.clusterGroups }}
+  clusterGroups:
+    role: {{ .Values.clusterGroups.role | quote }}
+{{- if .Values.clusterGroups.primary }}
+    primary:
+{{ toYaml .Values.clusterGroups.primary | nindent 6 }}
+{{- end }}
+{{- if .Values.clusterGroups.secondaries }}
+    secondaries:
+{{ toYaml .Values.clusterGroups.secondaries | nindent 6 }}
+{{- end }}
+{{- end }}
+  disabledComponents:
+{{- if .Values.disabledComponents }}
+{{ toYaml .Values.disabledComponents | indent 4 }}
+{{- end }}

@@ -1,0 +1,43 @@
+# LOCAL CHARTS ONLY - No external dependencies
+# All charts stored in: ../../../../../../charts/
+#
+# This follows the pattern of sri-provisional repo:
+# - Self-contained single repository
+# - All Helm charts included locally
+# - No external Helm repo dependencies
+
+releases:
+  - name: sri-investigation
+    namespace: sri-dev-centralindia
+    createNamespace: false  # Namespace created by workflow
+    chart: ../../../../../../charts/investigation
+    
+    values:
+      - values.generated.yaml
+    
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: sh
+        args: 
+          - -c
+          - |
+            echo "🚀 Pre-deployment checks..."
+            kubectl get namespace sri-dev-centralindia || exit 1
+      
+      - events: ["postsync"]
+        showlogs: true
+        command: sh
+        args:
+          - -c
+          - |
+            echo "✅ Post-deployment verification..."
+            kubectl rollout status deployment sri-investigation -n sri-dev-centralindia
+    
+    # Atomic deployment settings
+    atomic: true
+    wait: true
+    waitForJobs: true
+    timeout: 10m
+    
+    # No tenant/customer settings (handled by Stage 3 overlays)

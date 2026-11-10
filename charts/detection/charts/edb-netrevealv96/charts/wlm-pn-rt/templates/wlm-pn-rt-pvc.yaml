@@ -1,0 +1,148 @@
+{{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+{{ $currentScope := .}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-wlm-pn-rt-logs-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "wlmPnRt.pvcApplicationLogsStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "wlm-pn-rt") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "wlm-pn-rt-logs" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-rt-{{ $i }}/logs
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-rt-{{ $i }}/logs
+  {{- end }}
+{{- end }}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-wlm-pn-rt-app-server-logs-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "wlmPnRt.pvcServerLogsStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "wlm-pn-rt") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "wlm-pn-rt-app-server-logs" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-rt-{{ $i }}/server-logs
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-rt-{{ $i }}/server-logs
+  {{- end }}
+{{- end -}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-wlm-pn-rt-conf-wlm-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "wlmPnRt.pvcConfWlmStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "wlm-pn-rt") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "wlm-pn-rt-conf-wlm" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-rt-{{ $i }}/conf/wlm
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-rt-{{ $i }}/conf/wlm
+  {{- end }}
+{{- end -}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-wlm-pn-rt-hsqldb-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "wlmPnRt.pvcHsqldbStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "wlm-pn-rt") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "wlm-pn-rt-hsqldb" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-rt-{{ $i }}/hsqldb
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-pn-rt-{{ $i }}/hsqldb
+  {{- end }}
+{{- end -}}
+
+{{- end }}

@@ -1,0 +1,25 @@
+{{- if .Values.envFromconfigMap }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "copilot.fullname" . }}-configmap
+  labels:
+    {{- include "copilot.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+data:
+  {{- $sep := (.Values.global.separateApiResponsibilities | default false) -}}
+  {{- $internalApiUrl := (.Values.global.internalApiBaseUrl | default (ternary "http://api-for-ui:3001" "http://api:3001" $sep)) | trimSuffix "/" -}}
+  {{- $root := . }}
+  SERVICE_DISCOVERY: {{ printf "%s/graphql" $internalApiUrl | quote }}
+  INTROSPECTION_HOST: {{ printf "%s/graphql" $internalApiUrl | quote }}
+  {{- range $key, $val := .Values.global.copilot }}
+  {{- if and (ne (include "copilot.isSensitiveEnvKey" $key) "true") (not (has $key (list "SERVICE_DISCOVERY" "INTROSPECTION_HOST"))) }}
+  {{ $key }}: {{ if and (typeIs "string" $val) (contains "{{" $val) }}{{ tpl $val $root | quote }}{{ else }}{{ $val | quote }}{{ end }}
+  {{- end }}
+  {{- end }}
+  {{- range $key, $val := (default (dict) .Values.config) }}
+  {{- if and (ne $val nil) (ne ($val | toString) "") (ne (include "copilot.isSensitiveEnvKey" $key) "true") }}
+  {{ $key }}: {{ if and (typeIs "string" $val) (contains "{{" $val) }}{{ tpl $val $root | quote }}{{ else }}{{ $val | quote }}{{ end }}
+  {{- end }}
+  {{- end }}
+{{- end }}

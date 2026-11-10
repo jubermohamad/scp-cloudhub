@@ -1,0 +1,85 @@
+---
+# https://backstage.io/docs/features/software-catalog/descriptor-format#kind-user
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: jubermohamad
+  namespace: symphonysensa
+spec:
+  profile:
+    displayName: Juber Mohamad
+    email: jubermohamad@symphonysensa.com
+  memberOf: []
+---
+# Canonical Entra group entries for persona-based RBAC
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: cloudhubplatformowners
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: cloudhubappeng
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: cloudhubps
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: cloudhubsre
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: cloudhub-login-allow
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: grp-platform-super-admins
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: grp-platform-app-engineering
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: grp-platform-prof-services
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: grp-platform-sre
+spec:
+  type: team
+  children: []

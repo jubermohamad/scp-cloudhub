@@ -1,0 +1,42 @@
+# ─── Golden Helmfile Template: Frontend Service ─────────────────────────────
+# Owner: platform-team
+# DO NOT EDIT — changes must go through platform team review.
+# This template is rendered by the Service Deployment Wizard (Backstage).
+# ─────────────────────────────────────────────────────────────────────────────
+
+repositories:
+  - name: platform
+    url: https://charts.symphonyai.com
+
+releases:
+  - name: {{ service_name }}
+    namespace: {{ environment }}
+    chart: platform/frontend
+    version: "1.0.0"
+    values:
+      - values.generated.yaml
+    set:
+      - name: image.repository
+        value: {{ image_repository }}
+      - name: image.tag
+        value: {{ image_tag }}
+      - name: replicaCount
+        value: 2
+      - name: resources.requests.cpu
+        value: "250m"
+      - name: resources.requests.memory
+        value: "128Mi"
+      - name: resources.limits.cpu
+        value: "500m"
+      - name: resources.limits.memory
+        value: "256Mi"
+      - name: service.port
+        value: 3000
+      - name: ingress.enabled
+        value: true
+      - name: ingress.host
+        value: {{ service_name }}.{{ cluster_name }}.symphonyai.com
+      - name: cdn.enabled
+        value: true
+      - name: monitoring.enabled
+        value: true

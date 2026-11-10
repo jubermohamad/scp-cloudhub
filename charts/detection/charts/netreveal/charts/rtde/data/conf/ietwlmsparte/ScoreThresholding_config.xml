@@ -1,0 +1,8 @@
+<thresholdingconfig>
+	<conditions>
+		<condition  name="THR_ALERT"  check="TM_score &gt; 40"/>
+		<condition  name="THR_SCA"  check="Exempt_score &gt; 40"/>
+		<condition  name="THR_TEST"  check="1 = 1"/>
+        <condition name="SCAFeedbackNull" check="Payment_SCAPass is null"/>
+	</conditions>		
+</thresholdingconfig>

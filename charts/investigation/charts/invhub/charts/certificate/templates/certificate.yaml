@@ -1,0 +1,25 @@
+{{- if ne .Values.host "example.com" -}}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "certificate.convertHostToDashes" . }}
+spec:
+  secretName: {{ include "certificate.convertHostToDashes" . }}-tls
+  privateKey:
+    rotationPolicy: Always
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+  subject:
+    organizations:
+      - "{{ .Values.organization}}"
+  dnsNames:
+    - "*.{{ .Values.host}}"
+    - {{ .Values.host}}
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+  issuerRef:
+    name: {{ .Values.issuerRef.name}}
+    kind: {{ .Values.issuerRef.kind}}
+{{- end }}

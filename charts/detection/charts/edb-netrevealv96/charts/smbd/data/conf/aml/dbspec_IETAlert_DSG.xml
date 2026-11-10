@@ -1,0 +1,26 @@
+<dbspec name="IETAlert" comments="Alerts from V_SM_IETALERTS">
+
+    <!-- Read Alert data from V_SM_IETALERTS view -->
+    <source-query>
+SELECT 
+    ALERT_ID as "AlertID", 
+	RUN_DATE as "AlertDate", 
+	CUSTOMER_ID as "CustomerID",
+	ACCOUNT_ID as "AccountID",
+	ORGUNIT_ID as "OrgunitID", 
+	ORGUNIT_CODE as "OrgunitCode",
+	ALERT_STATUS_MAPPED as "AlertStatusMapped",
+	ALERT_STATUS_CODE as "AlertStatusCode"
+FROM
+    V_SM_IETALERTS
+WHERE
+    @WHERE@	
+ORDER BY 
+	ALERT_ID	
+    </source-query>
+    <timefield>AlertDate</timefield>
+    <keyfield>AlertID</keyfield>
+ 
+	<column fieldname="AlertDate" dataType="DATE" columnname="RUN_DATE"/>
+	
+</dbspec>

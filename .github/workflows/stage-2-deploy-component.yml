@@ -1,0 +1,368 @@
+name: 'Stage 2: Deploy Platform Component'
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        # Free-form string, NOT a choice list. CloudHub Native deploys every
+        # application that has a bundled chart under charts/ (common-res,
+        # ai-store, detectionhub, invhub, flows, dxv, sensaai-sanctions,
+        # netreveal, netrevealv95, netrevealv96, edb-netrevealv96,
+        # hybrid-manager, edb-common-res, datadog, istio-service-entry,
+        # mtls-outbound, tailscale, velero, ...). A `choice` list here made
+        # GitHub reject the dispatch with HTTP 422 for every application that
+        # was not one of the four hardcoded options.
+        description: 'Component to deploy (e.g. common-res, invhub, netrevealv96)'
+        required: true
+        type: string
+      instance:
+        description: 'Instance name (e.g. juber, dev-centralindia, prod-us-1)'
+        required: true
+        type: string
+      cluster:
+        description: 'Target AKS cluster'
+        required: true
+        type: string
+
+env:
+  KEYVAULT_NAME: cloudhub-deploy-vault
+  KEYVAULT_RG: rg-cfe-apps-mj
+  DEFAULT_RESOURCE_GROUP: rg-cfe-apps-mj
+
+jobs:
+  deploy-component:
+    name: Deploy ${{ inputs.component }} - ${{ inputs.instance }}
+    runs-on: ubuntu-latest
+    # IMPORTANT: No "needs" dependency - this stage is INDEPENDENT
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Resolve deployment definition
+        id: config
+        env:
+          COMPONENT: ${{ inputs.component }}
+          INSTANCE: ${{ inputs.instance }}
+        run: |
+          set -euo pipefail
+
+          # CloudHub Native (the deployment portal) commits its generated
+          # definitions to apps/<component>/<instance>/. The older SRI pipeline
+          # layout lives under deployments/<component>/component/<instance>/.
+          # Support both so every deployment source keeps working.
+          CANDIDATES=(
+            "apps/$COMPONENT/$INSTANCE"
+            "deployments/$COMPONENT/component/$INSTANCE"
+          )
+
+          WORKDIR=""
+          for candidate in "${CANDIDATES[@]}"; do
+            if [ -f "$candidate/helmfile.yaml" ]; then
+              WORKDIR="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$WORKDIR" ]; then
+            echo "::error::No helmfile.yaml found for $COMPONENT/$INSTANCE"
+            echo "Looked in:"
+            for candidate in "${CANDIDATES[@]}"; do
+              echo "  - $candidate/helmfile.yaml"
+            done
+            echo ""
+            echo "Existing app definitions:"
+            find apps -maxdepth 2 -mindepth 2 -type d 2>/dev/null | sort || true
+            exit 1
+          fi
+
+          echo "✅ Deployment definition: $WORKDIR/helmfile.yaml"
+          {
+            echo "workdir=$WORKDIR"
+            echo "helmfile=$WORKDIR/helmfile.yaml"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Ensure yq is available
+        run: |
+          set -euo pipefail
+          if command -v yq >/dev/null 2>&1; then
+            echo "✅ yq $(yq --version)"
+            exit 0
+          fi
+          echo "📥 Installing yq"
+          sudo curl -fsSL -o /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Read release definition
+        id: release
+        env:
+          COMPONENT: ${{ inputs.component }}
+          INSTANCE: ${{ inputs.instance }}
+          HELMFILE: ${{ steps.config.outputs.helmfile }}
+        run: |
+          set -euo pipefail
+
+          CHART="$(yq -r '.releases[0].chart // ""' "$HELMFILE")"
+          RELEASE_NAME="$(yq -r '.releases[0].name // ""' "$HELMFILE")"
+          CHART_VERSION="$(yq -r '.releases[0].version // ""' "$HELMFILE")"
+          # The release namespace is authoritative; fall back to the top-level
+          # `namespace:` key and only then to <component>-<instance>.
+          NAMESPACE="$(yq -r '.releases[0].namespace // .namespace // ""' "$HELMFILE")"
+
+          if [ -z "$CHART" ]; then
+            echo "::error::Could not read .releases[0].chart from $HELMFILE"
+            exit 1
+          fi
+          if [ -z "$RELEASE_NAME" ]; then
+            RELEASE_NAME="$COMPONENT-$INSTANCE"
+          fi
+          if [ -z "$NAMESPACE" ]; then
+            NAMESPACE="$COMPONENT-$INSTANCE"
+          fi
+
+          echo "📊 Chart:     $CHART"
+          echo "📦 Release:   $RELEASE_NAME"
+          echo "🔧 Namespace: $NAMESPACE"
+          [ -n "$CHART_VERSION" ] && echo "🏷️  Version:   $CHART_VERSION"
+
+          {
+            echo "chart=$CHART"
+            echo "release_name=$RELEASE_NAME"
+            echo "chart_version=$CHART_VERSION"
+            echo "namespace=$NAMESPACE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve chart dependencies
+        env:
+          WORKDIR: ${{ steps.config.outputs.workdir }}
+          CHART: ${{ steps.release.outputs.chart }}
+          HELMFILE: ${{ steps.config.outputs.helmfile }}
+        run: |
+          set -euo pipefail
+
+          # Helmfile `repositories:` (used by the legacy external Helm repo
+          # model) must be registered before dependencies can resolve.
+          while IFS=$'\t' read -r name url; do
+            [ -z "${name:-}" ] && continue
+            echo "➕ helm repo add $name $url"
+            helm repo add "$name" "$url" --force-update
+          done < <(yq -r '.repositories[]? | [.name, .url] | @tsv' "$HELMFILE")
+
+          if yq -e '.repositories[0]' "$HELMFILE" >/dev/null 2>&1; then
+            helm repo update
+          fi
+
+          # Bundled charts are checked in with their dependencies vendored
+          # under charts/. Reconcile anyway so a newly added dependency is
+          # fetched instead of failing the install.
+          CHART_DIR="$WORKDIR/$CHART"
+          if [ -d "$CHART_DIR" ]; then
+            echo "📦 Reconciling dependencies for $CHART_DIR"
+            helm dependency build "$CHART_DIR" --skip-refresh \
+              || helm dependency build "$CHART_DIR" \
+              || echo "::warning::helm dependency build failed; relying on vendored charts/"
+          else
+            echo "ℹ️  $CHART is not a local chart directory; skipping dependency build"
+          fi
+
+      - name: Authenticate to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Use selected target cluster
+        id: target-cluster
+        run: |
+          set -euo pipefail
+
+          CLUSTER="${{ inputs.cluster }}"
+          if [[ -z "$CLUSTER" ]]; then
+            echo "::error::The target AKS cluster is required"
+            exit 1
+          fi
+
+          echo "✅ Target cluster selected by caller: $CLUSTER"
+          echo "cluster=$CLUSTER" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch AKS credentials
+        env:
+          CLUSTER: ${{ steps.target-cluster.outputs.cluster }}
+        run: |
+          set -euo pipefail
+
+          RG="$(az aks list --query "[?name=='$CLUSTER'].resourceGroup | [0]" -o tsv 2>/dev/null || true)"
+          if [ -z "$RG" ] || [ "$RG" = "None" ]; then
+            RG="$DEFAULT_RESOURCE_GROUP"
+          fi
+
+          echo "🔐 Fetching credentials for $CLUSTER (resource group: $RG)"
+          az aks get-credentials \
+            --resource-group "$RG" \
+            --name "$CLUSTER" \
+            --overwrite-existing
+
+          kubectl cluster-info
+          echo "✅ Cluster connectivity verified"
+
+      - name: Create namespace
+        env:
+          NAMESPACE: ${{ steps.release.outputs.namespace }}
+        run: |
+          set -euo pipefail
+          echo "🔧 Ensuring namespace: $NAMESPACE"
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Run database migration
+        env:
+          WORKDIR: ${{ steps.config.outputs.workdir }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$WORKDIR/db-migration.sh" ]; then
+            echo "ℹ️  No db-migration.sh for this instance; skipping."
+            exit 0
+          fi
+          chmod +x "$WORKDIR/db-migration.sh"
+          "$WORKDIR/db-migration.sh"
+
+      - name: Deploy component with Helm
+        id: helm-deploy
+        env:
+          WORKDIR: ${{ steps.config.outputs.workdir }}
+          HELMFILE: ${{ steps.config.outputs.helmfile }}
+          CHART: ${{ steps.release.outputs.chart }}
+          CHART_VERSION: ${{ steps.release.outputs.chart_version }}
+          RELEASE_NAME: ${{ steps.release.outputs.release_name }}
+          NAMESPACE: ${{ steps.release.outputs.namespace }}
+        run: |
+          set -euo pipefail
+
+          HELMFILE_ABS="$(realpath "$HELMFILE")"
+          cd "$WORKDIR"
+
+          ARGS=(upgrade --install "$RELEASE_NAME" "$CHART" --namespace "$NAMESPACE")
+
+          # values: files declared in the helmfile release
+          while IFS= read -r values_file; do
+            [ -z "${values_file:-}" ] && continue
+            if [ -f "$values_file" ]; then
+              echo "📄 values: $values_file"
+              ARGS+=(--values "$values_file")
+            else
+              echo "::warning::values file $values_file declared in helmfile but not found"
+            fi
+          done < <(yq -r '.releases[0].values[]? | select(type == "!!str")' "$HELMFILE_ABS")
+
+          # set: inline overrides declared in the helmfile release
+          while IFS=$'\t' read -r key value; do
+            [ -z "${key:-}" ] && continue
+            # Commas separate --set assignments, so escape them in values.
+            escaped="${value//,/\\,}"
+            ARGS+=(--set "$key=$escaped")
+          done < <(yq -r '.releases[0].set[]? | [.name, (.value | tostring)] | @tsv' "$HELMFILE_ABS")
+
+          if [ -n "$CHART_VERSION" ]; then
+            ARGS+=(--version "$CHART_VERSION")
+          fi
+
+          ARGS+=(--wait --timeout 15m --atomic --cleanup-on-fail --create-namespace)
+
+          echo ""
+          echo "🚀 helm ${ARGS[*]}"
+          echo ""
+          helm "${ARGS[@]}"
+
+          echo "✅ Component deployment completed"
+          echo "helm_status=success" >> "$GITHUB_OUTPUT"
+
+      - name: Verify component health
+        id: health
+        if: steps.helm-deploy.outputs.helm_status == 'success'
+        env:
+          RELEASE_NAME: ${{ steps.release.outputs.release_name }}
+          NAMESPACE: ${{ steps.release.outputs.namespace }}
+        run: |
+          set -euo pipefail
+
+          echo "🏥 Verifying component health in $NAMESPACE..."
+
+          kubectl rollout status deployment -n "$NAMESPACE" \
+            -l "app.kubernetes.io/instance=$RELEASE_NAME" \
+            --timeout=5m || echo "⚠️  Pods not fully ready; reporting current state"
+
+          echo ""
+          echo "📊 Pod status:"
+          kubectl get pods -n "$NAMESPACE" \
+            -l "app.kubernetes.io/instance=$RELEASE_NAME" -o wide || true
+
+          ERROR_COUNT="$(kubectl logs -n "$NAMESPACE" \
+            -l "app.kubernetes.io/instance=$RELEASE_NAME" \
+            --tail=50 --timestamps=true 2>/dev/null \
+            | grep -ic "error\|fatal\|panic" || true)"
+          ERROR_COUNT="${ERROR_COUNT:-0}"
+
+          if [ "$ERROR_COUNT" -eq 0 ]; then
+            echo "✅ No errors detected in component logs"
+            echo "health_status=healthy" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️  Found $ERROR_COUNT error line(s) in logs"
+            echo "health_status=degraded" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate deployment report
+        if: always()
+        env:
+          COMPONENT: ${{ inputs.component }}
+          INSTANCE: ${{ inputs.instance }}
+          CLUSTER: ${{ steps.target-cluster.outputs.cluster }}
+          NAMESPACE: ${{ steps.release.outputs.namespace }}
+          RELEASE_NAME: ${{ steps.release.outputs.release_name }}
+          CHART: ${{ steps.release.outputs.chart }}
+          HELM_STATUS: ${{ steps.helm-deploy.outputs.helm_status }}
+          HEALTH_STATUS: ${{ steps.health.outputs.health_status }}
+        run: |
+          set -euo pipefail
+
+          REPORT_FILE="/tmp/deployment-report-$COMPONENT-$INSTANCE.md"
+          TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # Unquoted heredoc so the variables actually expand.
+          cat > "$REPORT_FILE" <<REPORT_EOF
+          # Stage 2: Component Deployment Report
+
+          **Timestamp:** $TIMESTAMP
+          **Component:** $COMPONENT
+          **Instance:** $INSTANCE
+          **Cluster:** $CLUSTER
+
+          ## Deployment Status
+          - **Status:** ${HELM_STATUS:-not-run}
+          - **Health:** ${HEALTH_STATUS:-not-evaluated}
+          - **Release:** $RELEASE_NAME
+          - **Namespace:** $NAMESPACE
+          - **Chart:** $CHART
+
+          ## Next Steps
+          - Component is deployed independently of any other stage
+          - Customer-specific overlays can be applied via the Stage 3 workflow
+          REPORT_EOF
+
+          echo "✅ Deployment report generated: $REPORT_FILE"
+          cat "$REPORT_FILE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deployment report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-report-${{ inputs.component }}-${{ inputs.instance }}
+          path: /tmp/deployment-report-*.md
+          retention-days: 90
+          if-no-files-found: warn

@@ -1,0 +1,125 @@
+name: Deploy Existing Release to Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing ACR image version to deploy to both staging slots
+        required: true
+        default: 0.9.0-beta.13
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloudhub-staging-deploy
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-cfe-apps-mj
+  ACR_NAME: symphonyfs
+  REGISTRY: symphonyfs.azurecr.io
+  FRONTEND_REPOSITORY: cloudhub-platform/frontend
+  BACKEND_REPOSITORY: cloudhub-platform/backend
+  FRONTEND_WEBAPP_NAME: cloudhub-frontend
+  BACKEND_WEBAPP_NAME: cloudhub-backend
+  SLOT_NAME: staging
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.version }} to staging slots
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Authenticate to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate release inputs and slots
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^0\.9\.0-beta\.[0-9]+$ ]] || { echo "::error::Version must match 0.9.0-beta.N"; exit 1; }
+          for app in "$BACKEND_WEBAPP_NAME" "$FRONTEND_WEBAPP_NAME"; do
+            az webapp show -g "$RESOURCE_GROUP" -n "$app" --slot "$SLOT_NAME" -o none || {
+              echo "::error::Required ${app}/${SLOT_NAME} slot does not exist."; exit 1;
+            }
+          done
+          for pair in "$BACKEND_REPOSITORY:$VERSION" "$FRONTEND_REPOSITORY:$VERSION"; do
+            repo="${pair%:*}"; tag="${pair##*:}"
+            count="$(az acr repository show-tags --name "$ACR_NAME" --repository "$repo" --query "[?@=='$tag'] | length(@)" -o tsv)"
+            [[ "$count" == 1 ]] || { echo "::error::Missing ACR image ${REGISTRY}/${repo}:${tag}"; exit 1; }
+          done
+
+      - name: Deploy backend image to staging slot
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${BACKEND_REPOSITORY}:${VERSION}"
+          config="$(jq -nc --arg image "$image" '{acrUseManagedIdentityCreds:true,linuxFxVersion:("DOCKER|"+$image)}')"
+          az webapp config set -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" --generic-configurations "$config" -o none
+          az webapp restart -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" -o none
+
+      - name: Deploy frontend image to staging slot
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${FRONTEND_REPOSITORY}:${VERSION}"
+          config="$(jq -nc --arg image "$image" '{acrUseManagedIdentityCreds:true,linuxFxVersion:("DOCKER|"+$image)}')"
+          az webapp config set -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" --generic-configurations "$config" -o none
+          az webapp restart -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" -o none
+
+      - name: Resolve staging URLs
+        id: urls
+        run: |
+          set -euo pipefail
+          echo "backend=https://$(az webapp show -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" --query defaultHostName -o tsv)" >> "$GITHUB_OUTPUT"
+          echo "frontend=https://$(az webapp show -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" --query defaultHostName -o tsv)" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test backend staging
+        run: bash scripts/release/backend-smoke-test.sh "${{ steps.urls.outputs.backend }}"
+
+      - name: Smoke test frontend staging
+        run: bash scripts/release/frontend-smoke-test.sh "${{ steps.urls.outputs.frontend }}"
+
+      - name: Verify staging images
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          expected_backend="${REGISTRY}/${BACKEND_REPOSITORY}:${VERSION}"
+          expected_frontend="${REGISTRY}/${FRONTEND_REPOSITORY}:${VERSION}"
+          actual_backend="$(az webapp config show -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" --query linuxFxVersion -o tsv)"; actual_backend="${actual_backend#DOCKER|}"
+          actual_frontend="$(az webapp config show -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" --query linuxFxVersion -o tsv)"; actual_frontend="${actual_frontend#DOCKER|}"
+          [[ "$actual_backend" == "$expected_backend" ]] || { echo "::error::Backend staging image mismatch: $actual_backend"; exit 1; }
+          [[ "$actual_frontend" == "$expected_frontend" ]] || { echo "::error::Frontend staging image mismatch: $actual_frontend"; exit 1; }
+
+      - name: Publish staging deployment summary
+        if: always()
+        env:
+          VERSION: ${{ inputs.version }}
+          BACKEND_URL: ${{ steps.urls.outputs.backend }}
+          FRONTEND_URL: ${{ steps.urls.outputs.frontend }}
+        run: |
+          {
+            echo "## Staging Deployment"
+            echo "- Version: ${VERSION}"
+            echo "- Frontend image: ${REGISTRY}/${FRONTEND_REPOSITORY}:${VERSION}"
+            echo "- Backend image: ${REGISTRY}/${BACKEND_REPOSITORY}:${VERSION}"
+            echo "- Frontend staging URL: ${FRONTEND_URL:-unresolved}"
+            echo "- Backend staging URL: ${BACKEND_URL:-unresolved}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Actor: ${GITHUB_ACTOR}"
+            echo "- Result: ${GITHUB_JOB}"
+            echo "- Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_STEP_SUMMARY"

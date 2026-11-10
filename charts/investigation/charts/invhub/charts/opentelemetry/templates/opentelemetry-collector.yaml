@@ -1,0 +1,41 @@
+{{- if .Capabilities.APIVersions.Has "opentelemetry.io/v1alpha1/OpenTelemetryCollector" -}}
+apiVersion: opentelemetry.io/v1alpha1
+kind: OpenTelemetryCollector
+metadata:
+  name: otel-collector
+spec:
+  mode: deployment
+  config: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+          http:
+    exporters:
+      otlp:
+        endpoint: {{ ((.Values.global).TEMPO_URL) | default .Values.tempoUrl }}
+        tls:
+          insecure: true
+      otlp/2:
+        endpoint: {{ ((.Values.global).JAEGER_URL) | default .Values.jaegerUrl }}
+        tls:
+          insecure: true
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 75
+        spike_limit_percentage: 15
+      batch:
+        send_batch_size: 10000
+        timeout: 10s
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp]
+        traces/2:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/2]
+{{- end }}

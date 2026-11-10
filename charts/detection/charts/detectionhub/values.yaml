@@ -1,0 +1,1384 @@
+# DetectionHub Configuration
+# Global values that can be referenced by all charts
+global:
+  imagePullPolicy: Always   # platform default; the umbrella global overrides it
+  clusterType: "aks"
+  imagePullSecrets:
+   - name: regcred-acr
+  # ttlSecondsAfterFinished for the Jobs this chart renders (db-updater,
+  # superset-updater, superset-init-db, the minio post-job).
+  #
+  # It MUST outlive the helm wait, not the Job. helm --wait-for-jobs watches
+  # every Job in the release until the whole release is ready, which for this
+  # platform is 1500-1800s; the Jobs themselves finish in a couple of minutes and
+  # were then deleted by a 300s TTL while helm was still waiting for other
+  # workloads. helm re-read them, got NotFound, called them not-ready and marked
+  # the release FAILED — with everything actually installed and every Job having
+  # succeeded. The error names the Jobs but says "not ready", which reads as a
+  # workload problem and is nothing of the sort.
+  #
+  # 7200 keeps them around well past any wait (and past the installer Job's own
+  # 7200s TTL), so a completed Job is still there to be seen — by helm, and by
+  # whoever is debugging.
+  defaultJobTTL: 7200
+  # Here you can enable or disable spark solutions for SMBD and RTDE
+  SRIsolutions:
+      - SensaDetection
+  pvc:
+    annotations:
+      default:  # This matches your storage class name
+        annotations:
+          helm.sh/resource-policy: keep
+    profileStorage: ""
+    
+  kafkaClusterName: ""
+  database:
+
+    # Connection settings
+    host: ""
+    port: 5432
+    database: ""
+    username: ""
+
+    # Security settings
+    ssl:
+      enabled: false
+      mode: "verify-full"
+      secretName:
+
+    # Credentials management
+    credentials:
+      secretName: ""
+      secretKey: "password"
+
+    # Common database configuration
+    common:
+      maxConnections: 100
+      connectionTimeout: 5
+      audit:
+        enabled: true
+        logLevel: "write"
+
+# CloudNativePG Configuration
+cn-postgres:
+  enabled: true
+  
+  # PostgreSQL configuration
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  
+  externalAccess:
+    enabled: true
+    readOnly: false
+    
+  storage:
+    size: 10Gi
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  
+  # Health monitoring configuration
+  # CloudNativePG provides built-in health checks and metrics
+  monitoring:
+    enablePodMonitor: true              # Create PodMonitor for Prometheus scraping
+    customQueriesConfigMap: [ ]          # Custom PostgreSQL metrics queries
+    customQueriesSecret: [ ]             # Additional secret-based queries
+
+  managed:
+    roles:
+    - name: ""
+      createdb: true
+      login: true
+      superuser: false
+      passwordSecret:
+        name: ""
+  
+  # Backup configuration
+  backup:
+    enabled: false  # When enabling make sure the destination bucket is created
+    retentionPolicy: "30d"
+    compression: bzip2
+    maxParallel: 8
+
+# Keycloak PostgreSQL Configuration
+keycloak-postgres:
+  enabled: true
+
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: keycloak
+
+  externalAccess:
+    enabled: true
+    readOnly: false
+
+  managed:
+    roles:
+      - name: "keycloak"
+        ensure: present
+        comment: "keycloak application user"
+        login: true
+        superuser: false
+        passwordSecret:
+          name: ""
+
+  storage:
+    size: 10Gi
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+
+  # Health monitoring configuration
+  monitoring:
+    enablePodMonitor: true
+    customQueriesConfigMap: [ ]
+    customQueriesSecret: [ ]
+
+  # Backup configuration
+  backup:
+    enabled: false
+
+# DB Updater Configuration
+db-updater:
+  enabled: true
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/dethub-core-db
+    tag: "1.0.0"
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1024Mi"
+      cpu: "1000m"
+  probes:
+    liveness:
+      initialDelaySeconds: 15
+      periodSeconds: 20
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      
+  minioServiceName: ""
+
+# Core API Configuration
+core-api:
+  enabled: true
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/dethub-core-api
+    tag: "1.0.0"
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+  replicaCount: 1
+
+  probes:
+    startup:
+      enabled: true
+      type: http
+      httpPath: /smc2/healthz
+      initialDelaySeconds: 120
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    liveness:
+      enabled: true
+      type: http
+      httpPath: /smc2/healthz
+      initialDelaySeconds: 120
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    readiness:
+      enabled: true
+      type: http
+      httpPath: /smc2/healthz
+      initialDelaySeconds: 60
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+      successThreshold: 1
+
+  # Frontend build configuration
+  # NOTE: The frontend is built separately in dethub-core-web image and then
+  # included in the core-api image during build time.
+  frontend:
+    supersetUrl: ""  # Configure Superset URL for frontend
+    defaultIdleTimeout: "120000" # Configure Idle Timeout
+    enableSSORedirect: "" # Enabled SSO Redirect
+
+  keycloak:
+    baseUrl: ""
+    internalBaseUrl: ""
+
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+  service:
+    type: ClusterIP  # Internal service, external access via Ingress
+    port: 8080
+
+  ingress:
+    enabled: true  # External access via Ingress only
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/enable-cors: "true"
+      nginx.ingress.kubernetes.io/cors-allow-origin: ""
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    hosts:
+      - host: ""  # Updated domain
+        paths:
+          - path: /smc2
+            pathType: Prefix
+    tls: []  # No TLS for test environment
+    ingressAllowList:
+      customerIPs: []
+      platformIPs: []
+
+  # Extra init containers (e.g. wait-for-keycloak before app starts)
+  extraInitContainers:
+    - name: wait-for-keycloak
+      image: busybox
+      imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+      env:
+        - name: KEYCLOAK_INTERNAL_URL
+          value: ""
+        - name: SAML_REALM_NAME
+          value: ""
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          META_URL="${KEYCLOAK_INTERNAL_URL}/realms/${SAML_REALM_NAME}/protocol/saml/descriptor"
+          echo "Waiting for Keycloak SRI Detection UI descriptor..."
+          until wget -qO- "$META_URL" >/tmp/saml-metadata.xml 2>/dev/null; do
+            echo "Waiting for Keycloak metadata endpoint..."
+            sleep 5
+          done
+
+          if ! grep -q "IDPSSODescriptor" /tmp/saml-metadata.xml; then
+            echo "ERROR: Keycloak metadata does not contain IDPSSODescriptor"
+            exit 1
+          fi
+
+          echo "Keycloak metadata is valid"
+
+  # Extra sidecar containers (e.g. Keycloak for SAML metadata endpoint)
+  extraContainers: []
+
+  # Extra volumes/mounts for the main container (e.g. SAML secrets)
+  extraVolumes:
+    - name: saml-secrets
+      projected:
+        defaultMode: 0444
+        sources:
+          - secret:
+              name: ""
+
+  extraVolumeMounts:
+    - name: saml-secrets
+      mountPath: /etc/secrets/saml
+      readOnly: true
+
+  # Extra container env entries (list of name/value or valueFrom maps), e.g. SAML paths when mounting a secret
+  extraEnvRaw:
+    - name: SPRING_PROFILES_ACTIVE
+      value: ""
+    - name: SMUI_AUTH_MODE
+      value: ""
+    - name: APP_BASE_URL
+      value: ""
+    - name: SAML_RELYINGPARTY_REGISTRATION_ID
+      value: ""
+    - name: SAML_ASSERTION_CONSUMER_LOCATION
+      value: ""
+    - name: SAML_ASSERTINGPARTY_METADATA_URI
+      value: ""
+    - name: APP_CONTEXT_ROOT
+      value: ""
+    - name: SAML_SUCCESS_LOGIN_URL
+      value: ""
+    - name: KEYCLOAK_BASE_URL
+      value: ""
+    - name: SERVER_SERVLET_SESSION_COOKIE_SAME_SITE
+      value: ""
+    - name: SERVER_SERVLET_SESSION_COOKIE_SECURE
+      value: ""
+    - name: SAML_REALM_NAME
+      value: ""
+    - name: SKIP_KEYCLOAK_CONTAINER
+      value: ""
+    - name: SAML_SIGNING_PRIVATE_KEY_LOCATION
+      value: ""
+    - name: SAML_SIGNING_CERTIFICATE_LOCATION
+      value: ""
+    - name: SAML_DECRYPTION_PRIVATE_KEY_LOCATION
+      value: ""
+    - name: SAML_DECRYPTION_CERTIFICATE_LOCATION
+      value: ""
+
+
+keycloak:
+  enabled: true
+  # `realmConfigFile: "SRIDetectionUI-realm.json"` was RETIRED here on
+  # 2026-08-13 along with realm SRIDetectionUI itself. It named the realm-export
+  # the bundled keycloak imported at startup; no template ever consumed the key
+  # (the import was wired via extraStartupArgs/extraVolumes in the deploy
+  # values), so it was dead config even before the realm merge. DetHub now
+  # authenticates against realm `SRI`, provisioned by
+  # templates/keycloak-setup-job.yaml rather than by a realm import.
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: "1.0.0"
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+  replicaCount: 1
+
+  args:
+    - start
+    - --http-enabled=true
+    - --http-port=8080
+    - --import-realm
+
+  initContainers:
+    - name: wait-for-keycloak-db
+      image: ghcr.io/cloudnative-pg/postgresql:16.10
+      imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+      env:
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: host
+        - name: DB_PORT
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: port
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: dbname
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: username
+        - name: DB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: password
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          echo "Waiting for Keycloak Postgres at ${DB_HOST}:${DB_PORT}/${DB_NAME}..."
+          timeout=300
+          elapsed=0
+          export PGPASSWORD="$DB_PASS"
+
+          until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME"; do
+            if [ "$elapsed" -ge "$timeout" ]; then
+              echo "Timed out waiting for Keycloak Postgres readiness"
+              exit 1
+            fi
+            sleep 2
+            elapsed=$((elapsed + 2))
+          done
+
+          psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -t -A -c "select 1" >/dev/null
+          echo "Keycloak Postgres is reachable and authentication succeeded"
+
+  extraEnvRaw:
+    - name: KC_BOOTSTRAP_ADMIN_ENABLED
+      value: "true"
+    - name: KC_BOOTSTRAP_ADMIN_USERNAME
+      value: "admin"
+    - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: ""
+          key: password
+    - name: KC_HOSTNAME
+      value: ""
+    - name: KC_HOSTNAME_ADMIN
+      value: ""
+    - name: KC_HTTP_ENABLED
+      value: "true"
+    - name: KC_HOSTNAME_STRICT
+      value: "false"
+    - name: KC_HOSTNAME_STRICT_HTTPS
+      value: "false"
+    - name: KC_PROXY_HEADERS
+      value: "xforwarded"
+    - name: KC_DB
+      value: "postgres"
+    - name: KC_DB_URL_HOST
+      valueFrom:
+        secretKeyRef:
+          name: ""
+          key: host
+    - name: KC_DB_URL_PORT
+      valueFrom:
+        secretKeyRef:
+          name: ""
+          key: port
+    - name: KC_DB_URL_DATABASE
+      valueFrom:
+        secretKeyRef:
+          name: ""
+          key: dbname
+    - name: KC_DB_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: ""
+          key: username
+    - name: KC_DB_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: ""
+          key: password
+
+  extraVolumes:
+    - name: realm-config
+      configMap:
+        name: ""
+    - name: keycloak-providers
+      configMap:
+        name: ""
+        defaultMode: 0555
+    - name: saml-secrets
+      projected:
+        defaultMode: 0444
+        sources:
+          - secret:
+              name: ""
+
+  extraVolumeMounts:
+    - name: realm-config
+      mountPath: /opt/keycloak/data/import
+    - name: keycloak-providers
+      mountPath: /opt/keycloak/providers
+    - name: saml-secrets
+      mountPath: /etc/secrets/saml
+      readOnly: true
+
+  # Health probe override values (same schema as keycloak subchart)
+  probes:
+    startup:
+      enabled: true
+      path: /
+      initialDelaySeconds: 10
+      periodSeconds: 5
+      failureThreshold: 30
+      timeoutSeconds: 5
+    readiness:
+      enabled: true
+      path: /realms/master
+      initialDelaySeconds: 45
+      periodSeconds: 10
+      failureThreshold: 6
+      timeoutSeconds: 5
+    liveness:
+      enabled: true
+      path: /realms/master
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      failureThreshold: 3
+      timeoutSeconds: 5
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/enable-cors: "true"
+      nginx.ingress.kubernetes.io/cors-allow-origin: ""
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+      nginx.ingress.kubernetes.io/cors-allow-headers: "DNT, Keep-Alive, User-Agent, X-Requested-With, If-Modified-Since, Cache-Control, Content-Type, Range, Authorization, X-CSRFToken"
+    hosts:
+      - host: ""
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+    ingressAllowList:
+      customerIPs: []
+      platformIPs: []
+
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+
+spark-operator:
+  enabled: true
+  image:
+    pullSecrets:
+      - name: regcred-acr
+  fullnameOverride: ""
+  spark:
+    jobNamespaces:
+    - dev-dethub
+    serviceAccount:
+      create: false
+  controller:
+    labels:
+      SRIsolutions: SensaDetection
+    serviceAccount:
+      create: false
+  webhook:
+    enable: true
+    labels:
+      SRIsolutions: SensaDetection
+    serviceAccount:
+      create: false
+  prometheus:
+    metrics:
+      enable: false
+    podMonitor:
+      create: false
+      labels: {}
+      jobLabel: spark-operator-podmonitor
+      podMetricsEndpoint:
+        scheme: http
+        interval: 5s
+
+nfs-server:
+  enabled: true
+  server:
+    deployment: false
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  volumes:
+    - name: ""
+      path: /opt/profile_storage
+      storageClassName: azurefile-csi-nfs
+      pvc:
+        name: ""
+        accessModes: ReadWriteOnce 
+        capacity: 5Gi
+    - name: ""
+      path: /opt/data
+      storageClassName: azurefile-csi-nfs
+      pvc:
+        name: ""
+        accessModes: ReadWriteOnce
+        capacity: 5Gi
+        
+minio:
+  enabled: true
+  mode: standalone
+  rootUser: ""
+  rootPassword: ""
+  existingSecret: ""
+  inputBucket: input
+  # values are OFF, LOW, HIGH, ALL
+  traceMode: OFF
+  smbdTag: "1.0.0"
+  decisioningTag: "1.0.0"
+  
+  modeltemplates:
+    image: 
+      repository: symphonyfs.azurecr.io/symphonysensa/dethub-engine-configuration
+      tag: "1.0.0"
+      pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  
+  serviceAccount:
+    create: true
+    name: ""
+
+  # Unified health probes configuration for MinIO service validation
+  probes:
+    startup:
+      enabled: true
+      type: http
+      httpPath: /minio/health/live
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 30
+    liveness:
+      enabled: true
+      type: http
+      httpPath: /minio/health/live
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+    readiness:
+      enabled: true
+      type: http
+      httpPath: /minio/health/ready
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+    
+  startupProbe:
+      enabled: true
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 30
+    
+  persistence:
+    enabled: true
+    storageClass: azurefile
+    size: 10Gi
+    accessMode: ReadWriteMany
+  
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "500m"
+  
+  service:
+    type: ClusterIP
+    port: 9000
+    consolePort: 9001
+  
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      nginx.ingress.kubernetes.io/enable-cors: "true"
+      nginx.ingress.kubernetes.io/cors-allow-origin: ""
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    path: /
+    hosts:
+      - ""
+    tls: []
+    ingressAllowList:
+      customerIPs: []
+      platformIPs: []
+      
+kafka-cluster:
+  enabled: true
+  replicas: 1
+  labels:
+    SRIsolutions: SensaDetection
+  kafka:
+    config:
+      offsets.topic.replication.factor: 1
+      transaction.state.log.replication.factor: 1
+      transaction.state.log.min.isr: 1
+      default.replication.factor: 1
+      min.insync.replicas: 1
+      max.incremental.fetch.session.cache.slots: 10000
+      max.message.bytes: 10485880
+      message.max.bytes: 10485880
+      replica.fetch.max.bytes: 10485880
+      producer.compression.type: producer
+    storage:
+      deleteClaim: true
+      
+superset-postgres:
+  enabled: true
+  
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  
+  bootstrap:
+    initdb:
+      database: superset
+      owner: superset
+      
+  externalAccess:
+    enabled: true
+    readOnly: false
+
+  managed:
+    roles:
+      - name: ""
+        ensure: present
+        comment: "superset application user"
+        login: true
+        superuser: false
+        passwordSecret:
+          name: ""
+          
+  storage:
+    size: 10Gi
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  
+  # Health monitoring configuration
+  # CloudNativePG provides built-in health checks and metrics
+  monitoring:
+    enablePodMonitor: true              # Create PodMonitor for Prometheus scraping
+    customQueriesConfigMap: [ ]          # Custom PostgreSQL metrics queries
+    customQueriesSecret: [ ]             # Additional secret-based queries
+  
+  # Backup configuration
+  backup:
+    enabled: false
+      
+superset:
+  enabled: true
+  extraLabels:
+    SRIsolutions: SensaDetection
+  
+  image:
+    repository: apache/superset
+    tag: 4.1.1
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  
+  # Security configuration
+  runAsUser: 1000
+  
+  # Configure init containers and bootstrap
+  bootstrapScript: |
+    #!/bin/bash
+    if [ ! -f ~/bootstrap ]; then 
+      echo "Running Superset with uid ${runAsUser}" > ~/bootstrap
+      pip install psycopg2-binary
+      pip install flask_cors
+    fi
+    {{- $dbssl := .Values.global.database.ssl | default dict }}
+    {{- if $dbssl.enabled | default false }}
+    cp /certificates2/tls.key /tmp/tls2.key
+    chmod 600 /tmp/tls2.key
+    cp /certificates/tls.key /tmp/tls.key
+    chmod 600 /tmp/tls.key
+    {{- end }}
+    superset import-directory /shared-data/SUPERSET
+  
+  # Secret configurations
+  secretEnv:
+    create: true
+  
+  extraEnvRaw:
+    - name: SUPERSET_SECRET_KEY
+      valueFrom:
+        secretKeyRef:
+          name: ""
+          key: superset.secret.key
+    - name: DB_PASS
+      valueFrom:
+        secretKeyRef:
+          name: ""
+          key: password
+    - name: SUPERSET_PASS
+      valueFrom:
+        secretKeyRef:
+          name: ""
+          key: superset.ui.pass
+  
+  extraVolumes:
+    - name: shared-data
+      emptyDir: {}
+      
+  extraVolumeMounts:
+    - name: shared-data
+      mountPath: "/shared-data"
+      
+  imagePullSecrets:
+    - name: regcred-acr
+  
+  configOverrides:
+      superset_config.py: |
+        from cachelib.simple import SimpleCache
+        from cachelib.file import FileSystemCache
+        from datetime import timedelta        
+        
+        # Configure the cache for Superset
+        CACHE_CONFIG = {
+            'CACHE_TYPE': 'NullCache',
+            'CACHE_DEFAULT_TIMEOUT': 300,
+        }
+        
+        # Optional: Configure additional caches (e.g., for charts, dashboards, etc.)
+        DATA_CACHE_CONFIG = CACHE_CONFIG
+        
+        SESSION_SERVER_SIDE = False
+        #SESSION_TYPE = 'cachelib'
+        #SESSION_SERIALIZATION_FORMAT = 'json'
+        #SESSION_CACHELIB = FileSystemCache(threshold=500, cache_dir="/sessions")
+        SESSION_PERMANENT = False
+        PERMANENT_SESSION_LIFETIME = timedelta(hours=8)
+          
+      enable_proxy_fix: |
+        ENABLE_PROXY_FIX = True
+        WTF_CSRF_ENABLED = True
+      
+      enable_ssl: |
+        WTF_CSRF_SSL_STRICT = False
+        
+      feature_flag_config: |
+        FEATURE_FLAGS = {
+          "EMBEDDED_SUPERSET": True,
+          "DASHBOARD_NATIVE_FILTERS": True,
+          "DASHBOARD_RBAC": True
+        }
+      guest_token_config: |
+        GUEST_ROLE_NAME = "ViewOnly"
+        GUEST_TOKEN_HEADER_NAME = "X-GuestToken"
+        GUEST_TOKEN_JWT_AUDIENCE = "superset"
+        GUEST_TOKEN_LIFETIME_SECONDS = 300
+      cors_config: |
+        ENABLE_CORS = True
+        CORS_OPTIONS = {
+          "supports_credentials": True,
+          "allow_headers": ["Content-Type",
+            "Authorization",
+            "X-GuestToken",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+            "X-CSRFToken"],
+          "resources": ["/api/*",
+            "/superset/*",
+            "/login/*",
+            "/logout/*"],
+          "origins": [
+            "self"
+          ],
+          "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+        }
+      security_config: |
+        TALISMAN_ENABLED = True
+        TALISMAN_CONFIG = {
+          "frame_options": None,
+          "content_security_policy": {
+              "base-uri": ["'self'"],
+          "default-src": ["'self'"],
+          "img-src": [
+              "'self'",
+              "blob:",
+              "data:",
+              "https://apachesuperset.gateway.scarf.sh",
+              "https://static.scarf.sh/",
+              # "https://cdn.brandfolder.io", # Uncomment when SLACK_ENABLE_AVATARS is True  # noqa: E501
+              "ows.terrestris.de",
+              "aws.s3.com"
+              ],
+          "worker-src": ["'self'", "blob:"],
+          "connect-src": [
+                  "'self'",
+                  "https://api.mapbox.com",
+                  "https://events.mapbox.com"
+              ],
+          "object-src": "'none'",
+          "style-src": [
+                  "'self'",
+                  "'unsafe-hashes'",
+                  "'sha256-l+zqOqrlqO17YSfliYmQRxNLkd2qxkJas7cyu6KEkEg='",
+                  "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='",
+                  "'sha256-XQEl0+y9C6bSvZdjhDm8sN21dR91ra/iastsw6Wqpwk='",
+                  "'sha256-PMtopnyvGhd09bOC/7rsqkaFM7cXyJ4uDpm20DEBJYU='",
+                  "'sha256-DOu86drLfwUr1Wcsx/wxfqAogK7tFvJGjVmF/300H/M='",
+                  "'sha256-PMtopnyvGhd09bOC/7rsqkaFM7cXyJ4uDpm20DEBJYU='",
+                  "'sha256-xrwnazBGMwxxhNE3Fs05GIiHX5E20ZIa673nf87+zmY='",
+                  "'sha256-acsbmnCgQbwCU7vON84RmeCJyg5MrmllWLiRxvY4QJ8='",
+                  "'sha256-MBN53VRKB66jqkL9CSJCwyFNDTCnq9bPGs883sP0N14='",
+                  "'sha256-nUYzi/8TxbsssqeRr9I6+LUZovdJVoXmwc8rESeA/yE='",
+                  "'sha256-UhS19ujlkXv0DUHFu/+AS6IrOJ419txvluXiQmO5mWw='",
+                  "'sha256-YWjcGs/zyPFy+1pzgkkmRp4tEI+CjQuUFH7z8MmDnuM='",
+                  "'sha256-9UwXAF6q1S1kgaPalNPYAp/xVxxrxDuQ13UALCCR/Qg='",
+                  "'sha256-YA64qlAc7heL2CwxnFePvmmH25HYkgRNoaUbFvJreYU='",
+                  "'sha256-dsE97wyWMDiGj066s4rJU0RCHIG6ejdfD8Y0MpdFFRo='",
+                  "'sha256-gixU7LtMo8R4jqjOifcbHB/dd61eJUxZHCC6RXtUKOQ='",
+                  "'sha256-Dn0vMZLidJplZ4cSlBMg/F5aa7Vol9dBMHzBF4fGEtk='",
+                  "'sha256-jX63Mkkw8FdoZGmV5pbbuvq3E6LQBUufPYlkJKSN5T4='",
+                  "'sha256-TofLwwzT6ahgqO+2SXz+5SCa1L7ynEgrqvRTOxdkJJk='",
+                  "'sha256-MQjIdoaT+4ud/MEvS1P0oGESZb94X2E976aC2zlTfhs='"
+              ],
+          "script-src": ["'self'"],
+          "form-action": [
+                  "'self'"
+              ],
+          "frame-ancestors": [
+                  "'self'"
+              ]
+            },
+          "content_security_policy_nonce_in": [
+            "script-src", 
+            "style-src"
+            ],
+          "force_https": False,
+          "session_cookie_secure": False
+        }
+  
+  # Superset node configuration
+  supersetNode:
+    podLabels:
+      SRIsolutions: SensaDetection
+    replicas:
+      enabled: true
+      replicaCount: 1
+    resources:
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+  
+    podDisruptionBudget:
+      enabled: false
+      
+    connections:
+      db_host: ""
+  
+    initContainers:
+      - name: wait-for-postgres
+        image: "apache/superset:dockerize"
+        imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+        envFrom:
+          - secretRef:
+              name: ""
+        command:
+          - /bin/sh
+          - -c
+          - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -timeout 120s
+      - name: wait-for-superset-initdb
+        image: ghcr.io/cloudnative-pg/postgresql:16.10
+        imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+        env:
+          - name: DB_PASS
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: password
+          - name: DB_USR
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: user
+          - name: DB_HOST
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: host
+        command:
+        - /bin/sh
+        - -c
+        - >
+          timeout=300;
+          elapsed=0;
+          export PGPASSWORD=$DB_PASS;
+          while true; do
+            status=$(psql -h $DB_HOST -U $DB_USR -t -A -c "select 1 from ab_user where id=1");
+            if [ "$status" = "1" ]; then
+              echo "Job completed";
+              break;
+            fi;
+            echo "Waiting for job to complete...";
+            if [ $elapsed -ge $timeout ]; then
+              echo "Timeout reached while waiting for superset db initialization";
+              exit 1;
+            fi
+            sleep 10;
+            elapsed=$((elapsed + 10))
+          done
+      - name: wait-for-core-db
+        image: "apache/superset:dockerize"
+        imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+        env:
+          - name: DB_PORT
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: port
+          - name: DB_HOST
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: host
+        command:
+          - /bin/sh
+          - -c
+          - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -timeout 120s
+      - name: init-superset
+        image: "symphonyfs.azurecr.io/symphonysensa/dethub-engine-configuration:1.0.0"
+        imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+        env:
+          - name: DATABASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: uri
+          - name: DATABASE_SCHEMA
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: dbname
+        command:
+          - /bin/sh
+          - -ce
+          - |
+            {{- $dbssl := .Values.global.database.ssl | default dict }}
+            {{- if $dbssl.enabled | default false }}
+            export DATABASE_URL="${DATABASE_URL}?sslmode={{ $dbssl.mode }}\\&sslrootcert=/cacertificates/ca.crt\\&sslcert=/certificates/tls.crt\\&sslkey=/tmp/tls.key"
+            {{- end }}
+            ./entrypoint.sh
+            cp -r SUPERSET /shared-data
+        volumeMounts:
+          - name: shared-data
+            mountPath: "/shared-data"
+  
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/enable-cors: "true"
+      nginx.ingress.kubernetes.io/cors-allow-origin: ""
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+      nginx.ingress.kubernetes.io/cors-allow-headers: "DNT, Keep-Alive, User-Agent, X-Requested-With, If-Modified-Since, Cache-Control, Content-Type, Range, Authorization, X-CSRFToken"
+    path: /
+    pathType: Prefix
+    hosts:
+      - ""
+    tls: []
+    ingressAllowList:
+      customerIPs: []
+      platformIPs: []
+  
+  # Redis configuration for caching
+  redis:
+    enabled: false
+  
+  # Configure Celery workers
+  supersetWorker:
+    replicas:
+      enabled: true
+      replicaCount: 0
+  
+  # Configure Celery beat for scheduled jobs
+  supersetCeleryBeat:
+    enabled: false
+  
+  # Init configuration
+  init:
+    enabled: false
+    customEnabled: true
+    loadExamples: false
+    createAdmin: true
+    jobAnnotations: {}
+    
+    # REPLACE: Update admin user configuration
+    adminUser:
+      username: admin
+      firstname: Superset
+      lastname: Admin
+      email: admin@detectionhub.local  # REPLACE with your email
+    
+    initscript: |-
+      #!/bin/sh
+      set -eu
+      echo "Upgrading DB schema..."
+      superset db upgrade
+      echo "Initializing roles..."
+      superset init
+      {{ if .Values.init.createAdmin }}
+      echo "Creating admin user..."
+      superset fab create-admin \
+                      --username {{ .Values.init.adminUser.username }} \
+                      --firstname {{ .Values.init.adminUser.firstname }} \
+                      --lastname {{ .Values.init.adminUser.lastname }} \
+                      --email {{ .Values.init.adminUser.email }} \
+                      --password ${SUPERSET_PASS} \
+                      || true
+      {{- end }}
+      {{ if .Values.init.loadExamples }}
+      echo "Loading examples..."
+      superset load_examples
+      {{- end }}
+      if [ -f "{{ .Values.extraConfigMountPath }}/import_datasources.yaml" ]; then
+        echo "Importing database connections.... "
+        superset import_datasources -p {{ .Values.extraConfigMountPath }}/import_datasources.yaml
+      fi
+  # Enable built-in PostgreSQL for Superset's metadata
+  postgresql:
+    enabled: false
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 8088
+  
+  # Monitoring
+  serviceMonitor:
+    enabled: false
+    
+superset-updater:
+  enabled: true
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/dethub-core-db
+    tag: "1.0.0"
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "200m"
+    limits:
+      memory: "1024Mi"
+      cpu: "1000m"
+      
+  database:
+    host: ""
+    port: 5432
+    name: "superset"
+    user: "superset"
+    credentials:
+      existingSecret: ""
+      secretKey: "password"
+
+  initContainers:
+    - name: wait-for-import
+      image: ghcr.io/cloudnative-pg/postgresql:16.10
+      imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+      env:
+        - name: DB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: password
+        - name: DB_USR
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: user
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: host
+      command:
+        - /bin/sh
+        - -c
+        - >
+          timeout=300;
+          elapsed=0;
+          export PGPASSWORD=$DB_PASS;
+          while true; do
+            status=$(psql -h $DB_HOST -U $DB_USR -t -A -c "select 1 from dashboards where uuid='4326db5e-404c-4947-8351-bba7b2cf78d9'");
+            if [ "$status" = "1" ]; then
+              echo "Job completed";
+              break;
+            fi;
+            echo "Waiting for job to complete...";
+            if [ $elapsed -ge $timeout ]; then
+              echo "Timeout reached while waiting for superset db initialization"
+              exit 1
+            fi
+            sleep 10;
+            elapsed=$((elapsed + 10))
+          done
+  
+  minioServiceName: ""
+  
+  changelog:
+    path: "src/main/resources/db/changelog/changelog-superset.xml"
+  
+core-api-ext:
+  enabled: true
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/dethub-ext-api
+    tag: "1.0.0"
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+    
+  sparkOperatorEndpoint: ""
+  
+  minio:
+    endpoint: ""
+    existingSecret: ""
+    secretKey: rootUser
+    secretPass: rootPassword
+    templatesBucketName: sparktemplates
+    configBucketName: conf
+    
+  service:
+    type: ClusterIP  # Internal service, external access via Ingress
+    port: 9090
+    
+  probes:
+    startup:
+      enabled: true
+      type: http
+      httpPath: /actuator/health/liveness
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    liveness:
+      enabled: true
+      type: http
+      httpPath: /actuator/health/liveness
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 5
+      failureThreshold: 3
+      successThreshold: 1
+    readiness:
+      enabled: true
+      type: http
+      httpPath: /actuator/health/readiness
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+      successThreshold: 1
+    
+  ingress:
+    enabled: true  # External access via Ingress only
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/enable-cors: "true"
+      nginx.ingress.kubernetes.io/cors-allow-origin: ""
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    hosts:
+      - host: ""  # Updated domain
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+    ingressAllowList:
+      customerIPs: []
+      platformIPs: []
+
+# ── DetHub's own Keycloak provisioning (templates/keycloak-setup-job.yaml) ────
+# Registers DetHub's Keycloak material — its SAML client, that client's SAML
+# attribute mappers, its realm roles and those roles' user grants — into a realm
+# ANOTHER chart owns (the platform realm `SRI`).
+#
+# This replaces the retired `SRIDetectionUI` realm and its `--import-realm`
+# bootstrap. Realm import runs only when the realm is ABSENT, so it could never
+# ship a change to an existing realm; a Job runs on every install and upgrade.
+#
+# Default OFF: a standalone `helm install detectionhub` has no platform realm to
+# provision into. The umbrella turns it on — see
+# deploy/sri-dev-centraindia/values.yaml.
+keycloakSetup:
+  enabled: false
+  # kcadm ships in the Keycloak image; reuse the platform's own so no extra
+  # image has to be mirrored into the private registry.
+  image: symphonyfs.azurecr.io/bitnami/keycloak:26.3.3-debian-12-r0
+  imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+  # Bitnami's path. The upstream quay.io/keycloak image puts it at
+  # /opt/keycloak/bin/kcadm.sh — change this with the image.
+  kcadmPath: /opt/bitnami/keycloak/bin/kcadm.sh
+  # REQUIRED, and must be the IN-CLUSTER URL: the master-realm admin token lives
+  # 60 seconds and public-ingress latency has outlived it mid-Job more than once.
+  internalUrl: ""
+  # the platform realm this material is registered INTO
+  realm: SRI
+  adminRealm: master
+  adminUser: admin
+  adminPasswordSecret:
+    name: ""
+    key: admin-password
+  # Secret holding the SP's SAML signing keypair — the same one core-api mounts.
+  # The Job reads the certificate from it so Keycloak can validate core-api's
+  # signed AuthnRequests, instead of the cert being pasted into values twice.
+  samlSecret: dethub-core-api-saml
+  samlCertKey: saml-signing-certificate.crt
+  client:
+    # SP entity ID. Realm-independent — it identifies DETHUB, not the IdP, so it
+    # is unchanged by the realm merge.
+    clientId: smui
+    name: Detection Hub (SMUI)
+    description: Symphony Detection Hub core-api SAML service provider
+    rootUrl: ""
+    baseUrl: /smc2
+    # Assertion Consumer Service. MUST match the ACS the SP advertises, exactly.
+    # These two are flipped together or login breaks — never one without the other.
+    assertionConsumerUrl: ""
+    singleLogoutUrl: ""
+    # Additional valid redirect URIs kept alongside the ACS. DetHub is moving
+    # behind a path on the single platform host, and listing BOTH the old and
+    # the new origin here makes that cutover reversible without a second realm
+    # edit: the client already trusts the destination before the SP moves to it.
+    extraRedirectUris: []
+    # Empty means "leave whatever is set"; SAML does not need CORS origins the
+    # way OIDC does, but the field is here so the portal-host flip is a values
+    # change like everything else.
+    webOrigins: []
+  # DELIBERATELY no `saml.force.authn`: with ForceAuthn set, Keycloak re-prompts
+  # for credentials even when the realm SSO session is already valid, which
+  # would break the portal -> Lens -> DetHub single-sign-on chain with a second
+  # login box. The realm session cookie is protocol-agnostic, so an OIDC login
+  # at the portal satisfies this SAML client silently.
+  roles:
+    - name: Administrator
+      description: System administrator with full access privileges
+    - name: Project Owner
+      description: Full project management including creation, modification, and deletion capabilities
+    - name: Project Contributor
+      description: Project modification and viewing access without creation or deletion rights
+    - name: Project Observer
+      description: Read-only access to project information
+    - name: Detection Owner
+      description: Full detection management
+    - name: Detection Contributor
+      description: Detection modification and viewing access
+    - name: Detection Observer
+      description: Read-only access to detection information
+    - name: ROLE_ADMIN
+      description: SMUI administrator role
+  # Which platform users get which DetHub roles. Users are created by
+  # keycloak-config-cli; a user that is absent is skipped, not fatal.
+  roleAssignments: {}
+  backoffLimit: 6
+  # 7200, not 600: a TTL shorter than helm's wait deletes a completed Job
+  # while the watcher still needs it, and the release fails as NotFound
+  ttlSecondsAfterFinished: 7200
+  resources: {}

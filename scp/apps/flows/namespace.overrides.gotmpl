@@ -1,0 +1,57 @@
+global:
+  # Uncomment it for Flow 1.x.x
+  # RESOURCE_PROVISIONER_AZURE_CLIENT_ID: '{{ env "CLOUDHUB_GLOBAL__RESOURCE_PROVISIONER_AZURE_CLIENT_ID" }}'  
+  # RESOURCE_PROVISIONER_AZURE_CLIENT_SECRET: '{{ env "CLOUDHUB_GLOBAL__RESOURCE_PROVISIONER_AZURE_CLIENT_SECRET" }}'
+  # AZURE_SERVICE_PRINCIPAL_OBJECT_ID: '{{ env "CLOUDHUB_GLOBAL__AZURE_SERVICE_PRINCIPAL_OBJECT_ID" }}' ## Must have permissions to create/manage KeyVault and Storage Account (Secrets Officer and Storage Account Contributor)
+  # AZURE_TENANT_ID: '{{ env "CLOUDHUB_GLOBAL__AZURE_TENANT_ID" }}'
+  # MT_MIGRATION: true                                                                                                                                                         ## Must be set to ensure initial tenant is automatically onboarded
+  # FIRST_TENANT_NAME: "<NAMESPACE-ALPHANUMERIC-CHARS-ONLY>"                                                                                                                   ## Alphanumeric characters only - this will also be used in the ingress hostname
+  # RESOURCE_PROVISIONER_DB_PORT: "5432"
+  # AZURE_SUBSCRIPTION_ID: '{{ env "CLOUDHUB_GLOBAL__AZURE_SUBSCRIPTION_ID" }}'
+  # AZURE_RESOURCE_GROUP: '{{ env "CLOUDHUB_GLOBAL__AZURE_RESOURCE_GROUP" }}'                         ## The resource group of the cluster and where the KeyVaults and Storage Accounts will live
+  AZURE_KEYVAULT_CLIENT_ID: '{{ env "CLOUDHUB_GLOBAL__AZURE_KEYVAULT_CLIENT_ID" }}'                   ## This is the client ID of the cluster kubelet. Will be fixed by namespace level infra provisioning scripts. Project do not modify.
+  AZURE_OPENAI_CLIENT_ID: '{{ env "CLOUDHUB_GLOBAL__AZURE_OPENAI_CLIENT_ID" }}'                       ## This is the client ID of the cluster kubelet. Will be fixed by namespace level infra provisioning scripts. Project do not modify.
+  DAA_OPENAI_AZURE_API_KEY: '{{ env "CLOUDHUB_GLOBAL__DAA_OPENAI_AZURE_API_KEY" }}'                   ## Will be fixed by namespace level infra provisioning scripts. Project do not modify.
+  DAA_OPENAI_AZURE_API_VERSION: '{{ env "CLOUDHUB_GLOBAL__DAA_OPENAI_AZURE_API_VERSION" }}'           ## Will be fixed by namespace level infra provisioning scripts
+  DAA_OPENAI_AZURE_ENDPOINT: '{{ env "CLOUDHUB_GLOBAL__DAA_OPENAI_AZURE_ENDPOINT" }}'                 ## Will be fixed by namespace level infra provisioning scripts. Project do not modify.
+  DAA_OPENAI_AZURE_MODEL_NAME: '{{ env "CLOUDHUB_GLOBAL__DAA_OPENAI_AZURE_MODEL_NAME" }}'             ## Will be fixed by namespace level infra provisioning scripts
+  DB_HOSTNAME: '{{ env "CLOUDHUB_GLOBAL__DB_HOSTNAME" }}'                                             ## Will be fixed by namespace level infra provisioning scripts. Project do not modify.
+  DB_ROOT_USER_PASSWORD: '{{ env "CLOUDHUB_GLOBAL__DB_ROOT_USER_PASSWORD" }}'                         ## Will be fixed by namespace level infra provisioning scripts. Project do not modify.
+  DB_ROOT_USER: '{{ env "CLOUDHUB_GLOBAL__DB_ROOT_USER" }}'                                           ## Will be fixed by namespace level infra provisioning scripts. Project do not modify.
+  ICEBERG_STORAGE_ACCOUNT_KEY: ""                                                                                                                                              ## Not used, leave blank.
+  ICEBERG_STORAGE_ACCOUNT_NAME: ""                                                                                                                                             ## Not used, leave blank.
+  KEYVAULT_URL: '{{ env "CLOUDHUB_GLOBAL__KEYVAULT_URL" }}'                                           ## Will be fixed by namespace level infra provisioning scripts. Project do not modify.
+  MONITORING_NAMESPACE: "{{ .Values.namespace }}"                                                                                                                              ## Do not modify for the time being, leave as default of namespace.
+  SYSTEM_AZURE_STORAGE_ACCOUNT_NAME: '{{ env "CLOUDHUB_GLOBAL__SYSTEM_AZURE_STORAGE_ACCOUNT_NAME" }}' ## Will be fixed by namespace level infra provisioning scripts. Project do not modify.  
+  SYSTEM_AZURE_STORAGE_ACCOUNT_KEY: '{{ env "CLOUDHUB_GLOBAL__SYSTEM_AZURE_STORAGE_ACCOUNT_KEY" }}'   ## Will be fixed by namespace level infra provisioning scripts. Project do not modify.
+
+# TCM
+TCM:
+  enabled: true
+
+# Loki Configuration
+loki:
+  loki:
+    storage:
+      azure:
+        # Name of the Azure Blob Storage account
+        accountName: '{{ env "CLOUDHUB_LOKI__LOKI__STORAGE__AZURE__ACCOUNTNAME" }}'                   ## Will be fixed by namespace level infra provisioning scripts. Project do not modify. (Applies to this whole loki section)
+        # Key associated with the Azure Blob Storage account
+        accountKey: '{{ env "CLOUDHUB_LOKI__LOKI__STORAGE__AZURE__ACCOUNTKEY" }}'
+        # Comprehensive connection string for Azure Blob Storage account (Can be used to replace endpoint, accountName, and accountKey)
+        connectionString: '{{ env "CLOUDHUB_LOKI__LOKI__STORAGE__AZURE__CONNECTIONSTRING" }}'
+
+temporal:
+  postgresql:
+    host: '{{ env "CLOUDHUB_GLOBAL__DB_HOSTNAME" }}'               ## Duplicate of global.DB_HOSTNAME but needs to be in this file due to helm chart structure.
+    tls:
+      serverName: '{{ env "CLOUDHUB_GLOBAL__DB_HOSTNAME" }}'       ## Duplicate of global.DB_HOSTNAME but needs to be in this file due to helm chart structure.
+  server:
+    config:
+      persistence:
+        default:
+          sql:
+            host: '{{ env "CLOUDHUB_GLOBAL__DB_HOSTNAME" }}'       ## Duplicate of global.DB_HOSTNAME but needs to be in this file due to helm chart structure.
+        visibility:
+          sql:
+            host: '{{ env "CLOUDHUB_GLOBAL__DB_HOSTNAME" }}'       ## Duplicate of global.DB_HOSTNAME but needs to be in this file due to helm chart structure.   

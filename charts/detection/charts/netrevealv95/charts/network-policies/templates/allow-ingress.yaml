@@ -1,0 +1,175 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-kafka-ui
+  namespace: {{ .Values.global.namespace }}
+spec:
+  policyTypes:
+  - Ingress
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kafka-ui
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-minio
+  namespace: {{ .Values.global.namespace }}
+spec:
+  policyTypes:
+  - Ingress
+  podSelector:
+    matchLabels:
+      app: minio
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 9000
+    - protocol: TCP
+      port: 9001
+    - protocol: TCP
+      port: 8022
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-keycloak
+  namespace: {{ .Values.global.namespace }}
+spec:
+  policyTypes:
+  - Ingress
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: keycloak
+      app.kubernetes.io/name: keycloak
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 8450
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-nr-ui
+  namespace: {{ .Values.global.namespace }}
+spec:
+  policyTypes:
+  - Ingress
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-nr-ui-instance-pod
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-wlm-pn-rt
+  namespace: {{ .Values.global.namespace }}
+spec:
+  policyTypes:
+  - Ingress
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}-wlm-pn-rt-instance-pod
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 8443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-adminerevo
+  namespace: {{ .Values.global.namespace }}
+spec:
+  policyTypes:
+  - Ingress
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/network-policy: "allow-ingress"
+      app.kubernetes.io/component: "adminerevo"
+      app.kubernetes.io/namespace: {{ .Values.global.namespace }}
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-zeppelin
+  namespace: {{ .Values.global.namespace }}
+spec:
+  policyTypes:
+  - Ingress
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: zeppelin-server
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.global.ingressNamespace }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+          app.kubernetes.io/component: controller
+    ports:
+    - protocol: TCP
+      port: 8080

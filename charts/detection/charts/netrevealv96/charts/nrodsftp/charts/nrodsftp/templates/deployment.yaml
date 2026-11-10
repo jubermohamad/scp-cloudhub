@@ -1,0 +1,233 @@
+{{- $root := . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nrodsftp.fullname" . }}
+  labels:
+    {{- include "nrodsftp.labels" . | nindent 4 }}
+  annotations:
+    secret.reloader.stakater.com/reload: "nrodsftp-orgunit-json-config"
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.pod.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "nrodsftp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "nrodsftp.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "nrodsftp.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.SecurityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: nrodsftp
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: nrodsftp-minio-creds-volume
+              mountPath: /nrodsftp-minio-creds-volume
+            {{- if .Values.encryptOutgoingData }}
+              {{- if .Values.global.nrOrgUnits }}
+                {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+            - name: nrodsftp-orgunit-json-config-volume
+              mountPath: /home/conf
+                {{- end }}
+              {{- end }}
+            {{- end }}
+          env:
+            {{- if .Values.enablePgp }}
+            - name: PGP_PASSPHRASE
+              valueFrom:
+                secretKeyRef:
+                  name: nrodsftp-pgp-key
+                  key: passphrase
+            - name: PGP_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nrodsftp-pgp-key
+                  key: public-key
+            - name: PGP_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nrodsftp-pgp-key
+                  key: private-key
+            - name: ENCRYPT_OUTGOING_DATA
+              value: "{{ .Values.encryptOutgoingData }}"
+            {{- end }}
+            {{- if .Values.encryptOutgoingData }}
+              {{- if .Values.global.nrOrgUnits }}
+                {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+            - name: PGP_KEYS_CONFIG_PATH
+              value: "/home/conf/orgunits_setup.json"
+                {{- end }}
+              {{- end }}
+            {{- end }}
+            {{- if .Values.archivingEnabled }}
+            - name: ARCHIVING_PGP_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.archivingPgpPublicKey.secretName }}
+                  key: {{ .Values.archivingPgpPublicKey.secretKey }}
+            {{- end }}
+            - name: MOVE_TO_PUBLIC_DIRECTORIES
+              value:  "{{- $directories := list -}}
+                       {{- if .Values.moveToPublicDirectories -}}
+                         {{- $directories = append $directories .Values.moveToPublicDirectories -}}
+                       {{- end -}}
+                       {{- $directories = append $directories (printf "landing/acquisition/feedback") -}}
+                      {{- if .Values.global.nrOrgUnits }}
+                        {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+                          {{- range $key, $value := .Values.global.nrOrgUnits }}
+                         {{- $directories = append $directories (printf "landing/acquisition%s/feedback" $value.orgUnitCode) -}}
+                            {{- end }}
+                          {{- end }}
+                        {{- end }}
+                       {{- join "," $directories -}}"
+            - name: ARCHIVING_ENABLED
+              value: "{{ .Values.archivingEnabled }}"
+            - name: ARCHIVING_DIRECTORIES
+              value: "{{- $directories := list -}}
+                      {{- if .Values.archivingDirectories -}}
+                        {{- $directories = append $directories .Values.archivingDirectories -}}
+                      {{- end -}}
+                      {{- if .Values.archiveAcquisitionWaitingDirectories -}}
+                        {{- $directories = append $directories (printf "landing/acquisition/waiting") -}}
+                        {{- if .Values.global.nrOrgUnits }}
+                          {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+                            {{- range $key, $value := .Values.global.nrOrgUnits }}
+                              {{- $directories = append $directories (printf "landing/acquisition%s/waiting" $value.orgUnitCode) -}}
+                            {{- end }}
+                          {{- end }}
+                        {{- end }}
+                      {{- end -}}
+                      {{- if .Values.archiveListImportDirectories -}}
+                        {{- $directories = append $directories (printf "landing/listImport/UN List@XML-list") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/UN Country List@default") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/OFAC list@XML-list") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/OFAC Country list@default") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/HMT Country List@default") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/HM Treasury list@HMT-list") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/Flagged Country List@default") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/FinCEN 314a Business@FINCEN314ABUSINESS") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/FinCEN 314a Individual@FINCEN314AINDIVIDUAL") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/EU list@Eu-list") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/EU Country list@default") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/UN1988@XML-list") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/UN1267@XML-list") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/OFAC_SDN@default") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/EUList@Eu-list") -}}
+                        {{- $directories = append $directories (printf "landing/listImport/BOEEngland@BOE-list") -}}
+                      {{- end -}}
+                      {{- if .Values.archiveFpfaDirectory -}}
+                        {{- $directories = append $directories (printf "landing/fpfa") -}}
+                      {{- end -}}
+                      {{- if .Values.archiveWorldcheckDirectory -}}
+                        {{- $directories = append $directories (printf "landing/worldcheck") -}}
+                      {{- end -}}
+                      {{- if .Values.archiveBatchwatchDirectory -}}
+                        {{- $directories = append $directories (printf "landing/batchwatch/SWIFT@SWIFT") -}}
+                        {{- $directories = append $directories (printf "landing/batchwatch/Subject@GSV") -}}
+                        {{- $directories = append $directories (printf "landing/batchwatch/SWIFT@SWIFT_FLTS") -}}
+                        {{- $directories = append $directories (printf "landing/batchwatch/GenericTransaction@SWIFT_FLTS_MX") -}}
+                      {{- end -}}
+                      {{- if .Values.archiveAmloptDataDirectories -}}
+                        {{- $directories = append $directories (printf "landing/amlopt/data") -}}
+                        {{- if .Values.global.nrOrgUnits }}
+                          {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+                            {{- range $key, $value := .Values.global.nrOrgUnits }}
+                              {{- $directories = append $directories (printf "landing/amlopt%s/data" $value.orgUnitCode) -}}
+                            {{- end }}
+                          {{- end }}
+                        {{- end }}
+                      {{- end -}}
+                      {{- join "," $directories -}}"
+            - name: ARCHIVING_RETENTION_PERIOD_IN_SECONDS
+              value: "{{ .Values.archivingRetentionPeeriodInSeconds }}"
+            - name: ARCHIVING_CLEANUP_CRON_EXPRESSION
+              value: "{{ .Values.archivingCleanupCronExpression }}"
+            - name: REDIS_HOST
+              value: redis-master
+            - name: REDIS_PORT
+              value: "6379"
+            - name: MINIO_HOST
+              value: minio
+            - name: MINIO_PORT
+              value: "9000"
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: rootUser
+                  name: nrodsftp-minio-creds
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  key: rootPassword
+                  name: nrodsftp-minio-creds
+          {{- if .Values.startupProbe }}
+          startupProbe:
+            httpGet:
+              path: /
+              port: 3000
+              scheme: HTTP
+
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.readinessProbe }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+              scheme: HTTP
+
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.livenessProbe }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+              scheme: HTTP
+
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          {{- end }}
+
+      volumes:
+        - name: nrodsftp-minio-creds-volume
+          secret:
+            secretName: nrodsftp-minio-creds
+        {{- if .Values.encryptOutgoingData }}
+        - name: nrodsftp-orgunit-json-config-volume
+          secret:
+            secretName: nrodsftp-orgunit-json-config
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,7 @@
+apiVersion: v2
+name: nr-dpa
+appVersion: "9.4.0.0"
+description: A Helm chart for DPA
+# netreveal chart version: 1.0.19
+version: 1.0.5
+type: application

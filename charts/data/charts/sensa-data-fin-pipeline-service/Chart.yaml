@@ -1,0 +1,30 @@
+# Re-vendored WHOLE from SymphonySensa/sensa-data-fin-pipeline-service@origin/develop
+# (5c06c98) on 2026-08-26 — the copy here was 8 files behind and had no
+# orch-svc.yaml at all, which is why sri-qa had no orchestrator while
+# sri-dev-fin-pipeline (hand-deployed) did. Upstream also replaced redis with
+# valkey, superseding our local VALKEY_HOST/PORT patch (7efa55a).
+#
+# TWO DELTAS re-applied after vendoring, and BOTH are load-bearing:
+#
+#   1. `name:` is sensa-data-fin-pipeline-service, not upstream's `fin-pipeline`.
+#      The older fin-pipeline chart is ALSO vendored in this umbrella under that
+#      exact name, so keeping upstream's would collide — and helm keys a
+#      subchart's values off the DECLARED name, so this chart's values would be
+#      routed to the wrong chart entirely. Renaming is what makes both coexist.
+#   2. imagePullPolicy falls back to global.imagePullPolicy so the platform-wide
+#      knob reaches this chart. Written nil-safe, because the plain
+#      $.Values.global form dies when the chart is rendered standalone.
+apiVersion: v2
+name: sensa-data-fin-pipeline-service
+description: >-
+  FS pipeline platform: config-svc (definition/publish authority),
+  exec-svc-go (realtime executor), orch-svc (batch coordinator +
+  Spark/file-event submitter), ui-svc (canvas + dashboards), an optional
+  bundled single-node Valkey, and idempotent setup jobs (ensure-database on the
+  shared Postgres, ensure-kafka-topics on the shared Kafka, Keycloak
+  audience mapper on the SRI portal client). Deploys greenfield into its
+  own namespace — the kubectl-applied sri-dev-pipeline namespace predates
+  this chart and stays untouched.
+type: application
+version: 0.2.4
+appVersion: develop

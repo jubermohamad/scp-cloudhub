@@ -1,0 +1,14 @@
+{
+  "name": "{{componentDisplayName}} Developer Workspace",
+  "image": "{{devContainerImage}}",
+  "remoteUser": "{{remoteUser}}",
+  "workspaceFolder": "{{workspaceFolder}}",
+  "customizations": {
+    "vscode": {
+      "extensions": {{extensions}},
+      "settings": {{settings}}
+    }
+  },
+  "containerEnv": {{environmentVariables}},
+  "features": {{features}}{{postCreateCommandSection}}
+}

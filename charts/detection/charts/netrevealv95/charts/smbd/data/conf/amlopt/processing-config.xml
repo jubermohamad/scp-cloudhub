@@ -1,0 +1,50 @@
+<processing>
+    <profilings>
+        <profiling name="Transaction_profiling" profilePeriod="all" outputMode="parquet"/>
+        <profiling name="AccountUpdate_profiling" profilePeriod="all" outputMode="parquet"/>
+        <profiling name="IUCustomer_profiling" profilePeriod="all" outputMode="parquet"/>
+        <profiling name="AlertFeedback_profiling" profilePeriod="all" outputMode="parquet"/>
+    </profilings>
+    <detections>
+        <detection name="Transaction_detection" timeBase="all"/>
+    </detections>
+    <processes>
+        <process name="All_datasources" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="profiling" dataSource="IUCustomer" entity="" onError="stop">
+                    <apply name="IUCustomer_profiling"/>
+                </service>
+                <service type="profiling" dataSource="AccountUpdate" entity="" onError="stop">
+                    <apply name="AccountUpdate_profiling"/>
+                </service>
+                <service type="profiling" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+            </services>
+        </process>
+        <process name="Transactions" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="profiling" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+            </services>
+        </process>
+        <process name="SimDetectionAlertFeedback" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="detection" entity="" onError="stop">
+                    <apply name="Transaction_detection"/>
+                </service>
+                <service type="profiling" dataSource="AlertFeedback" entity="" onError="stop">
+                    <apply name="AlertFeedback_profiling"/>
+                </service>
+            </services>
+        </process>
+        <process name="SimDetection" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                    <service type="detection" entity="" onError="stop">
+                    <apply name="Transaction_detection"/>
+                </service>
+            </services>
+        </process>
+    </processes>
+</processing>

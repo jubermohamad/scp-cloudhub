@@ -1,0 +1,22 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-nr-dpa-base-config-property"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-nr-dpa-base-config-property"
+data:
+  base_config.properties: |
+    jdbc.driver=org.postgresql.Driver
+    jdbc.url={{- template "db.jdbc.url" . }}
+    jdbc.userid={{ .Values.global.baseConfigProperties.db.postgresql.userid }}
+    jdbc.passwd={{ .Values.global.baseConfigProperties.db.postgresql.password | replace "ENC:" "" }}
+    jdbc.schema={{ .Values.global.baseConfigProperties.db.postgresql.schema }}
+
+    #ArchiveDB
+    archive.jdbc.driver=org.postgresql.Driver
+    archive.jdbc.url={{- template "db.jdbc.url" . }}
+    archive.jdbc.userid={{ .Values.global.baseConfigProperties.db.postgresql.userid }}
+    archive.jdbc.passwd={{ .Values.global.baseConfigProperties.db.postgresql.password | replace "ENC:" "" }}
+    archive.jdbc.schema={{ .Values.global.baseConfigProperties.db.postgresql.schema }}

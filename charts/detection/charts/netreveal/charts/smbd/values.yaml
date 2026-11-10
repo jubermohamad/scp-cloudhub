@@ -1,0 +1,569 @@
+# Setting the environment for the application (e.g., "qa" for quality assurance, "dev" for development, "prod" for production)
+app_env: "prod"
+# Specifies whether to use NodeSelector, if true - NodeSelector will be used.
+useNodeSelector: "false"
+# NodeSelector configuration, specifically targeting nodes with the specified label (Will work only if useNodeSelector is set to true) Node should also have the same label.
+nodeSelector:
+  smbd-node: "true"
+# Additional labels for SparkApplication
+labels:
+  app: smbd
+
+helmSolution: "amlopt"
+
+solution:
+  aml:
+    applicationConf:
+      lastDayOfWeek: "friday"
+      traceModeLevel: "OFF"
+      detectionAlertInfoTruncateNumbers: "false"
+      detectionAlertWeightTruncate: "false"
+      processingmodel:
+        learnermodelPmmlReasonsMaxPositiveFeatures: "20"
+        learnermodelPmmlReasonsMaxNegativeFeatures: "20"
+        learnermodelPmmlReasonsMaxPositiveDistance: "0.8"
+        learnermodelPmmlReasonsMaxNegativeDistance: "0.8"
+      profileFieldMemorySkipPresentDay: "false" #Enables MEMBEROF function to determine if the feature of the current record was not in the previous n reme,bered time periods. (i.e. NOT(MEMBEROF()) true/false
+      timestampFormat: "yyyyMMddHHmmss" # Specifies the format of the EVENT_DATE column in an Alert
+      scenariostate:
+        active: "ON" # Scenario state
+        persister: "DB" #Possible configurations: LOG, DB.
+      fingerprint:
+        columns: "EVENT_DATE,CHECK_NAME,ENTITY_NAME,VIEW_NAME,VIEW_ID,DATASOURCE_ID" # Alert-Saver Fingerprinting Properties
+        legacyFormat: "OFF" # #Possible values ON, OFF
+      simulatorAlertTableTimebaseMappings:
+        orgunitCode: "segment_Organisation"
+        customerSegment: "segment_Type"
+      processorThrowGeneralErrorOnAllCaughtExceptions: "true" # #[SMBD Processor setting] set true, to throw RuntimeException when any service throws an error (for onError = STOP or CONTINUE)
+      configurationDumping: "ALL" # # Possible values OFF(default), ALL, EXCLUDEDATASOURCE
+      detection:
+        oooalertingTimebasedDatasources: "Transaction|IETAlert" # #a pipe separated list of datasource(s) to run out of order alerting against for time-based detections
+        profileReaderMode: "true"
+        functions:
+          getTotalsSinceDate: # Optional configuration of custom date formats for event date parameter in GetTotalSinceDate
+            supportExtraEventDateFormats: "false" # true|false (default is false)
+            extraEventDateFormatsSep: "," # <separator string> (default is comma , )
+            extraEventDateFormats: "ddMMyyyy,yyyyMMdd,dd/MM/yyyy" # # <String of date formats, separated by extraEventDateFormatsSep, for example: "ddMMyyyy,yyyyMMdd,dd/MM/yyyy">
+      infoListsSkip:
+        type: "" # "Info list, Blacklist" -  #Turns off the loading of defined list types. Default: ""
+        name: "" # Turns off the loading of defined list names. Default: "", "TransactionTypeList"
+      floatingSegmentation: "false" # Turns on the floating segmentation feature. Possible values false(default), true
+      datasetgenerator:
+        outputDots: "true" # AML IET Dataset Generator Properties - default "true"
+      # Extra list of parameters for AML application.conf
+      # Example: ["param1=value1", "param2=value2"]
+      extraParameters: []
+    accountUpdateAppConfig:
+      smbdHeader: "RecordId|RunDate|AccountID|CustomerID|CustomerSegment|OrganisationalUnit|DateOpened|DateClosed|AccountBalanceBase"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    alertFeedbackAppConfig:
+      smbdHeader: "AlertId|RunDate|AccountID|CustomerID|CustomerSegment|OrganisationalUnit|CheckName|AlertWeight|AlertInfo"
+      smbd:
+        datasource:
+          entityValueSkipEmptyKey: "true"
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    ietAlertAppConfig:
+      smbdHeader: ""
+      smbd:
+        datasource:
+          entityValueSkipEmptyKey: "false"
+        detection:
+          outoforderalerting: "ON" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+        inverseProfiling: "false"
+    ietAlertAppConfigDSG:
+      smbd:
+        datasource:
+          entityValueSkipEmptyKey: "false"
+    internalAppConfig:
+      smbdHeader: "CHECK_NAME|OrganisationalUnit|VIEW_ID|TxnDate"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    iuCustomerAppConfig:
+      # The location of the header file. Only the header file corresponding to the datasource files to be processed should be placed in this directory
+      smbdHeader: "RunTimestamp|CustomerID|OrganisationalUnit|CustomerSourceRefId|PersonTitle|FirstName|MiddleNames|LastName|Suffix|CustomerName|CompanyName|CompanyForm|RegisteredNumber|IncorporationDate|IncorporationCountryCode|BusinessType|BusinessSegment1|BusinessSegment2|Initials|DateOfBirth|NameOfBirth|Address|Zone|City|PostalCode|CountryOfResidence|CountryOfOrigin|NationalityCode|PlaceofBirth|GenderCode|PrimeBranchId|RelationshipMgrId|EmployeeFlag|EmployeeNumber|MaritalStatus|Occupation|EmploymentStatus|AcquisitionDate|CancelledDate|CustomerTypeCode|CustomerStatusCode|CustomerSegment1|CustomerSegment2|CustomerSegment3|ResidenceFlag|SpecialAttentionFlag|DeceasedFlag|DormantOverrideDate|RiskScore|BankruptFlag|CompensationReqdFlag|CustomerComplaintFlag|EndRelationshipFlag|MerchantNumber|FaceToFaceFlag|Channel|Age|NearBorderFlag|IntendedProductUse|SourceOfFunds|ComplexStructure|ExpectedAnnualTurnover|TradingDuration|BalanceSheetTotal|VatNumber|BrokerCode|BlackListedFlag|DomainCode|Comments|PepFlag|WireInMonNum|WireOutMonNum|WireInMonVol|WireOutMonVol|CashInMonVol|CashOutMonVol|ChkInMonVol|ChkOutMonVol|OverallScoreAdjustment|TaxNumber|TaxNumberIssuedBy|CustomerCategoryCode|OwnAffiliateFlag|MarketingServiceLevel|SanctionedFlag|PepType|PepRelatedFlag|AddressValidFrom|AddressValidTo|Email|EmailValidFrom|EmailValidTo|CountryCode|AreaCode|PhoneNumber|PhoneExtension|PhoneValidFrom|PhoneValidTo|AlternateName|TaxNumberType|BusinessClassificationCode|BusinessClassificationSystem"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    sensaAalAppConfigDSG:
+      smbd:
+        datasource:
+          entityValueSkipEmptyKey: "false"
+    sensaAlertScoreAppConfig:
+      smbdHeader: "RunTimestamp|AlertID|CustomerID|OrganisationalUnit|OverallRiskScore|AnomalyDetectionScore|ChangeInBehaviourScore|HotspotScore|RiskSimilarityScore"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    sensaAlertScoreAppConfigDSG:
+      smbd:
+        datasource:
+          entityValueSkipEmptyKey: "false"
+    sensaCustomerScoreAppConfig:
+      smbdHeader: "RunTimestamp|CustomerID|OrganisationalUnit|OverallRiskScore|AnomalyDetectionScore|ChangeInBehaviourScore|HotspotScore"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    transactionAppConfig:
+      smbdHeader: "TxnDate|TransactionID|SourceTxnNum|AccountID|AccountSourceRefID|CustomerID|CustomerSourceRefID|BranchID|TransactionType|OwnAccountTransfer|CurrencyCodeOrig|Currency|RegisterDate|PostingDate|ValueDate|SystemTimestamp|LocalTimestamp|ProductSourceTypeCode|TxnVolume|DeviceId|AmountCurrency|AmountBaseCurrency|CreditOrDebit|TransRefDesc|TransRefDesc2|TransRefDesc3|TransRefDesc4|TransRefDesc5|TransRefDesc6|ClientDePassage|TxnStatusCode|TxnChannelCode|SourceSystemCode|ErrorCorrectFlag|TransactionLocation|OrganisationalUnit|TxnUsrDtls|DvcPosEntryMode|PinVerifyCd|CardID|EmployeeID|SecondPartyName|SecondPartyAddress|SecondPartyZone|SecondPartyPostalCode|SecondPartyCity|SecondPartyCountry|SecondPartyAccount|SecondPartyAccountName|SecondPartyAccountType|SecondPartyAccountIban|SecondPartyBIC|SecondPartyBankName|SecondPartyBankCode|SecondPartyBankAddress|SecondPartyBankCity|SecondPartyBankZone|SecondPartyBankPostalCode|SecondPartyBnkCntryCd|OriginatorName|BeneficiaryName|OriginatorBankName|BeneficiaryBankName|TellerId|CardSourceRefId|CheckNumber|CheckAccountNumber|CheckAmount|CashbackAMT"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+      inverseProfiling: "false"
+    sparkConf:
+      "spark.sql.shuffle.partitions": "1"
+      "spark.sql.autoBroadcastJoinThreshold": "-1"
+      "spark.driver.userClassPathFirst": "false"
+      "spark.kubernetes.submission.connectionTimeout": "60000000"
+      "spark.kubernetes.submission.requestTimeout": "60000000"
+      "spark.kubernetes.driver.connectionTimeout": "60000000"
+      "spark.kubernetes.driver.requestTimeout": "60000000"
+    driver:
+      cores: 1
+      coreLimit: "1000m"
+      memory: "3000m"
+    executor:
+      cores: 1
+      instances: 1
+      memory: "3000m"
+  amlcb:
+    applicationConf:
+      lastDayOfWeek: "friday"
+      traceModeLevel: "OFF"
+      detectionAlertInfoTruncateNumbers: "false"
+      extraParameters: []
+    transactionAppConfig:
+      smbdHeader: "RunTimestamp|SrcTxnUniqueId|SrcTxnNum|TellerId|TxnSrcTypeCode|CurrencyCodeOrig|CurrencyCodeBase|OriginationDate|PostingDate|ValueDate|SystemTimestamp|LocalTimestamp|TxnChannelCode|TxnAmountOrig|TxnAmountBase|TransRefDesc|ClientDePassage|TxnStatusCode|SrcSystemCode|OrgUnitCode|CardSourceRefId|OriginCPartySrcUniqueId1|OriginCPartySrcRefId|OriginSubCustSrcUniqueId|OriginSubCustSrcRefId|OriginCpartyAccountId|OriginBIC|OriginAccountNumber|OriginName|OriginBankName|OriginCountryCode|OriginAddress|OriginCity|OriginZone|OriginPostalCode|OriginBankCountryCode|OriginBankAddress|BeneCPartySrcUniqueId1|BeneCPartySrcRefId|BeneSubCustSrcUniqueId|BeneSubCustSrcRefId|BeneCpartyAccountId|BeneBIC|BeneAccountNumber|BeneName|BeneBankName|BeneCountryCode|BeneAddress|BeneCity|BeneZone|BenePostalCode|BeneBankCountryCode|BeneBankAddress|DbRespCustSrcUniqueId|DbRespCustSrcRefId|DbRespAccountSrcUniqueId|DbRespAccountSrcRefId|DbRespBic|DbRespAccountNumber|DbRespOrgUnitCode|CrRespCustSrcUniqueId|CrRespCustSrcRefId|CrRespAccountSrcUniqueId|CrRespAccountSrcRefId|CrRespBic|CrRespAccountNumber|CrRespOrgUnitCode|SendingBankName|SendingBankBic|SendingBankAccountNumber|SendingBankCountryCode|SendingBankAddress|RecvBankName|RecvBankBic|RecvBankAccountNumber|RecvBankCountryCode|RecvBankAddress|IntBankName|IntBankBic|IntBankAccountNumber|IntBankCountryCode|IntBankAddress|OrderInstBankName|OrderInstBankBic|OrderInstAccountNumber|OrderInstCountryCode|OrderInstAddress|SenderCorrBankName|SenderCorrBankBic|SenderCorrAccountNumber|SenderCorrCountryCode|SenderCorrAddress|RecvCorrBankName|RecvCorrBankBic|RecvCorrAccountNumber|RecvCorrCountryCode|RecvCorrAddress|UltimateCreditor|UltimateDebtor|PaymentInstitution|DebtorCountryCode|CreditorCountryCode"
+      smbd:
+        inverseProfiling: "true"
+        datasource:
+          entityValueSkipEmptyKey: "true"
+    sparkConf:
+      "spark.sql.shuffle.partitions": "1"
+      "spark.sql.autoBroadcastJoinThreshold": "-1"
+      "spark.driver.userClassPathFirst": "false"
+      "spark.kubernetes.submission.connectionTimeout": "60000000"
+      "spark.kubernetes.submission.requestTimeout": "60000000"
+      "spark.kubernetes.driver.connectionTimeout": "60000000"
+      "spark.kubernetes.driver.requestTimeout": "60000000"
+    driver:
+      cores: 1
+      coreLimit: "1000m"
+      memory: "3000m"
+    executor:
+      cores: 1
+      instances: 1
+      memory: "3000m"
+  amlcust:
+    applicationConf:
+      lastDayOfWeek: "friday"
+      traceModeLevel: "OFF"
+      detectionAlertInfoTruncateNumbers: "false"
+      detectionAlertWeightTruncate: "false"
+      profileTsFieldsToExport: "AllCount_cnt_month_past1, AllCount_cnt_month_past2, AllCount_cnt_month_past3, AllCount_cnt_month_past4, AllCount_cnt_month_past5, AllCount_cnt_month_past6, CashCreditAmount_acc_month_past1, CashCreditAmount_acc_month_past2, CashCreditAmount_acc_month_past3, CashCreditAmount_acc_month_past4, CashCreditAmount_acc_month_past5,CashCreditAmount_acc_month_past6, CashCreditCount_cnt_month_past1, CashCreditCount_cnt_month_past2, CashCreditCount_cnt_month_past3, CashCreditCount_cnt_month_past4, CashCreditCount_cnt_month_past5, CashCreditCount_cnt_month_past6, CashDebitAmount_acc_month_past1, CashDebitAmount_acc_month_past2, CashDebitAmount_acc_month_past3, CashDebitAmount_acc_month_past4, CashDebitAmount_acc_month_past5,CashDebitAmount_acc_month_past6, CashDebitCount_cnt_month_past1, CashDebitCount_cnt_month_past2, CashDebitCount_cnt_month_past3, CashDebitCount_cnt_month_past4, CashDebitCount_cnt_month_past5,CashDebitCount_cnt_month_past6, ChequeCreditAmount_acc_month_past1, ChequeCreditAmount_acc_month_past2, ChequeCreditAmount_acc_month_past3, ChequeCreditAmount_acc_month_past4, ChequeCreditAmount_acc_month_past5,ChequeCreditAmount_acc_month_past6, ChequeCreditCount_cnt_month_past1, ChequeCreditCount_cnt_month_past2, ChequeCreditCount_cnt_month_past3, ChequeCreditCount_cnt_month_past4, ChequeCreditCount_cnt_month_past5,ChequeCreditCount_cnt_month_past6, ChequeDebitAmount_acc_month_past1, ChequeDebitAmount_acc_month_past2, ChequeDebitAmount_acc_month_past3, ChequeDebitAmount_acc_month_past4, ChequeDebitAmount_acc_month_past5, ChequeDebitAmount_acc_month_past6, ChequeDebitCount_cnt_month_past1, ChequeDebitCount_cnt_month_past2, ChequeDebitCount_cnt_month_past3, ChequeDebitCount_cnt_month_past4, ChequeDebitCount_cnt_month_past5,ChequeDebitCount_cnt_month_past6, WireCreditAmount_acc_month_past1, WireCreditAmount_acc_month_past2, WireCreditAmount_acc_month_past3, WireCreditAmount_acc_month_past4, WireCreditAmount_acc_month_past5,WireCreditAmount_acc_month_past6, WireCreditCount_cnt_month_past1, WireCreditCount_cnt_month_past2, WireCreditCount_cnt_month_past3, WireCreditCount_cnt_month_past4, WireCreditCount_cnt_month_past5, WireCreditCount_cnt_month_past6, WireDebitAmount_acc_month_past1, WireDebitAmount_acc_month_past2, WireDebitAmount_acc_month_past3, WireDebitAmount_acc_month_past4, WireDebitAmount_acc_month_past5, WireDebitAmount_acc_month_past6, WireDebitCount_cnt_month_past1, WireDebitCount_cnt_month_past2, WireDebitCount_cnt_month_past3, WireDebitCount_cnt_month_past4, WireDebitCount_cnt_month_past5, WireDebitCount_cnt_month_past6, OtherAmountCredit_acc_month_past1, OtherAmountCredit_acc_month_past2, OtherAmountCredit_acc_month_past3, OtherAmountCredit_acc_month_past4, OtherAmountCredit_acc_month_past5,OtherAmountCredit_acc_month_past6, OtherAmountDebit_acc_month_past1, OtherAmountDebit_acc_month_past2, OtherAmountDebit_acc_month_past3, OtherAmountDebit_acc_month_past4, OtherAmountDebit_acc_month_past5,OtherAmountDebit_acc_month_past6, LifeTime_months"
+      extraParameters: []
+    transactionAppConfig:
+      smbdHeader: "TxnDate|TransactionID|SourceTxnNum|AccountID|AccountSourceRefID|CustomerID|CustomerSourceRefID|BranchID|TransactionType|OwnAccountTransfer|CurrencyCodeOrig|Currency|RegisterDate|PostingDate|ValueDate|SystemTimestamp|LocalTimestamp|ProductSourceTypeCode|TxnVolume|DeviceId|AmountCurrency|AmountBaseCurrency|CreditOrDebit|TransRefDesc|TransRefDesc2|TransRefDesc3|TransRefDesc4|TransRefDesc5|TransRefDesc6|ClientDePassage|TxnStatusCode|TxnChannelCode|SourceSystemCode|ErrorCorrectFlag|TransactionLocation|OrganisationalUnit|TxnUsrDtls|DvcPosEntryMode|PinVerifyCd|CardID|EmployeeID|SecondPartyName|SecondPartyAddress|SecondPartyZone|SecondPartyPostalCode|SecondPartyCity|SecondPartyCountry|SecondPartyAccount|SecondPartyAccountName|SecondPartyAccountType|SecondPartyAccountIban|SecondPartyBIC|SecondPartyBankName|SecondPartyBankCode|SecondPartyBankAddress|SecondPartyBankCity|SecondPartyBankZone|SecondPartyBankPostalCode|SecondPartyBnkCntryCd|OriginatorName|BeneficiaryName|OriginatorBankName|BeneficiaryBankName|TellerId|CardSourceRefId|CheckNumber|CheckAccountNumber|CheckAmount|CashbackAMT"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+        inverseProfiling: "false"
+    sensaCustomerScoreAppConfig:
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    sparkConf:
+      "spark.sql.shuffle.partitions": "1"
+      "spark.sql.autoBroadcastJoinThreshold": "-1"
+      "spark.driver.userClassPathFirst": "false"
+      "spark.kubernetes.submission.connectionTimeout": "60000000"
+      "spark.kubernetes.submission.requestTimeout": "60000000"
+      "spark.kubernetes.driver.connectionTimeout": "60000000"
+      "spark.kubernetes.driver.requestTimeout": "60000000"
+    driver:
+      cores: 1
+      coreLimit: "1000m"
+      memory: "3000m"
+    executor:
+      cores: 1
+      instances: 1
+      memory: "3000m"
+  amlopt:
+    applicationConf:
+      lastDayOfWeek: "friday"
+      traceModeLevel: "OFF"
+      detectionAlertInfoTruncateNumbers: "false"
+      detectionAlertWeightTruncate: "false"
+      # Extra list of parameters for AML application.conf
+      # Example: ["param1=value1", "param2=value2"]
+      extraParameters: []
+    accountUpdateAppConfig:
+      smbdHeader: "RecordId|RunDate|AccountID|CustomerID|CustomerSegment|OrganisationalUnit|DateOpened|DateClosed|AccountBalanceBase"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    alertFeedbackAppConfig:
+      smbdHeader: "RunDate|AlertId|AccountID|CustomerID|CustomerSegment|OrganisationalUnit|CheckName|AlertWeight"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    ietAlertAppConfig:
+      smbdHeader: ""
+      smbd:
+        datasource:
+          entityValueSkipEmptyKey: "false"
+        detection:
+          outoforderalerting: "ON" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+        inverseProfiling: "false"
+    ietAlertAppConfigDSG:
+      smbd:
+        datasource:
+          entityValueSkipEmptyKey: "false"
+    internalAppConfig:
+      smbdHeader: "CHECK_NAME|OrganisationalUnit|VIEW_ID|TxnDate"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    iuCustomerAppConfig:
+      smbdHeader: "RunTimestamp|CustomerID|OrganisationalUnit|CustomerSourceRefId|PersonTitle|FirstName|MiddleNames|LastName|Suffix|CustomerName|CompanyName|CompanyForm|RegisteredNumber|IncorporationDate|IncorporationCountryCode|BusinessType|BusinessSegment1|BusinessSegment2|Initials|DateOfBirth|NameOfBirth|Address|Zone|City|PostalCode|CountryOfResidence|CountryOfOrigin|NationalityCode|PlaceofBirth|GenderCode|PrimeBranchId|RelationshipMgrId|EmployeeFlag|EmployeeNumber|MaritalStatus|Occupation|EmploymentStatus|AcquisitionDate|CancelledDate|CustomerTypeCode|CustomerStatusCode|CustomerSegment1|CustomerSegment2|CustomerSegment3|ResidenceFlag|SpecialAttentionFlag|DeceasedFlag|DormantOverrideDate|RiskScore|BankruptFlag|CompensationReqdFlag|CustomerComplaintFlag|EndRelationshipFlag|MerchantNumber|FaceToFaceFlag|Channel|Age|NearBorderFlag|IntendedProductUse|SourceOfFunds|ComplexStructure|ExpectedAnnualTurnover|TradingDuration|BalanceSheetTotal|VatNumber|BrokerCode|BlackListedFlag|DomainCode|Comments|PepFlag|WireInMonNum|WireOutMonNum|WireInMonVol|WireOutMonVol|CashInMonVol|CashOutMonVol|ChkInMonVol|ChkOutMonVol|OverallScoreAdjustment|TaxNumber|TaxNumberIssuedBy|CustomerCategoryCode|OwnAffiliateFlag|MarketingServiceLevel|SanctionedFlag|PepType|PepRelatedFlag|AddressValidFrom|AddressValidTo|Email|EmailValidFrom|EmailValidTo|CountryCode|AreaCode|PhoneNumber|PhoneExtension|PhoneValidFrom|PhoneValidTo|AlternateName|TaxNumberType|BusinessClassificationCode|BusinessClassificationSystem|CustomerChannelRemoteFlag|AdverseMediaFlag"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    sensaAalAppConfigDSG:
+      smbd:
+        datasource:
+          entityValueSkipEmptyKey: "false"
+    sensaAlertScoreAppConfig:
+      smbdHeader: "RunTimestamp|AlertID|CustomerID|OrganisationalUnit|OverallRiskScore|AnomalyDetectionScore|ChangeInBehaviourScore|HotspotScore|RiskSimilarityScore"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    sensaAlertScoreAppConfigDSG:
+      smbd:
+        datasource:
+          entityValueSkipEmptyKey: "false"
+    sensaCustomerScoreAppConfig:
+      smbdHeader: "RunTimestamp|CustomerID|OrganisationalUnit|OverallRiskScore|AnomalyDetectionScore|ChangeInBehaviourScore|HotspotScore"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    transactionAppConfig:
+      smbdHeader: "TxnDate|TransactionID|SourceTxnNum|AccountID|AccountSourceRefID|CustomerID|CustomerSourceRefID|BranchID|TransactionType|OwnAccountTransfer|CurrencyCodeOrig|Currency|RegisterDate|PostingDate|ValueDate|SystemTimestamp|LocalTimestamp|ProductSourceTypeCode|TxnVolume|DeviceId|AmountCurrency|AmountBaseCurrency|CreditDebitCode|TransRefDesc|TransRefDesc2|TransRefDesc3|TransRefDesc4|TransRefDesc5|TransRefDesc6|ClientDePassage|TxnStatusCode|TxnChannelCode|SourceSystemCode|ErrorCorrectFlag|TransactionLocation|OrganisationalUnit|TxnUsrDtls|DvcPosEntryMode|PinVerifyCd|CardID|EmployeeID|SecondPartyName|SecondPartyAddress|SecondPartyZone|SecondPartyPostalCode|SecondPartyCity|SecondPartyCountry|SecondPartyAccount|SecondPartyAccountName|SecondPartyAccountType|SecondPartyAccountIban|SecondPartyBIC|SecondPartyBankName|SecondPartyBankCode|SecondPartyBankAddress|SecondPartyBankCity|SecondPartyBankZone|SecondPartyBankPostalCode|SecondPartyBnkCntryCd|OriginatorName|BeneficiaryName|OriginatorBankName|BeneficiaryBankName|TellerId|CardSourceRefId|CheckNumber|CheckAccountNumber|CheckAmount|CashbackAMT"
+      smbd:
+        detection:
+          outoforderalerting: "OFF" #turns out of order alerting ON/OFF for this datasource. Set to ON by default
+    sparkConf:
+      "spark.sql.shuffle.partitions": "1"
+      "spark.sql.autoBroadcastJoinThreshold": "-1"
+      "spark.driver.userClassPathFirst": "false"
+      "spark.kubernetes.submission.connectionTimeout": "60000000"
+      "spark.kubernetes.submission.requestTimeout": "60000000"
+      "spark.kubernetes.driver.connectionTimeout": "60000000"
+      "spark.kubernetes.driver.requestTimeout": "60000000"
+    driver:
+      cores: 1
+      coreLimit: "1000m"
+      memory: "4500m"
+    executor:
+      cores: 1
+      instances: 1
+      memory: "5500m"
+
+# Used only in example SparkApplication configuration. It is not used for SMBD job run from Application.
+driver:
+  cores: 1
+  coreLimit: "1000m"
+  memory: "2000m"
+  javaOptions: "-Dsmbd.home=/opt/smbd -Dlog4j.configuration=file:/opt/smbd/conf/log4j.properties"
+
+# Used only in example SparkApplication configuration. It is not used for SMBD job run from Application.
+executor:
+  cores: 1
+  instances: 3
+  memory: "3000m"
+  javaOptions: "-Dsmbd.home=/opt/smbd -Dlog4j.configuration=file:/opt/smbd/conf/log4j.properties"
+
+#DATABASE CONNECTION
+jdbc:
+  driver: "org.postgresql.Driver"
+  userid: ""
+  passwd: ""
+  encryptionMethod: "plainText"
+keystore:
+  filename: ""
+  password: ""
+  key_password: ""
+
+#STORAGE
+storage:
+  # nfs_server_endpoint: "10.222.17.49"
+  nfs_server_dir: "/var/nfs_k8s/smbd"
+  storage: "5Gi"
+  storageClassName: ""
+  hostPathMinikube: "/opt/netreveal/smbd"
+
+# SMBD
+# week
+timeToLiveSeconds: 604800
+imageRepository: "nri-nrod-k8s-smbd"
+imageTag: "9.6.0.4-3.5.6-jdk17-20260305152857"
+imagePullPolicy: IfNotPresent
+mainClass: com.netreveal.processor.SmbdProcessorRunner
+mainApplicationFile: "local:///opt/smbd/lib/smbd.jar"
+arguments: "-beginDate; 20160120; -endDate; 20160121; -processName; OutOfBox"
+sparkVersion: "3.5.6"
+serviceAccount: spark-app
+restartPolicy:
+  type: Never
+  retries:
+    onFailureRetries: 22
+    onFailureRetryInterval: 20
+    onSubmissionFailureRetries: 20
+    onSubmissionFailureRetryInterval: 20
+
+# This configuration is required for the default SparkApplication and for generating "spark.operator.spark.conf" (will not be required in future).
+# sparkConf.spark.driver.extraClassPath and sparkConf.spark.executor.extraClassPath are also used for Solution specific parameters.
+sparkConf:
+  "spark.driver.extraClassPath": "local:///opt/smbd/lib/bcprov.jar:local:///opt/smbd/lib/postgresql.jar"
+  "spark.executor.extraClassPath": "local:///opt/smbd/lib/bcprov.jar:local:///opt/smbd/lib/postgresql.jar"
+  "spark.sql.shuffle.partitions": "1"
+  "spark.sql.autoBroadcastJoinThreshold": "-1"
+  "spark.driver.userClassPathFirst": "false"
+  "spark.kubernetes.submission.connectionTimeout": "60000000"
+  "spark.kubernetes.submission.requestTimeout": "60000000"
+  "spark.kubernetes.driver.connectionTimeout": "60000000"
+  "spark.kubernetes.driver.requestTimeout": "60000000"
+
+monitoring:
+  exposeDriverMetrics: true
+  exposeExecutorMetrics: true
+  prometheus:
+    jmxExporterJar: "/opt/smbd/lib/jmx_prometheus_javaagent.jar"
+    port: 8090
+
+# Primary Volume, Release Name will be added to the volume name
+amlVolumes:
+- name: aml-smbd-data-pvc
+  persistentVolumeClaim:
+    claimName: aml-smbd-data-pvc
+amlcbVolumes:
+- name: amlcb-smbd-data-pvc
+  persistentVolumeClaim:
+    claimName: amlcb-smbd-data-pvc
+amlcustVolumes:
+- name: amlcust-smbd-data-pvc
+  persistentVolumeClaim:
+    claimName: amlcust-smbd-data-pvc
+amloptVolumes:
+- name: amlopt-smbd-data-pvc
+  persistentVolumeClaim:
+    claimName: amlopt-smbd-data-pvc
+
+# Primary Volume Mounts, Release Name will be added to the each mount name
+amlVolumemounts:
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/logs
+  subPath: logs
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/data
+  subPath: data
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/failures
+  subPath: failures
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/invalidrecords
+  subPath: invalidrecords
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/profile_storage
+  subPath: profile_storage
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/SMID
+  subPath: SMID
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/transaction_storage
+  subPath: transaction_storage
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/profile_output_location
+  subPath: profile_output_location
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/input
+  subPath: input
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/mnt_profile_output_location
+  subPath: mnt_profile_output_location
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/accountUpdate_storage
+  subPath: accountUpdate_storage
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/profileRecycleBin
+  subPath: profileRecycleBin
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/detectionconfigs
+  subPath: detectionconfigs
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/rawDir
+  subPath: rawDir
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/lists
+  subPath: "lists"
+- name: aml-smbd-data-pvc
+  mountPath: /opt/smbd/conf
+  subPath: conf
+
+amlcbVolumemounts:
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/logs
+  subPath: logs
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/data
+  subPath: data
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/failures
+  subPath: failures
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/invalidrecords
+  subPath: invalidrecords
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/profile_storage
+  subPath: profile_storage
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/SMID
+  subPath: SMID
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/transaction_storage
+  subPath: transaction_storage
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/profile_output_location
+  subPath: profile_output_location
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/input
+  subPath: input
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/mnt_profile_output_location
+  subPath: mnt_profile_output_location
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/accountUpdate_storage
+  subPath: accountUpdate_storage
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/profileRecycleBin
+  subPath: profileRecycleBin
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/detectionconfigs
+  subPath: detectionconfigs
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/rawDir
+  subPath: rawDir
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/lists
+  subPath: "lists"
+- name: amlcb-smbd-data-pvc
+  mountPath: /opt/smbd/conf
+  subPath: conf
+
+amlcustVolumemounts:
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/logs
+  subPath: logs
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/data
+  subPath: data
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/failures
+  subPath: failures
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/invalidrecords
+  subPath: invalidrecords
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/profile_storage
+  subPath: profile_storage
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/SMID
+  subPath: SMID
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/transaction_storage
+  subPath: transaction_storage
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/profile_output_location
+  subPath: profile_output_location
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/input
+  subPath: input
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/mnt_profile_output_location
+  subPath: mnt_profile_output_location
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/accountUpdate_storage
+  subPath: accountUpdate_storage
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/profileRecycleBin
+  subPath: profileRecycleBin
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/detectionconfigs
+  subPath: detectionconfigs
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/rawDir
+  subPath: rawDir
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/lists
+  subPath: "lists"
+- name: amlcust-smbd-data-pvc
+  mountPath: /opt/smbd/conf
+  subPath: conf
+
+amloptVolumemounts:
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/logs
+  subPath: logs
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/data
+  subPath: data
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/failures
+  subPath: failures
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/invalidrecords
+  subPath: invalidrecords
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/profile_storage
+  subPath: profile_storage
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/SMID
+  subPath: SMID
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/transaction_storage
+  subPath: transaction_storage
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/profile_output_location
+  subPath: profile_output_location
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/input
+  subPath: input
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/mnt_profile_output_location
+  subPath: mnt_profile_output_location
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/accountUpdate_storage
+  subPath: accountUpdate_storage
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/profileRecycleBin
+  subPath: profileRecycleBin
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/detectionconfigs
+  subPath: detectionconfigs
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/rawDir
+  subPath: rawDir
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/lists
+  subPath: "lists"
+- name: amlopt-smbd-data-pvc
+  mountPath: /opt/smbd/conf
+  subPath: conf
+
+  # Extra Volume, For Testing Purposes, only when deploying smbd by Helm Chart
+extraVolumes: []
+
+# Extra VolumeMounts, For Testing Purposes, only when deploying smbd by Helm Chart
+extraVolumemounts: []

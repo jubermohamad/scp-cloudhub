@@ -1,0 +1,271 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+image:
+  registry: symphonyfs.azurecr.io
+  repository: sensa-data-ontology
+  tag: main
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+# Deploy-time pod annotations applied to EVERY service (the CD pipeline
+# stamps gitSha here) — a rebuilt MUTABLE tag alone changes nothing in the
+# pod spec, so without this only tag CHANGES rolled pods and backends kept
+# running stale images after same-branch redeploys.
+podAnnotations: {}
+
+imagePullSecrets:
+  - name: symphonyfs-acr-secret
+
+imageCredentials:
+  # Set create: true to have the chart create the docker pull secret.
+  # secretName must match the name in imagePullSecrets above.
+  create: false
+  secretName: symphonyfs-acr-secret
+  # Option A — paste the full .dockerconfigjson blob (takes precedence).
+  dockerConfigJson: ""
+  # Option B — individual fields (used only when dockerConfigJson is empty).
+  registry: symphonyfs.azurecr.io
+  username: ""
+  password: ""
+
+ingress:
+  enabled: true
+  host: lens.example.com
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+  tls:
+    enabled: false
+    # Name of the TLS secret in this namespace.
+    # If cert + key are provided the chart creates the secret; otherwise it must exist already.
+    secretName: tls-secret-eurekaflows
+    # Provide PEM content to have the chart create the secret:
+    #   --set-file ingress.tls.cert=tls.crt
+    #   --set-file ingress.tls.key=tls.key
+    cert: ""
+    key: ""
+    # Set true when secretName is populated by something other than this chart
+    # (e.g. cert-manager via a cluster-issuer annotation in ingress.annotations).
+    # Skips the cert/key-required validation and the chart's own Secret-creation
+    # step, leaving the Ingress's tls.secretName reference as the only wiring.
+    managedExternally: false
+
+# Name of the Secret that holds sensitive runtime values.
+existingSecret: lens-secrets
+
+secrets:
+  # Set create: true to have the chart create the secret from the values below.
+  # Set create: false if you pre-create it externally (e.g. via sealed-secrets).
+  create: false
+  # Required only when postgres.enabled is false (existing Postgres).
+  # When postgres.enabled is true a strong password is auto-generated.
+  postgresPassword: ""
+  anthropicApiKey: ""
+  # Keycloak client secret for service-to-service client_credentials flow.
+  # Create a service account under the lens client in Keycloak and paste its
+  # secret here (or pre-create it in lens-secrets as key: keycloak-client-secret).
+  # Leave empty to disable auto-refresh (falls back to LENS_SERVICE_TOKEN if set).
+  #
+  # REQUIRED when any service has env.authEnabled=true (the default). Without
+  # it (and without LENS_SERVICE_TOKEN) inter-service calls — execute→compile→
+  # registry, AI→compile/execute/registry — send no Authorization header and
+  # 401, so NL queries and plan execution fail. Each service logs a startup
+  # warning (check_auth_config) when auth is on but no service credential is set.
+  keycloakClientSecret: ""
+  # Admin (or realm-admin-scoped service account) credentials used ONLY by the
+  # keycloak.setup Job to create/update the lens/lens-backend clients, the
+  # audience mapper, and lens:publish:*/lens:admin client roles in the target
+  # realm. Not needed (and not read) when keycloak.setup.enabled is false.
+  keycloakAdminUser: ""
+  keycloakAdminPassword: ""
+
+postgres:
+  # ── Mode ──────────────────────────────────────────────────────────────────
+  # false → use an existing Postgres (fill in the "Existing" block below).
+  # true  → chart deploys its own StatefulSet (fill in the "New" block below).
+  enabled: false
+
+  # ── Existing Postgres ─────────────────────────────────────────────────────
+  # Required when enabled: false.
+  host: ""
+  port: 5432
+  username: lens
+  database: lens
+  # When true (only meaningful alongside enabled: false — connecting to an
+  # already-running instance), a pre-install/pre-upgrade Job idempotently
+  # creates `database` on that instance if it doesn't already exist, before
+  # any other resource in this release is created — so app pods never race a
+  # missing database. Off by default: most enabled: false use cases point at
+  # a database that's already provisioned.
+  ensureDatabase: false
+
+  # ── New Postgres (chart-managed) ──────────────────────────────────────────
+  # Used when enabled: true.
+  # username/database default to "lens" and can be overridden.
+  # A cryptographically strong password is auto-generated on first install
+  # and preserved on upgrades via secret lookup — no manual password needed.
+  image: postgres:14
+  storage: 10Gi
+  storageClass: managed-csi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+keycloak:
+  url: ""
+  realm: ""
+  # Expected `aud` claim. REQUIRES a Keycloak audience mapper that stamps this
+  # value into the access token's `aud` — without one, Keycloak emits aud=
+  # "account" by default and every authenticated request 401s. If you cannot
+  # configure a mapper, set audience: "" to skip audience verification
+  # (issuer + signature + client-role checks still apply).
+  audience: "lens"
+  # Token issuer (`iss` claim). Set this when the browser-facing Keycloak URL
+  # differs from `url` (e.g. services fetch JWKS in-cluster but tokens are
+  # minted at an external hostname). Empty → derived from url/realm.
+  issuer: ""
+  # User-facing client (browser auth, Swagger UI PKCE). Keycloak writes this
+  # client's roles under resource_access[<clientId>]; must match the token.
+  clientId: "lens"
+  # Confidential client for service-to-service client_credentials calls.
+  # Separate from clientId so the user-facing client stays public (no secret
+  # required for browser/PKCE flows). Must have an Audience mapper in Keycloak
+  # that stamps the audience value into aud.
+  serviceClientId: "lens-backend"
+  # Comma-separated allowed CORS origins. Defaults to local dev origins when empty.
+  allowOrigins: ""
+
+  # Automates the checklist in KEYCLOAK.md: creates/updates the `lens` (public,
+  # PKCE) and `lens-backend` (confidential, service-account) clients, an
+  # Audience mapper stamping `keycloak.audience` into access tokens (added as
+  # a direct protocol mapper on each client — not a shared client-scope, to
+  # match how this realm's clients were already hand-configured), and
+  # lens:publish:*/lens:publish:<App>/lens:admin client roles on `lens`.
+  # Runs as a post-install/post-upgrade Job
+  # so it re-syncs on every deploy — safe to leave on, every step is idempotent
+  # (update-if-exists, create-if-missing). Requires an EXISTING realm — this
+  # never creates or modifies the realm itself.
+  setup:
+    # Extra entries to KEEP alongside the chart's desired redirect/origin URIs
+    # (the setup job converges those two fields, so anything hand-added in
+    # Keycloak would otherwise be replaced — declare it here instead).
+    extraRedirectUris: []
+    extraWebOrigins: []
+    enabled: false
+    # In-cluster Keycloak URL for the setup job's kcadm calls (the public
+    # keycloak.url stays for browser-facing config). Strongly recommended:
+    # via the ingress each call is slow enough that the job can outlive the
+    # 60s master-realm admin token and fail 401 mid-run.
+    internalUrl: ""
+    image: quay.io/keycloak/keycloak
+    imageTag: "26.0"
+    # Helm hook weight. MUST be greater than the weight of whatever creates the
+    # realm — in the SRI umbrella that is common-keycloak's keycloak-config-cli
+    # hook at weight 5. (Was hardcoded 0, which lost that race on every fresh
+    # install and after any keycloak DB wipe.)
+    hookWeight: 10
+    # How long to wait for Keycloak to serve keycloak.realm before giving up.
+    waitTimeoutSeconds: 600
+    # Realm the admin credentials authenticate against. Empty → same as
+    # keycloak.realm (a realm-scoped admin/service-account, least-privilege —
+    # does not require master-realm superadmin rights).
+    adminRealm: ""
+    # Redirect URI / web origin host for the `lens` client. Empty → ingress.host.
+    redirectHost: ""
+    # One lens:publish:<App> client role per entry, plus lens:publish:* and
+    # lens:admin. Mirrors the application set in CLAUDE.md / KEYCLOAK.md.
+    applications:
+      - CoreBanking
+      - AML
+      - Sanctions
+      - KYC
+      - RegReporting
+      - Fraud
+      - CreditRisk
+      - CollateralMgmt
+      - WatchlistMgmt
+      - CRM
+      - CreditOrigination
+      - ReferenceData
+
+registry:
+  replicas: 1
+  runMigrations: false
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  env:
+    authEnabled: "true"
+    logLevel: INFO
+
+
+compile:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  env:
+    authEnabled: "true"
+
+execute:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+  env:
+    authEnabled: "true"
+    bankingDatabase: lens_banking
+    bankWarehouseDatabase: bank_warehouse
+
+ai:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  env:
+    authEnabled: "true"
+    defaultModel: anthropic/claude-haiku-4-5
+    escalationModel: anthropic/claude-sonnet-4-6
+    allowedModels: "anthropic/claude-sonnet-4-6,anthropic/claude-haiku-4-5"
+    maxRetries: "3"
+
+mcp:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  env:
+    logLevel: INFO
+    authEnabled: "true"
+
+console:
+  replicas: 1
+  # Deploy-time metadata (e.g. the CD pipeline stamps gitSha here so a
+  # rebuilt MUTABLE tag still rolls the pod — Helm sees no spec change on
+  # an unchanged tag string otherwise).
+  podAnnotations: {}
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+docs:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      cpu: 200m
+      memory: 64Mi

@@ -1,0 +1,71 @@
+# Medium-tier worker/replica counts for the persistent assembly-perf-medium public-perf release.
+#
+# ONLY wired in when SIZE=medium — deploy/public-perf/deploy-public.sh chains this onto EXTRA_VALUES
+# (colon-separated, after values-public-perf.yaml) only for that tier. Do NOT fold these values into
+# values-public-perf.yaml: that file is loaded unconditionally regardless of SIZE, so baking
+# SIZE-specific replica counts into it would silently clobber `full`/`efficient` deploys of the
+# public-perf overlay — whichever of their SIZE_SETS --set flags doesn't happen to cover the same
+# key would fall through to this file's medium numbers instead of values-prod-perf.yaml's tier
+# defaults. (A real review finding on the PR that introduced this file, caught before it shipped —
+# the exact same "silent, invisible degradation" class of bug this file exists to fix for medium.)
+#
+# Root incident (issue #1374): deploy/bootstrap.sh's SIZE_SETS passes these same numbers as
+# ephemeral `--set` flags, which only apply when someone runs bootstrap.sh with SIZE=medium. Any
+# OTHER helm upgrade against the persistent perf-medium release (a manual `helm upgrade`, a
+# `--reuse-values` bump, a script that forgets SIZE=medium) silently drops back to the chart's
+# `values.yaml` defaults (agentsWorker.replicas: 2, etc), since those replica counts were never
+# actually persisted anywhere in the values chain. That happened for real: the persistent
+# perf-medium release ran at 2 engine-workers instead of the documented medium-tier 4 from
+# 2026-06-24 (helm revision 1) onward, silently halving the ceiling (~44k/hr vs ~81-94k/hr).
+#
+# Bake the medium-tier replica counts here, as a values FILE (not just a `--set` flag), so they hold
+# regardless of how the upgrade is invoked, as long as it goes through deploy-public.sh with
+# SIZE=medium (the default). Keep in sync with bootstrap.sh's `medium)` SIZE_SETS case and with
+# values-medium.yaml (that file targets a different topology — an 8-node cluster profile — so its
+# numbers legitimately differ from this cluster's app-node math; don't "fix" this by pointing at
+# values-medium.yaml instead of keeping this file in sync).
+#
+# 2026-07-05: assembly-perf-medium's node pools were bumped from 2 app/1 infra to 3 app/2 infra
+# D4ds_v4 (perfapppool/infrad4) — it was previously hardware-IDENTICAL to small (both 2 app/1
+# infra), so "medium" had zero real compute advantage over small despite the name. It now sits at
+# the midpoint between small (3 D4 total) and full (7 D4 total). Replica counts below bumped ~50%
+# to use the 3rd app node; the extra infra node lets postgres-temporal + the split Temporal
+# services spread across 2 D4s instead of cramming onto 1 (no chart change needed for that part —
+# infra.nodeSelector already matches either infra node, k8s just needed room to schedule onto).
+# NOT yet re-benchmarked post-bump — treat replica numbers below as a starting point, not a
+# validated ceiling, until a fresh chain-M/mixed/etc. sweep confirms them.
+agents:
+  replicas: 3
+agentsWorker:
+  replicas: 6
+  # values-prod-perf.yaml's 100m request was tuned for the FULL tier's 16-worker/5-node math
+  # (~3.2 workers/node, huge per-node headroom). On the prior 2-app-node medium shape, that request
+  # was far below real per-pod CPU usage, so the scheduler's bin-packing (which only looks at
+  # requests, not limits) ignored it and let 3 of the 4 worker pods land on whichever node had
+  # more headroom by OTHER pods' requests — even with the soft topologySpreadConstraints already
+  # in place. Live-confirmed on assembly-perf-medium (2026-07-03): 3 co-located workers each
+  # completed ~45-55% less CPU-bound work than the 1 isolated worker in a fixed time window.
+  # Bumping the request closer to real usage lets the scheduler correctly account for demand and
+  # spread pods evenly across app nodes. Kept at 300m for the 3-app-node shape too — same
+  # bin-packing math applies with more replicas across more nodes.
+  resources:
+    requests: { cpu: 300m }
+  # ScheduleAnyway (soft), not the chart default DoNotSchedule (hard): a hard spread constraint
+  # counts a lost node as an empty topology domain under maxSkew=1 and refuses to place a
+  # replacement pod on a surviving node at all, regardless of CPU headroom -- live-confirmed on the
+  # prior 2-app-node shape capping single-node-loss capacity at 50% (2/4 pods stuck Pending) even
+  # after trying multiple CPU request values, since pods never get far enough to hit a CPU limit;
+  # they're blocked from scheduling outright. Kept soft on the 3-app-node shape too — losing 1 of 3
+  # nodes hits the same maxSkew edge case. Full/efficient tiers keep the hard default since their
+  # 5+ nodes have enough spare domains to not hit this edge case. See #1455/#1456.
+  topologySpreadWhenUnsatisfiable: ScheduleAnyway
+agentsCodeWorker:
+  replicas: 3
+agentsSubflowWorker:
+  replicas: 2
+sandboxTrigger:
+  replicas: 3
+sandboxExecute:
+  replicas: 3
+llmGateway:
+  replicas: 3

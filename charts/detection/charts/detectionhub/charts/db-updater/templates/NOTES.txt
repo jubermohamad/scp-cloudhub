@@ -1,0 +1,15 @@
+Database update job has been created.
+
+To check the job status:
+    kubectl get job {{ include "db-updater.fullname" . }}
+
+To view the job logs:
+    kubectl logs job/{{ include "db-updater.fullname" . }}
+
+The job will:
+1. Wait for the database to be ready
+2. Execute Liquibase updates using changelog at {{ .Values.changelog.path }}
+3. Complete when updates are finished
+
+The job will retry up to 6 times in case of failures.
+After successful completion, the job will be cleaned up automatically after 100 seconds.

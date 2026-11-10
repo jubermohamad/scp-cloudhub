@@ -1,0 +1,27 @@
+{
+  "extends": "@backstage/cli/config/tsconfig.json",
+  "include": ["src"],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/__tests__/**",
+    "src/**/__fixtures__/**"
+  ],
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "noEmit": false,
+    "emitDeclarationOnly": false,
+    "declaration": false,
+    "allowImportingTsExtensions": false,
+    "allowJs": false,
+    "incremental": false,
+    "isolatedModules": true,
+    "sourceMap": true,
+    "jsx": "react"
+  }
+}

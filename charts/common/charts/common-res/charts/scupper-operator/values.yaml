@@ -1,0 +1,19 @@
+global:
+  # Standalone-install default. In the platform the umbrella's
+  # global.imagePullPolicy overrides this for every chart at once.
+  imagePullPolicy: Always
+
+#
+images:
+  controller:
+    repository: quay.io/skupper/controller
+    tag: 2.1.3
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  kubeAdaptor:
+    repository: quay.io/skupper/kube-adaptor
+    tag: 2.1.3
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  router:
+    repository: quay.io/skupper/skupper-router
+    tag: 3.4.2
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy

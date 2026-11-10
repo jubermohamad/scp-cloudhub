@@ -1,0 +1,190 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-engine-code-worker
+  labels:
+    app: assembly-engine-code-worker
+    tier: backend
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  {{- $tunerMode := .Values.agentsCodeWorker.temporal.tunerMode | default "fixed" }}
+  replicas: {{ .Values.agentsCodeWorker.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: assembly-engine-code-worker
+  template:
+    metadata:
+      annotations:
+        # SDK worker metrics (schedule-to-start latency, slot usage, sticky
+        # cache hits) — tier-2 §2.4 observability bring-up. Inert without a
+        # cluster Prometheus; any annotation-based scraper picks them up.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
+        # Forces a rollout whenever platform-secrets changes -- secretKeyRef env
+        # vars are read once at container start, so without this a secret rotation
+        # never reaches already-running pods (#1325). Secrets are deterministic now
+        # (no randAlphaNum/lookup), so we hash the rendered Secret directly: it
+        # changes iff the actual content changes (incl. database-url, derived from
+        # the pg password) -- no spurious rollout on values-structure changes, and
+        # no need to fold in infra.postgres/externalInfra.
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+      labels:
+        app: assembly-engine-code-worker
+        tier: backend
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      # Must exceed the worker's graceful_shutdown_timeout (90s) so a drain
+      # lets in-flight activities finish instead of SIGKILLing them; with the
+      # old implicit 30s every rollout killed running >30s activities.
+      terminationGracePeriodSeconds: {{ .Values.agentsCodeWorker.terminationGracePeriodSeconds | default 120 }}
+      # This workload does not call the Kubernetes API.
+      automountServiceAccountToken: false
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.scheduling" . | nindent 6 }}
+      {{- include "aw.waitForAgentBuilderTemporalInitContainer" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      topologySpreadConstraints:
+        # Soft: this tier has not been measured as placement-sensitive the way
+        # sandbox-execute was (#2123), so the spread stays a preference rather
+        # than a scheduling gate.
+        #
+        # matchLabelKeys still matters even while soft. Without it the scheduler
+        # scores a new pod against the OUTGOING revision's placement too, so
+        # during a rollout it can "prefer" a node that is only empty of new pods
+        # while already crowded with old ones. Per-revision scoring is what makes
+        # the preference actually spread the new ReplicaSet.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app: assembly-engine-code-worker
+      containers:
+        - name: agents
+          image: {{ include "aw.image" (dict "registry" .Values.image.registry "repo" .Values.agentsCodeWorker.image.repository "default" "assembly-workflows-engine" "tag" .Values.agentsCodeWorker.image.tag "globalTag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          securityContext:
+            # local-nsjail needs namespace setup privileges. Remote execution
+            # is handled by assembly-sandbox-execute and must not elevate this
+            # worker merely because the chart supports both modes.
+            privileged: {{ eq .Values.agentsCodeWorker.codeExecutionTarget "local-nsjail" }}
+          ports:
+            - containerPort: 8000
+            - containerPort: 9100
+              name: metrics
+          volumeMounts:
+            - name: code-interpreter-workspace
+              mountPath: /var/lib/code-interpreter
+          env:
+            - name: AGENTS_ROLE
+              value: "worker"
+            - name: ASSEMBLY_ENGINE_ROLE
+              value: "worker"
+            - name: ENABLE_PHOENIX_TRACING
+              value: "false"
+            - name: ENABLE_PHOENIX_WORKFLOW_TRACING
+              value: "false"
+            - name: TEMPORAL_WORKER_TYPE
+              value: "agent-builder-only"
+            - name: TEMPORAL_AGENT_BUILDER_WORKER_QUEUES
+              value: {{ .Values.agentsCodeWorker.temporal.workerQueues | default "code,parallel-code" | quote }}
+            - name: TEMPORAL_AGENT_BUILDER_CODE_TASK_QUEUES
+              value: "agent-builder-code-tasks,agent-builder-code-tasks-0,agent-builder-code-tasks-1"
+            - name: TEMPORAL_AGENT_BUILDER_PARALLEL_CODE_TASK_QUEUES
+              value: "agent-builder-parallel-code-tasks,agent-builder-parallel-code-tasks-0,agent-builder-parallel-code-tasks-1"
+            # Workflow code reads this to resolve aux queue dispatches.
+            - name: TEMPORAL_AGENT_BUILDER_AUX_TASK_QUEUE
+              value: "agent-builder-aux-tasks"
+            - name: ASSEMBLY_TRACE_ASYNC_INGEST
+              # Batched trace ingestion (#507): trace writes ride a redis
+              # stream + per-process batch consumer; every run keeps its full
+              # trace (sync fallback on enqueue failure). +28% runs/hr
+              # measured at C=1200. Set "false" to restore synchronous writes.
+              value: {{ .Values.traceAsyncIngest | default "true" | quote }}
+            - name: TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS
+              value: {{ .Values.agentsCodeWorker.temporal.maxConcurrentWorkflowTasks | default 100 | quote }}
+            - name: TEMPORAL_MAX_CONCURRENT_ACTIVITIES
+              value: {{ .Values.agentsCodeWorker.temporal.maxConcurrentActivities | default 200 | quote }}
+            - name: TEMPORAL_MAX_CACHED_WORKFLOWS
+              value: {{ .Values.agentsCodeWorker.temporal.maxCachedWorkflows | default 500 | quote }}
+            - name: TEMPORAL_ENABLE_RESOURCE_TUNER
+              value: {{ if eq $tunerMode "resource-based" }}"true"{{ else }}"false"{{ end }}
+            - name: TEMPORAL_WORKER_TUNER_MODE
+              value: {{ $tunerMode | quote }}
+            - name: TEMPORAL_ACTIVITY_TASK_POLLER_MAX
+              value: {{ .Values.agentsCodeWorker.temporal.activityTaskPollerMax | default 50 | quote }}
+            - name: TEMPORAL_METRICS_PROMETHEUS_BIND_ADDRESS
+              value: "0.0.0.0:9100"
+            - name: WORKER_ID
+              value: "assembly-engine-code-worker"
+            - name: CODE_INTERPRETER_WORKSPACE_ROOT
+              value: "/var/lib/code-interpreter"
+            - name: CODE_INTERPRETER_EXECUTION_TARGET
+              value: {{ .Values.agentsCodeWorker.codeExecutionTarget | quote }}
+            - name: EXECUTE_CODE_WORKSPACE_ROOT
+              value: "/var/lib/code-interpreter/nsjail-exec"
+            - name: CODE_INTERPRETER_ALLOW_SUBPROCESS_FALLBACK
+              value: "false"
+            {{- if .Values.agentsCodeWorker.trustedCodeInprocess }}
+            - name: ASSEMBLY_TRUSTED_CODE_INPROCESS
+              value: "true"
+            {{- end }}
+            # SANDBOX_EXECUTE_CODE_URL (#1039) now comes from `aw.agentEnv` so every
+            # engine deployment gets it — the agent node's `run_code` built-in tool
+            # runs on the general worker, which used to lack it.
+            - name: ASSEMBLY_WORKFLOW_CHECKPOINT_INTERVAL
+              value: {{ .Values.agentsCodeWorker.checkpointInterval | default "12" | quote }}
+            - name: ASSEMBLY_FAST_CUSTOM_CODE_ACTIVITY_TIMEOUT_SECONDS
+              # 15s was documented-bad under parallel branches; perf overlays
+              # all corrected to 60 — promoted to the default.
+              value: {{ .Values.agentsCodeWorker.fastCodeActivityTimeout | default 60 | quote }}
+            - name: ASSEMBLY_DEFAULT_ACTIVITY_RETRY_MAX_ATTEMPTS
+              value: {{ .Values.agentsCodeWorker.temporal.defaultActivityRetryMaxAttempts | default 3 | quote }}
+            - name: ASSEMBLY_WORKFLOW_PROGRESS_BATCH_ALL
+              value: "true"
+            - name: ASSEMBLY_WORKFLOW_PROGRESS_BATCH_SIZE
+              value: "9999"
+            - name: ASSEMBLY_WORKFLOW_CONTINUE_AS_NEW_ENABLED
+              value: "true"
+            - name: ASSEMBLY_WORKFLOW_CONTINUE_AS_NEW_HISTORY_LENGTH
+              value: "10000"
+            {{- include "aw.agentEnv" . | nindent 12 }}
+            {{- with .Values.agentsCodeWorker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.agentsCodeWorker.resources | nindent 12 }}
+          # TCP liveness, not httpGet /health — see assembly-engine-worker.yaml
+          # for the full rationale: this pod runs the Temporal worker + uvicorn
+          # on one asyncio loop, and httpGet liveness killed busy-but-alive
+          # workers under load (in-flight activities lost → retry storm →
+          # throughput collapse). tcpSocket can't be fooled by a busy loop.
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+      volumes:
+        - name: code-interpreter-workspace
+          emptyDir: {}

@@ -1,0 +1,2620 @@
+---
+# toggles for optional components or features in active development
+tags:
+  # deploys Opensearch for storing logs produced by fluentd deamonset
+  # and Opensearch dashboards for visualising the logs
+  # for customer tenancy and self hosted Kubernetes clusters.
+  logs: false
+  # deploys Pod Monitors for metrics collection and Grafana for visualising
+  # the metrics
+  metrics: false
+  # deploys experimental tracing resources,
+  # OpenTelemetry collectors, Tempo for storage, Jaeger for visualization
+  traces: false
+  # deploys resources for experimental chatgpt integration with user guide docs
+  ai-doc-centre: false
+  # deploys a second PostgreSQL database for invhub application,
+  # it will be used for migrating invhub database to remove ayasdi user
+  # references
+  # and set database collation and ctype settings that can only be done
+  # on a new database to resolve sorting issues in invhub UI
+  invhub-db-migration: false
+  # deploys copilot v2 resources,
+  # we are in the process of migrating various copilot functionalities
+  # to copilot v2 and Flows
+  copilotv2: true
+  # deploys multiple api containers, each with a different responsibility,
+  # according to
+  # https://netreveal.atlassian.net/wiki/spaces/HARMONY/pages/124846650/
+  # API+Container+Responsibilities
+  # requires api.enabled to be set to false
+  separate-api-responsibilities: false
+  # deploys transactions REST api service,
+  # including transactions PostgeSQL database
+  transactions-api: false
+  # deploys Langfuse resources, an OpenSource observability tool for LLMs
+  # currently used for development and testing purposes
+  langfuse: false
+  # deploys Keycloak resources for authentication and authorization
+  # including Keycloak PostgreSQL database
+  # currently used for testing SSO authentication
+  keycloak: false
+  # deploys web application v2,
+  # currently in development to replace the existing web application
+  webv2: false
+# infra.enabled condition deploys all dependencies for invhub application,
+# like Postgre databases, MinIO, Kafka, Opensearch,
+# Redis, Ingresses, ClamAv, common secrets and configmaps.
+infra:
+  enabled: true
+# ─── Release-level migration job ─────────────────────────────────────────────
+# Rendered once by the invhub parent chart. All api role deployments wait for
+# this job before starting (wait-migrations init container).
+migrations:
+  # Image defaults to api.image — override only to pin migrations to a different tag.
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: ""
+  # in-tree patch: raised from 3. On a FRESH install the platform's per-product
+  # provisioning Jobs (ensure-db-<name>) can only run as post-install hooks — i.e.
+  # AFTER this Job is applied — so the first attempts fail with 28P01 until the
+  # role exists. Job backoff is exponential (10s, 20s, 40s, ...), so 8 gives ~10
+  # minutes of self-healing instead of ~1.
+  backoffLimit: 8
+  timeout: 2400
+  ttlSecondsAfterFinished: 86400
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  flowsConfigMapName: "flows"
+  flowsSecretName: "flows"
+  imagePullSecrets:
+    - name: "regcred"
+  podSecurityContext:
+    fsGroup: 10001
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    capabilities:
+      drop:
+        - ALL
+  nodeSelector: {}
+  tolerations: []
+  # TLS CA certificate secrets for the migration job.
+  # Leave secretName as "" to auto-resolve from the active api alias:
+  #   - tags.separate-api-responsibilities=true → api-for-ui.*.secretName
+  #   - otherwise                               → api.*.secretName / mountPath
+  # Set secretName/mountPath explicitly to override, or set secretName to "" only
+  # here if you want to disable waiting for / mounting a specific cert in migrations only.
+  dbRootCert:
+    secretName: ""
+    key: "ca.crt"
+    mountPath: ""
+  kafkaRootCert:
+    secretName: ""
+    key: "ca.crt"
+    mountPath: ""
+  osRootCert:
+    secretName: ""
+    key: "ca.crt"
+    mountPath: ""
+  # Wait for operator-managed TLS CA secrets before mounting them.
+  waitForTlsSecrets:
+    enabled: true
+    image: docker.io/curlimages/curl:8.11.1
+    imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+    timeoutSeconds: 900
+    resources:
+      limits:
+        cpu: 100m
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 16Mi
+  # Wait for infrastructure dependency endpoints before running migrations.
+  waitForDependencies:
+    enabled: true
+    image: docker.io/curlimages/curl:8.11.1
+    imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+    timeoutSeconds: 1200
+    resources:
+      limits:
+        cpu: 100m
+        memory: 64Mi
+      requests:
+        cpu: 10m
+        memory: 16Mi
+    postgres:
+      enabled: true
+      service: "" # leave empty to auto-derive from cn-postgres.clusterName
+      port: 5432
+    kafka:
+      enabled: true
+      service: "" # leave empty to auto-derive from kafka-cluster.name
+      port: 9093
+    opensearch:
+      enabled: true
+      service: "" # leave empty to auto-derive from opensearch.masterService
+      port: 9200
+    minio:
+      enabled: true
+      service: "" # leave empty to auto-derive from minioop.tenant.name
+      port: 9000
+    redis:
+      enabled: true
+      service: "" # leave empty to auto-derive from redis.fullnameOverride
+      port: 6379
+api:
+  enabled: true
+  waitForMigrations:
+    createStateConfigMap: false
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-api
+    tag: "v2026.07.7"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "1Gi"
+# Defaults for "separate-api-responsibilities" (disabled by default).
+# These values apply when global.separateApiResponsibilities=true and the aliased api charts are enabled.
+api-for-ui:
+  # In separate-api-responsibilities mode, this is the UI-facing API service.
+  fullnameOverride: "api-for-ui"
+  waitForMigrations:
+    createStateConfigMap: false
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "1Gi"
+api-data-ingestion:
+  fullnameOverride: "api-data-ingestion"
+  waitForMigrations:
+    createStateConfigMap: false
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "1Gi"
+event-data-ingestion:
+  fullnameOverride: "event-data-ingestion"
+  waitForMigrations:
+    createStateConfigMap: false
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "1Gi"
+search-indexing:
+  fullnameOverride: "search-indexing"
+  waitForMigrations:
+    createStateConfigMap: false
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2000m"
+      memory: "1Gi"
+disc-api:
+  enabled: true
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-disc-api
+    tag: "v2026.07.1"
+transac-api:
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-transactions-api
+    tag: "v2025.09"
+disc-web:
+  enabled: true
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-disc-web
+    tag: "v2026.07.3"
+mockserver:
+  enabled: false
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-mockserver
+    tag: "v2026.07.1"
+reporting-dashboard:
+  enabled: true
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-reporting-poc
+    tag: "v1.10.8"
+web:
+  enabled: true
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-web
+    tag: "v2026.07.1"
+help:
+  enabled: true
+  # &helpName anchor: single source of truth for this component's k8s name,
+  # referenced by invhub-ingress' backend below (same file — YAML anchors
+  # resolve at parse time to the identical scalar, so this is zero-risk:
+  # no template/values-shape change, no effect on any checksum).
+  fullnameOverride: &helpName "help"
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-help-center
+    tag: "v2026.07.1"
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: http
+  env:
+    - name: NGINX_BASE_PATH_REWRITE
+      value: "help"
+graphql-api-docs:
+  enabled: true
+  # &graphqlApiDocsName anchor: see the &helpName comment above (help: block) —
+  # same zero-risk single-source-of-truth technique.
+  fullnameOverride: &graphqlApiDocsName "graphql-api-docs"
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-graphql-api-docs
+    tag: "v2026.07.1"
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+  env:
+    - name: NGINX_BASE_PATH_REWRITE
+      value: "docs-graphql"
+clamavd:
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-clamav
+    tag: clamav-v1.1.0
+config:
+  enabled: true
+  # Naming-migration seam (docs/NAMING-MIGRATION.md Step 2): this Job's own
+  # metadata.name had no override mechanism before now. Defaults to today's
+  # bare name (render-neutral); the env-prefixed name
+  # (sri-<env>-investigation-configurator) is a deploy-values override only —
+  # see invhub.configuratorJobName in templates/_helpers.tpl.
+  fullnameOverride: "configurator"
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-config
+    tag: "v2026.07.1"
+  imagePullSecrets:
+    - name: "regcred"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+minioWebhooks:
+  enabled: true
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-minio-client
+    tag: "v0.4-rollbackv0.1"
+  imagePullSecrets:
+    - name: "regcred"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "250m"
+      memory: "256Mi"
+flows:
+  config:
+    releaseId: ""
+    tenant: ""
+    authClientId: ""
+    url: ""
+    proxyUrl: ""
+    narrativeAgentDeploymentId: ""
+    initialSummaryDeploymentId: ""
+    initialSummaryCaseDeploymentId: ""
+    emailAgentDeploymentId: ""
+    webResearchAgentDeploymentId: ""
+    evidenceBoardAgentDeploymentId: ""
+    disclosureSubmissionAgentDeploymentId: ""
+    ecddAgentDeploymentId: ""
+    austracSmrSubmissionAgentDeploymentId: ""
+    investigationNotesWebhookId: ""
+    useInternalUrls: "true"
+    internalDisclosuresHostUrl: "http://disc-api:3002"
+    internalFlowsUrl: ""
+    internalFlowsAuthUrl: ""
+  secrets:
+    username: ""
+    password: ""
+# ingress-tls is used for creating TLS certificates for ingress resources
+# disabled by default
+# requires cert-manager to be installed and cluster-issuer to be created
+# in infra or common-res Helm charts
+ingress-tls:
+  enabled: false
+  organization: SymphonyAI Financial Services
+  host: example.com
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+# only creates a default secret with the destination for the backup
+# it doesn not enable the backup functionality
+# that is configured on cn-postgres* and minioop resources under 'backupConfig'
+backups:
+  azureStorageAccountSecret:
+    enabled: false
+    secretName: backup-creds
+    storageAccountName: "storage-account-name"
+    storageAccountKey: "storage-account-key"
+kafka-cluster:
+  # false = use a shared/external Strimzi cluster instead; then set `name`
+  # to that cluster (migrations wait on the Kafka CR of this name) and
+  # global.SENSA_KAFKA_BOOTSTRAP / api.kafkaRootCert accordingly.
+  enabled: true
+  name: invhub
+  replicas: 3
+  # SCP-3554 automatically pick image based on Strimzi version
+  # image: quay.io/strimzi/kafka:0.45.1-kafka-3.9.0
+  kafka:
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "2Gi"
+      limits:
+        cpu: "500m"
+        memory: "4Gi"
+    storage:
+      size: "200Gi"
+  zookeeper:
+    storage:
+      size: "200Gi"
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "768Mi"
+      limits:
+        cpu: "250m"
+        memory: "1536Mi"
+opensearch:
+  imagePullSecrets:
+    - name: regcred
+  global:
+    # Set if you want to change the default docker registry, e.g. a private one.
+    dockerRegistry: ""
+  image:
+    repository: "opensearchproject/opensearch"
+  sysctlInit:
+    enabled: true
+  opensearchJavaOpts: "-Xmx2g -Xms2g"
+  initResources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "250m"
+      memory: "128Mi"
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "4Gi"
+    limits:
+      cpu: "1000m"
+      memory: "6Gi"
+  replicas: 3
+  masterService: "opensearch-cluster-master"
+  clusterName: "opensearch-cluster"
+  nodeGroup: "master"
+  openSearchAnnotations:
+    secret.reloader.stakater.com/reload: "opensearch-cluster-certs"
+  plugins:
+    enabled: true
+    installList:
+      - "https://github.com/opensearch-project/opensearch-prometheus-exporter/releases/download/2.11.1.0/prometheus-exporter-2.11.1.0.zip"
+  extraEnvs:
+    - name: DISABLE_INSTALL_DEMO_CONFIG
+      value: "true"
+    # as from Opensearch 2.12 (we are at 2.11 atm) the OPENSEARCH_INITIAL_ADMIN_PASSWORD env variable is supported.
+    # the currently configured default password will be updated as part of Opensearch upgrade
+    - name: OPENSEARCH_INITIAL_ADMIN_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: opensearch-basic-auth
+          key: INVESTIGATION_HUB_OPEN_SEARCH_PASSWORD
+  secretMounts:
+    - name: opensearch-cluster-certs
+      secretName: opensearch-cluster-certs
+      path: /usr/share/opensearch/config/certs
+    - name: opensearch-cluster-admin-certs
+      secretName: opensearch-cluster-admin-certs
+      path: /usr/share/opensearch/config/admin-certs
+  config:
+    log4j2.properties: |
+      appender.console.type = Console
+      appender.console.name = console
+      appender.console.layout.type = OpenSearchJsonLayout
+      appender.console.layout.type_name = json_logger
+      rootLogger.level = info
+      rootLogger.appenderRef.console.ref = console
+    opensearch.yml: |
+      cluster.name: opensearch-cluster
+      network.host: 0.0.0.0
+      plugins:
+        security:
+          ssl:
+            transport:
+              pemcert_filepath: /usr/share/opensearch/config/certs/tls.crt
+              pemkey_filepath:  /usr/share/opensearch/config/certs/tls.key
+              pemtrustedcas_filepath: /usr/share/opensearch/config/certs/ca.crt
+              enforce_hostname_verification: false
+            http:
+              enabled: true
+              pemcert_filepath: /usr/share/opensearch/config/certs/tls.crt
+              pemkey_filepath: /usr/share/opensearch/config/certs/tls.key
+              pemtrustedcas_filepath: /usr/share/opensearch/config/certs/ca.crt
+          allow_unsafe_democertificates: false
+          allow_default_init_securityindex: true
+          nodes_dn:
+            - CN=opensearch-nodes,O=INVHUB
+          audit.type: internal_opensearch
+          enable_snapshot_restore_privilege: true
+          check_snapshot_restore_write_privileges: true
+          restapi:
+            roles_enabled: ["all_access", "security_rest_api_access"]
+          system_indices:
+            enabled: true
+            indices:
+              [
+                ".opendistro-alerting-config",
+                ".opendistro-alerting-alert*",
+                ".opendistro-anomaly-results*",
+                ".opendistro-anomaly-detector*",
+                ".opendistro-anomaly-checkpoints",
+                ".opendistro-anomaly-detection-state",
+                ".opendistro-reports-*",
+                ".opendistro-notifications-*",
+                ".opendistro-notebooks",
+                ".opendistro-asynchronous-search-response*",
+              ]
+  calicoNetworkPolicy:
+    enabled: false
+opensearch-dashboards:
+  # security config will be added as part of Opensearch upgrade in INVHUB-16030
+  # as from Opensearch 2.12 the OPENSEARCH_INITIAL_ADMIN_PASSWORD env variable is supported
+  # once added, set enabled to true
+  enabled: false
+  fullnameOverride: "opensearch-dashboards"
+  opensearchHosts: "https://opensearch-cluster-master:9200"
+  serverHost: "0.0.0.0"
+  dashboardAnnotations:
+    secret.reloader.stakater.com/reload: "opensearch-cluster-dashboards-certs"
+  config:
+    opensearch_dashboards.yml: |
+      server.host: '0.0.0.0'
+      server.ssl.enabled: true
+      server.ssl.key: /usr/share/opensearch-dashboards/config/dashboards-certs/tls.key
+      server.ssl.certificate: /usr/share/opensearch-dashboards/config/dashboards-certs/tls.crt
+      server.ssl.certificateAuthorities: [ "/usr/share/opensearch-dashboards/config/dashboards-certs/ca.crt" ]
+      opensearch.hosts: [https://opensearch-cluster-master:9200]
+      opensearch.ssl.verificationMode: certificate
+      opensearch.ssl.certificateAuthorities: [ "/usr/share/opensearch-dashboards/config/os-certs/ca.crt" ]
+      opensearch.requestHeadersAllowlist: ["securitytenant","Authorization"]
+      opensearch_security.multitenancy.enabled: false
+      opensearch_security.readonly_mode.roles: [admin]
+      opensearch_security.cookie.secure: true
+      opensearch_security.auth.type: ["basicauth"]
+    ssl:
+      enabled: true
+      key: /usr/share/opensearch-dashboards/config/dashboards-certs/tls.key
+      certificate: /usr/share/opensearch-dashboards/config/dashboards-certs/tls.crt
+  # security config will be added as part of Opensearch upgrade in INVHUB-16030
+  # as from Opensearch 2.12 the OPENSEARCH_INITIAL_ADMIN_PASSWORD env variable is supported
+  # opensearchAccount:
+  #   secret: ""
+  extraEnvs:
+    - name: "SERVER_BASEPATH"
+      value: "/opensearch-dashboards"
+    - name: "SERVER_REWRITEBASEPATH"
+      value: "true"
+  secretMounts:
+    - name: opensearch-cluster-dashboards-certs
+      secretName: opensearch-cluster-dashboards-certs
+      path: /usr/share/opensearch-dashboards/config/dashboards-certs
+    - name: opensearch-cluster-certs
+      secretName: opensearch-cluster-certs
+      path: /usr/share/opensearch-dashboards/config/os-certs
+fluentd:
+  enabled: false
+  kind: "DaemonSet"
+  variant: opensearch
+  env:
+    - name: FLUENT_ELASTICSEARCH_HOST
+      value: "observability-opensearch-cluster-master"
+    - name: FLUENT_ELASTICSEARCH_PORT
+      value: "9200"
+    - name: K8S_NODE_NAME
+      valueFrom:
+        fieldRef:
+          fieldPath: spec.nodeName
+  metrics:
+    serviceMonitor:
+      enabled: true
+  configMapConfigs:
+    - fluentd-prometheus-conf # required for health check probes on k8s
+  plugins:
+    - fluent-plugin-opensearch
+  fileConfigs:
+    01_sources.conf: |-
+      <source>
+        @type tail
+        @id in_tail_container_logs
+        @label @KUBERNETES
+        path /var/log/containers/*.log
+        pos_file /var/log/fluentd-containers.log.pos
+        tag kubernetes.*
+        read_from_head true
+        <parse>
+          @type multi_format
+          <pattern>
+            format json
+            time_key time
+            time_type string
+            time_format "%Y-%m-%dT%H:%M:%S.%NZ"
+            keep_time_key true
+          </pattern>
+          <pattern>
+            format regexp
+            expression /^(?<time>.+) (?<stream>stdout|stderr)( (.))? (?<log>.*)$/
+            time_format '%Y-%m-%dT%H:%M:%S.%NZ'
+            keep_time_key true
+          </pattern>
+        </parse>
+        emit_unmatched_lines true
+      </source>
+    02_filters.conf: |-
+      <label @KUBERNETES>
+        <match kubernetes.var.log.containers.fluentd**>
+          @type relabel
+          @label @FLUENT_LOG
+        </match>
+        <match kubernetes.var.log.containers.**_kube-system_**>
+          @type null
+          @id ignore_kube_system_logs
+        </match>
+        <filter kubernetes.**>
+          @type kubernetes_metadata
+          @id filter_kube_metadata
+          skip_labels false
+          skip_container_metadata false
+          skip_namespace_metadata true
+          skip_master_url true
+        </filter>
+        <match **_dev_**>
+          @type relabel
+          @label @DISPATCH
+        </match>
+      </label>
+    03_dispatch.conf: |-
+      <label @DISPATCH>
+        <filter **>
+          @type prometheus
+          <metric>
+            name fluentd_input_status_num_records_total
+            type counter
+            desc The total number of incoming records
+            <labels>
+              tag ${tag}
+              hostname ${hostname}
+            </labels>
+          </metric>
+        </filter>
+        <match **>
+          @type relabel
+          @label @OUTPUT
+        </match>
+      </label>
+    04_outputs.conf: |-
+      <label @OUTPUT>
+        <match **>
+          @type opensearch
+          host "observability-opensearch-cluster-master"
+          port 9200
+          index_name fluentd
+        </match>
+      </label>
+grafana:
+  global:
+    imagePullSecrets:
+      - name: regcred
+  rbac:
+    namespaced: true
+  fullnameOverride: "grafana"
+  testFramework:
+    enabled: false
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: "default"
+          orgId: 1
+          folder: ""
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/default
+  dashboardsConfigMaps:
+    default: "grafana-dashboards"
+  grafana.ini:
+    server:
+      root_url: http://localhost:3000/grafana
+      serve_from_sub_path: true
+  admin:
+    existingSecret: "grafana-creds"
+    userKey: admin-user
+    passwordKey: admin-password
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "256Mi"
+    limits:
+      cpu: "250m"
+      memory: "512Mi"
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Tempo
+          type: tempo
+          url: http://tempo-query-frontend:3100
+          basicAuth: false
+        - name: Prometheus
+          type: prometheus
+          url: http://infra-prometheus-prometheus.infra:9090
+          access: proxy
+# Under development - Optional PrometheusRule alerts (requires Prometheus Operator / kube-prometheus).
+# These are additive and disabled by default.
+observabilityAlerts:
+  enabled: false
+  # Optional labels/annotations to match your Prometheus ruleSelector setup.
+  labels: {}
+  annotations: {}
+  postgresql:
+    enabled: true
+    # Alert when connections are above this percentage of max_connections.
+    maxConnectionsUtilizationPercent: 80
+    for: 10m
+  kafka:
+    enabled: true
+    for: 10m
+  opensearch:
+    enabled: true
+    for: 10m
+  minioWebhooks:
+    enabled: true
+    for: 0m
+kafka-ui:
+  # &kafkaUiName anchor: see the &helpName comment (help: block, above) — same
+  # zero-risk single-source-of-truth technique.
+  fullnameOverride: &kafkaUiName "kafka-ui"
+  image:
+    registry: ghcr.io
+    repository: kafbat/kafka-ui
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "512Mi"
+    limits:
+      cpu: "250m"
+      memory: "1Gi"
+  envs:
+    config:
+      SERVER_SERVLET_CONTEXT_PATH: /kafka-ui
+  existingSecret: "kafka-ui-creds"
+  yamlApplicationConfig:
+    kafka:
+      clusters:
+        - name: invhub
+          bootstrapServers: invhub-kafka-bootstrap:9092
+          kafkaconnect:
+            - name: "cdc"
+              address: "http://cdc-connect-api:8083"
+    auth:
+      type: LOGIN_FORM
+    management:
+      health:
+        ldap:
+          enabled: false
+minioop:
+  # P7: false = use the shared platform instance instead. Split out of
+  # infra.enabled so it can be disabled on its own (see Chart.yaml).
+  enabled: true
+  tenant:
+    image:
+      repository: quay.io/minio/minio
+    configuration:
+      name: "minio-creds-operator"
+    buckets:
+      - name: os-snapshots
+      - name: backups
+    certificate:
+      requestAutoCert: true
+      certConfig:
+        commonName: "minio"
+        dnsNames:
+          - "*.cluster.local"
+          - "minio"
+    name: minio
+    pools:
+      - servers: 4
+        volumesPerServer: 2
+        name: pool-main
+        storageClassName: managed-csi-xfs-standardssd-lrs
+        size: 200G
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "1Gi"
+          limits:
+            cpu: "500m"
+            memory: "2Gi"
+            # example snippet on how to extend space in MinIO cluster.
+            # MinIO doesn't allow extending existing nodepools, we need to add new one
+            # and then MinIO will automatically rebalance data between the pools.
+            # - servers: 4
+            #   volumesPerServer: 2
+            #   name: pool-main-1
+            #   storageClassName: managed-csi-xfs-standardssd-lrs
+            #   size: 200Gi
+  calicoNetworkPolicy:
+    enabled: false
+  metrics:
+    enabled: true
+    protocol: https
+  env:
+    - name: MINIO_PROMETHEUS_AUTH_TYPE
+      value: "public"
+  mirror:
+    image:
+      repository: rclone/rclone
+      tag: sha-f554fb1
+  # Backup configuration needs to be enabled manually with appropriate destination.
+  # Examples are given in charts/minioop/values.yaml
+  backupConfig:
+    enabled: false
+minio-ingress:
+  enabled: true
+  nameOverride: minio
+  host: '{{ include "global.basename" . }}-minio-console.{{ include "global.domain" . }}'
+  service:
+    - name: minio-console
+      port: 9443
+      pathType: Prefix
+      paths:
+        - /
+  annotations:
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}-minio-console.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+tempo-minio:
+  global:
+    imagePullSecrets:
+      - regcred
+  fullnameOverride: "tempo-minio"
+  mode: standalone
+  defaultBuckets: "tempo-traces"
+  auth:
+    existingSecret: "tempo-minio-creds"
+  persistence:
+    size: 200Gi
+  metrics:
+    prometheusAuthType: public
+    serviceMonitor:
+      enabled: true
+tempo-distributed:
+  global:
+    image:
+      pullSecrets:
+        - regcred
+  fullnameOverride: tempo
+  distributor:
+    extraArgs:
+      - "-config.expand-env=true"
+    extraEnv:
+      - name: MINIO_USER
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-user
+      - name: MINIO_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-password
+  compactor:
+    extraArgs:
+      - "-config.expand-env=true"
+    extraEnv:
+      - name: MINIO_USER
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-user
+      - name: MINIO_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-password
+  querier:
+    extraArgs:
+      - "-config.expand-env=true"
+    extraEnv:
+      - name: MINIO_USER
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-user
+      - name: MINIO_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-password
+  tempo:
+    extraArgs:
+      - "-config.expand-env=true"
+    extraEnv:
+      - name: MINIO_USER
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-user
+      - name: MINIO_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-password
+  ingester:
+    extraArgs:
+      - "-config.expand-env=true"
+    extraEnv:
+      - name: MINIO_USER
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-user
+      - name: MINIO_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-password
+  queryFrontend:
+    extraArgs:
+      - "-config.expand-env=true"
+    extraEnv:
+      - name: MINIO_USER
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-user
+      - name: MINIO_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: tempo-minio-creds
+            key: root-password
+  storage:
+    trace:
+      backend: s3
+      s3:
+        access_key: ${MINIO_USER}
+        secret_key: ${MINIO_PASSWORD}
+        bucket: "tempo-traces"
+        endpoint: "tempo-minio:9000"
+        insecure: true
+  traces:
+    otlp:
+      grpc:
+        enabled: true
+      http:
+        enabled: true
+redis:
+  # P7: false = use the shared platform instance instead. Split out of
+  # infra.enabled so it can be disabled on its own (see Chart.yaml).
+  enabled: true
+  global:
+    security:
+      allowInsecureImages: true
+    imagePullSecrets:
+      - regcred
+    imageRegistry: "symphonyfs.azurecr.io"
+  image:
+    tag: 7.2.11-patched-debian-12-r9
+  fullnameOverride: "redis"
+  master:
+    disableCommands: []
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+  replica:
+    disableCommands: []
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
+  auth:
+    # Copilot v1 blocks enabling Redis auth, requires code changes
+    enabled: false
+    existingSecret: "redis-creds"
+    existingSecretPasswordKey: "password"
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        cpu: "250m"
+        memory: "128Mi"
+  calicoNetworkPolicy:
+    enabled: false
+langfuse:
+  fullnameOverride: "langfuse"
+  langfuse:
+    nodeEnv: production
+    nextauth:
+      url: '{{ include "global.basename" . }}-langfuse.{{ include "global.domain" . }}'
+  postgresql:
+    deploy: false
+    auth:
+      username: langfuse
+      database: langfuse
+    host: cn-postgres-langfuse-rw
+invhub-ingress:
+  enabled: true
+  nameOverride: invhub
+  host: '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+  service:
+    - name: web
+      port: 8080
+      pathType: Prefix
+      paths:
+        - /
+    - name: api
+      port: 3001
+      pathType: ImplementationSpecific
+      paths:
+        - /graphql
+        - /v1/auth
+        - /v1/subjects(/?)
+        - /v1/queues
+        - /v1/health
+        - /v1/index-manager
+        - /v1/open-investigations
+        - /v1/open-investigations-worklist
+        - /v1/open-actions-worklist
+        - /v1/organisation-unit
+        - /v1/roles
+        - /v1/saml
+        - /v1/screen-definition
+        - /v1/screen-locale
+        - /v1/transaction-message-type-definition
+        - /v1/service-discovery
+        - /v1/setup
+        - /v1/subject-search
+        - /v1/subject-task-types
+        - /v1/upload
+        - /v1/user-config
+        - /v1/users
+        - /v1/event-types
+        - /v1/config-manager
+        - /v1/metrics/genai-tokens
+        - /v1/user-screen-preferences
+        - /v1/event-validation
+        - /v1/reporting(/?)
+        - /v1/watchlist(/?)
+        - /v2/subjects(/?)
+        - /v1/config/export
+        - /v1/config/import
+        - /v1/dlq/metrics
+        - /v1/dlq/reprocess
+        - /v1/agent-output/latest
+    - name: disc-api
+      port: 3002
+      pathType: Prefix
+      paths:
+        - /v1/disclosures
+    - name: disc-web
+      port: 80
+      pathType: Prefix
+      paths:
+        - /disclosures-web
+    - name: *helpName
+      port: 80
+      pathType: Prefix
+      paths:
+        - /help
+    - name: *graphqlApiDocsName
+      port: 80
+      pathType: Prefix
+      paths:
+        - /docs-graphql
+    - name: *kafkaUiName
+      port: 80
+      pathType: Prefix
+      paths:
+        - /kafka-ui
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "21m"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+pgadmin-ingress:
+  enabled: true
+  nameOverride: pgadmin
+  host: '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+  service:
+    - name: pgadmin
+      port: 80
+      pathType: Prefix
+      paths:
+        - /pgadmin
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "21m"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+opensearch-dashboards-ingress:
+  # security config will be added as part of Opensearch upgrade in INVHUB-16030
+  # as from Opensearch 2.12 the OPENSEARCH_INITIAL_ADMIN_PASSWORD env variable is supported
+  # once added, set enabled to true
+  enabled: false
+  nameOverride: opensearch-dashboards
+  host: '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+  service:
+    - name: opensearch-dashboards
+      port: 5601
+      pathType: Prefix
+      paths:
+        - /opensearch-dashboards
+  annotations:
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+transac-api-ingress:
+  enabled: true
+  nameOverride: transac-api
+  host: '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+  service:
+    - name: transac-api
+      port: 3004
+      pathType: ImplementationSpecific
+      paths:
+        - /v1/subjects/events/transactions
+        - /v1/subjects/events/[^/]+/status
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "21m"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+reporting-dashboard-ingress:
+  enabled: true
+  nameOverride: reporting-dashboard
+  host: '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+  service:
+    - name: reporting-dashboard
+      port: 3001
+      pathType: ImplementationSpecific
+      paths:
+        - /reporting
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+observability-ingress:
+  enabled: true
+  nameOverride: observability
+  host: '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+  service:
+    - name: grafana
+      port: 80
+      pathType: Prefix
+      paths:
+        - /grafana
+  # Traces/log UIs use separate optional ingresses:
+  # - `jaeger-ingress` (tags.traces)
+  # - `opensearch-dashboards-ingress` (disabled by default)
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/grafana"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "21m"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+jaeger-ingress:
+  enabled: false
+  nameOverride: jaeger
+  host: '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+  service:
+    - name: jaeger-query
+      port: 16686
+      pathType: Prefix
+      paths:
+        - /jaeger
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/jaeger"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+swagger-ingress:
+  enabled: true
+  nameOverride: swagger
+  host: '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+  service:
+    - name: api
+      port: 3001
+      pathType: Prefix
+      paths:
+        - /docs-api
+  annotations:
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+api-notifications-ingress:
+  enabled: true
+  host: '{{ include "global.basename" . }}-notifications.{{ include "global.domain" . }}'
+  nameOverride: api-notifications
+  service:
+    - name: api-ws
+      port: 3003
+      pathType: Prefix
+      paths:
+        - /
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}-notifications.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+copilot-ingress:
+  enabled: true
+  host: '{{ include "global.basename" . }}-copilot-ie.{{ include "global.domain" . }}'
+  nameOverride: copilot
+  service:
+    - name: invhub-interaction-engine
+      port: 8001
+      pathType: Prefix
+      paths:
+        - /
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}-copilot-ie.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+copilotv2-ingress:
+  enabled: true
+  host: '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+  nameOverride: copilotv2
+  service:
+    - name: copilotv2
+      port: 3006
+      pathType: ImplementationSpecific
+      paths:
+        - /copilot(/|$)(.*)
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/copilot/"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+langfuse-ingress:
+  enabled: true
+  host: '{{ include "global.basename" . }}-langfuse.{{ include "global.domain" . }}'
+  nameOverride: langfuse
+  service:
+    - name: langfuse
+      port: 3000
+      pathType: Prefix
+      paths:
+        - /
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}-langfuse.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+webv2:
+  fullnameOverride: "webv2"
+  replicaCount: 2
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-web
+    tag: "v2-ih-poc.5"
+webv2-ingress:
+  enabled: true
+  nameOverride: webv2
+  host: '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+  service:
+    - name: webv2
+      port: 8080
+      pathType: Prefix
+      paths:
+        - /si2
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-path: "/webv2/"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-body-size: "21m"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+cn-postgres-langfuse:
+  image:
+    repository: ghcr.io/cloudnative-pg/postgresql
+    tag: "15.6"
+  clusterName: cn-postgres-langfuse
+  superuserSecret: postgres-credential-cn
+  # Backup configuration needs to be enabled manually with appropriate destination.
+  # Examples are given in charts/cn-postgres/values.yaml
+  backupConfig:
+    enabled: false
+  bootstrap:
+    enabled: true
+    config:
+      bootstrap:
+        initdb:
+          database: langfuse
+          owner: langfuse
+          secret:
+            name: postgres-credential-langfuse-cn
+          postInitSQL:
+            - ALTER USER langfuse CREATEDB;
+  storage:
+    size: 50Gi
+  instances: 3
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "1536Mi"
+    limits:
+      cpu: "250m"
+      memory: "2560Mi"
+cn-postgres-keycloak:
+  image:
+    repository: ghcr.io/cloudnative-pg/postgresql
+    tag: "15.6"
+  clusterName: cn-postgres-keycloak
+  superuserSecret: postgres-credential-cn
+  # Backup configuration needs to be enabled manually with appropriate destination.
+  # Examples are given in charts/cn-postgres/values.yaml
+  backupConfig:
+    enabled: false
+  instances: 3
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "1Gi"
+    limits:
+      cpu: "500m"
+      memory: "2Gi"
+  bootstrap:
+    enabled: true
+    config:
+      bootstrap:
+        initdb:
+          database: bitnami_keycloak
+          owner: bn_keycloak
+          secret:
+            name: postgres-credential-keycloak-cn
+cn-postgres:
+  # P7: false = use the shared platform instance instead. Split out of
+  # infra.enabled so it can be disabled on its own (see Chart.yaml).
+  enabled: true
+  image:
+    repository: ghcr.io/cloudnative-pg/postgresql
+  clusterName: cn-postgres
+  superuserSecret: postgres-credential-cn
+  metrics:
+    enabled: true
+  # Backup configuration needs to be enabled manually with appropriate destination.
+  # Examples are given in charts/cn-postgres/values.yaml
+  backupConfig:
+    enabled: false
+  bootstrap:
+    enabled: true
+    config:
+      bootstrap:
+        initdb:
+          database: ayasdi
+          owner: ayasdi
+          secret:
+            name: postgres-creds
+          postInitSQL:
+            # Grant privileges for user ayasdi to create databases. Required for the Prisma migration tool.
+            - ALTER USER ayasdi CREATEDB;
+          postInitApplicationSQL:
+            - CREATE EXTENSION IF NOT EXISTS vector;
+  storage:
+    size: 300Gi
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "4Gi"
+    limits:
+      cpu: "500m"
+      memory: "8Gi"
+# this database is going to be used for migrating from cn-postgres to cn-postgres-invhub
+# to remove ayasdi schema references and changing database collation and ctype settings
+# that can be set only during database creation
+cn-postgres-invhub:
+  image:
+    repository: ghcr.io/cloudnative-pg/postgresql
+  clusterName: cn-postgres-invhub
+  superuserSecret: postgres-credential-cn
+  metrics:
+    enabled: true
+  # Backup configuration needs to be enabled manually with appropriate destination.
+  # Examples are given in charts/cn-postgres/values.yaml
+  backupConfig:
+    enabled: false
+  bootstrap:
+    enabled: true
+    config:
+      bootstrap:
+        initdb:
+          database: invhub
+          owner: invhub
+          localeCType: en_US.UTF8
+          localeCollate: en_US.UTF8
+          secret:
+            name: postgres-creds
+          postInitSQL:
+            # Grant privileges for user invhub to create databases. Required for the Prisma migration tool.
+            - ALTER USER invhub CREATEDB;
+          postInitApplicationSQL:
+            - CREATE EXTENSION IF NOT EXISTS vector;
+  storage:
+    size: 300Gi
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "4Gi"
+    limits:
+      cpu: "500m"
+      memory: "8Gi"
+cn-postgres-transactions:
+  image:
+    repository: ghcr.io/cloudnative-pg/postgresql
+    tag: "15.6"
+  clusterName: cn-postgres-transactions
+  superuserSecret: postgres-credential-cn
+  metrics:
+    enabled: true
+  # Backup configuration needs to be enabled manually with appropriate destination.
+  # Examples are given in charts/cn-postgres/values.yaml
+  backupConfig:
+    enabled: false
+  bootstrap:
+    enabled: true
+    config:
+      bootstrap:
+        initdb:
+          database: invhub-transactions
+          owner: invhub
+          localeCType: en_US.utf8
+          localeCollate: en_US.utf8
+          secret:
+            name: postgres-credential-transactions-cn
+          postInitSQL:
+            # Grant privileges for user invhub to create databases. Required for the Prisma migration tool.
+            - ALTER USER invhub CREATEDB;
+  storage:
+    size: 100Gi
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "256Mi"
+    limits:
+      cpu: "250m"
+      memory: "512Mi"
+cn-postgres-copilot:
+  # P7: false = the copilot database lives on the shared platform cluster.
+  enabled: true
+  image:
+    repository: ghcr.io/cloudnative-pg/postgresql
+    tag: "15.6"
+  clusterName: cn-postgres-copilot
+  superuserSecret: postgres-credential-cn
+  # Backup configuration needs to be enabled manually with appropriate destination.
+  # Examples are given in charts/cn-postgres/values.yaml
+  backupConfig:
+    enabled: false
+  bootstrap:
+    enabled: true
+    config:
+      bootstrap:
+        initdb:
+          database: copilot
+          owner: copilot
+          secret:
+            name: postgres-credential-copilot-cn
+          postInitApplicationSQL:
+            - CREATE EXTENSION IF NOT EXISTS vector;
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "512Mi"
+    limits:
+      cpu: "250m"
+      memory: "1Gi"
+cn-postgres-copilotv2:
+  image:
+    repository: ghcr.io/cloudnative-pg/postgresql
+    tag: "15.6"
+  storage:
+    size: 200Gi
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      memory: "2Gi"
+  clusterName: cn-postgres-copilotv2
+  # Backup configuration needs to be enabled manually with appropriate destination.
+  # Examples are given in charts/cn-postgres/values.yaml
+  backupConfig:
+    enabled: false
+  bootstrap:
+    enabled: true
+    config:
+      bootstrap:
+        initdb:
+          database: copilot
+          owner: copilot
+          secret:
+            name: postgres-creds-copilotv2
+          postInitApplicationSQL:
+            - CREATE EXTENSION IF NOT EXISTS vector;
+cn-postgres-copilot-data-adapter:
+  image:
+    repository: ghcr.io/cloudnative-pg/postgresql
+    tag: "15.6"
+  storage:
+    size: 100Gi
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "256Mi"
+    limits:
+      cpu: "250m"
+      memory: "512Mi"
+  clusterName: cn-postgres-copilot-data-adapter
+  # Backup configuration needs to be enabled manually with appropriate destination.
+  # Examples are given in charts/cn-postgres/values.yaml
+  backupConfig:
+    enabled: false
+  bootstrap:
+    enabled: true
+    config:
+      bootstrap:
+        initdb:
+          database: copilot
+          owner: copilot
+          secret:
+            name: postgres-creds-copilot-data-adapter
+          postInitApplicationSQL:
+            - CREATE EXTENSION IF NOT EXISTS vector;
+cn-postgres-ai-doc-centre:
+  image:
+    repository: ghcr.io/cloudnative-pg/postgresql
+    tag: "15.6"
+  clusterName: cn-postgres-ai-doc-centre
+  superuserSecret: postgres-credential-cn
+  # Backup configuration needs to be enabled manually with appropriate destination.
+  # Examples are given in charts/cn-postgres/values.yaml
+  backupConfig:
+    enabled: false
+  bootstrap:
+    enabled: true
+    config:
+      bootstrap:
+        initdb:
+          database: ai-doc-centre
+          owner: ai-doc-centre
+          secret:
+            name: postgres-credential-ai-doc-centre-cn
+          postInitApplicationSQL:
+            - CREATE EXTENSION IF NOT EXISTS vector;
+  storage:
+    size: 100Gi
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "384Mi"
+    limits:
+      cpu: "250m"
+      memory: "768Mi"
+pgadmin4:
+  imagePullSecrets:
+    - name: regcred
+  fullnameOverride: "pgadmin"
+  serviceAccount:
+    create: true
+    name: pgadmin
+    automountServiceAccountToken: false
+  templatedPodAnnotations: |
+    checksum/pgadmin-values: {{ toJson .Values | sha256sum }}
+  VolumePermissions:
+    enabled: true
+  existingSecret: "postgres-creds"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "256Mi"
+    limits:
+      cpu: "250m"
+      memory: "512Mi"
+  startupProbe:
+    failureThreshold: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+  test:
+    resources:
+      requests:
+        cpu: "25m"
+        memory: "16Mi"
+      limits:
+        cpu: "50m"
+        memory: "32Mi"
+  strategy:
+    type: Recreate
+  env:
+    email: pgadmin@fseng.net
+    contextPath: /pgadmin
+    variables:
+      - name: PGADMIN_REPLACE_SERVERS_ON_STARTUP
+        value: "True"
+      - name: PGADMIN_CONFIG_PROXY_X_HOST_COUNT
+        value: "0"
+      - name: PGADMIN_CONFIG_PROXY_X_PORT_COUNT
+        value: "0"
+  featureToggles:
+    copilot: true
+    copilotv2: true
+    ai-doc-centre: false
+    invhub-db-migration: false
+    transactions-api: false
+    langfuse: false
+    keycloak: false
+  # in-tree patch (P7): every CA mount below fell back to the hardcoded
+  # `cn-postgres-ca` when its featureToggle was off. That secret belongs to
+  # invhub's own CNPG cluster, so once the databases move to a shared cluster the
+  # fallback names a Secret that does not exist and pgadmin wedges in Init. One
+  # knob now drives every fallback.
+  caSecretDefault: cn-postgres-ca
+  extraSecretMounts:
+    - name: pgadmin-secret-config
+      mountPath: "/var/lib/pgadmin/storage/pgadmin_fseng.net/pg-ca-cert"
+      subPath: ""
+      readOnly: true
+      secret: '{{ .Values.caSecretDefault | default "cn-postgres-ca" }}' 
+    - name: pgadmin-copilot-ca
+      mountPath: "/var/lib/pgadmin/storage/pgadmin_fseng.net/pg-copilot-ca"
+      subPath: ""
+      readOnly: true
+      secret: >-
+        {{- if (default false (index .Values.featureToggles "copilot")) -}} cn-postgres-copilot-ca {{- else -}} {{ .Values.caSecretDefault | default "cn-postgres-ca" }} {{- end -}}
+    - name: pgadmin-copilotv2-ca
+      mountPath: "/var/lib/pgadmin/storage/pgadmin_fseng.net/pg-copilotv2-ca"
+      subPath: ""
+      readOnly: true
+      secret: >-
+        {{- if (default false (index .Values.featureToggles "copilotv2")) -}} cn-postgres-copilotv2-ca {{- else -}} {{ .Values.caSecretDefault | default "cn-postgres-ca" }} {{- end -}}
+    - name: pgadmin-copilot-data-adapter-ca
+      mountPath: "/var/lib/pgadmin/storage/pgadmin_fseng.net/pg-copilot-data-adapter-ca"
+      subPath: ""
+      readOnly: true
+      secret: >-
+        {{- if (default false (index .Values.featureToggles "copilotv2")) -}} cn-postgres-copilot-data-adapter-ca {{- else -}} {{ .Values.caSecretDefault | default "cn-postgres-ca" }} {{- end -}}
+    - name: pgadmin-keycloak-ca
+      mountPath: "/var/lib/pgadmin/storage/pgadmin_fseng.net/pg-keycloak-ca"
+      subPath: ""
+      readOnly: true
+      secret: >-
+        {{- if (default false (index .Values.featureToggles "keycloak")) -}} cn-postgres-keycloak-ca {{- else -}} {{ .Values.caSecretDefault | default "cn-postgres-ca" }} {{- end -}}
+    - name: pgadmin-langfuse-ca
+      mountPath: "/var/lib/pgadmin/storage/pgadmin_fseng.net/pg-langfuse-ca"
+      subPath: ""
+      readOnly: true
+      secret: >-
+        {{- if (default false (index .Values.featureToggles "langfuse")) -}} cn-postgres-langfuse-ca {{- else -}} {{ .Values.caSecretDefault | default "cn-postgres-ca" }} {{- end -}}
+    - name: pgadmin-transactions-ca
+      mountPath: "/var/lib/pgadmin/storage/pgadmin_fseng.net/pg-transactions-ca"
+      subPath: ""
+      readOnly: true
+      secret: >-
+        {{- if (default false (index .Values.featureToggles "transactions-api")) -}} cn-postgres-transactions-ca {{- else -}} {{ .Values.caSecretDefault | default "cn-postgres-ca" }} {{- end -}}
+    - name: pgadmin-ai-doc-centre-ca
+      mountPath: "/var/lib/pgadmin/storage/pgadmin_fseng.net/pg-ai-doc-centre-ca"
+      subPath: ""
+      readOnly: true
+      secret: >-
+        {{- if (default false (index .Values.featureToggles "ai-doc-centre")) -}} cn-postgres-ai-doc-centre-ca {{- else -}} {{ .Values.caSecretDefault | default "cn-postgres-ca" }} {{- end -}}
+    - name: pgadmin-invhub-migration-ca
+      mountPath: "/var/lib/pgadmin/storage/pgadmin_fseng.net/pg-invhub-migration-ca"
+      subPath: ""
+      readOnly: true
+      secret: >-
+        {{- if (default false (index .Values.featureToggles "invhub-db-migration")) -}} cn-postgres-invhub-ca {{- else -}} {{ .Values.caSecretDefault | default "cn-postgres-ca" }} {{- end -}}
+  serverDefinitions:
+    enabled: true
+    resourceType: ConfigMap
+    existingConfigmap: pgadmin-server-definitions
+  extraInitContainers: |
+    - name: create-storage-paths
+      image: '{{ include "pgadmin.image" . }}'
+      command:
+        - /bin/sh
+        - -c
+        - >
+          mkdir -p
+          /var/lib/pgadmin/storage/pgadmin_fseng.net
+          /var/lib/pgadmin/storage/pgadmin_fseng.net/pg-ca-cert
+          /var/lib/pgadmin/storage/pgadmin_fseng.net/pg-copilot-ca
+          /var/lib/pgadmin/storage/pgadmin_fseng.net/pg-copilotv2-ca
+          /var/lib/pgadmin/storage/pgadmin_fseng.net/pg-copilot-data-adapter-ca
+          /var/lib/pgadmin/storage/pgadmin_fseng.net/pg-keycloak-ca
+          /var/lib/pgadmin/storage/pgadmin_fseng.net/pg-langfuse-ca
+          /var/lib/pgadmin/storage/pgadmin_fseng.net/pg-transactions-ca
+          /var/lib/pgadmin/storage/pgadmin_fseng.net/pg-ai-doc-centre-ca
+          /var/lib/pgadmin/storage/pgadmin_fseng.net/pg-invhub-migration-ca
+      volumeMounts:
+        - name: pgadmin-data
+          mountPath: /var/lib/pgadmin
+      securityContext:
+        runAsUser: 5050
+# copilot v1 resources, to be replaced in future
+# with copilot v2 and Flows
+copilot:
+  enabled: true
+prompt-engine:
+  engineName: "prompt-engine"
+  fullnameOverride: "invhub-prompt-engine"
+  envFromconfigMap: true
+  replicaCount: 2
+  image:
+    tag: "v2025.11"
+    repository: symphonyfs.azurecr.io/symphonysensa/sensa-genai-copilot
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  imagePullSecrets:
+    - name: regcred
+  command:
+    - sh
+    - -c
+    - uvicorn application:app --host 0.0.0.0 --port 8001
+  env:
+    - name: LOG_FILE_PATH
+      value: "/var/log/genai-engine"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "2Gi"
+    limits:
+      cpu: "250m"
+      memory: "2560Mi"
+  livenessProbe:
+    httpGet:
+      path: /prompt-engine/health
+      port: 8001
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 5
+  readinessProbe:
+    httpGet:
+      path: /prompt-engine/readiness
+      port: 8001
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 5
+  waitForDependencies:
+    enabled: true
+    postgres:
+      enabled: true
+    redis:
+      enabled: true
+    terrarium:
+      enabled: true
+interaction-engine:
+  envFromconfigMap: true
+  engineName: "interaction-engine"
+  fullnameOverride: "invhub-interaction-engine"
+  imagePullSecrets:
+    - name: regcred
+  command:
+    - sh
+    - -c
+    - pip install sensa.resolver && uvicorn interaction_engine:app --host 0.0.0.0 --port 8001
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/interaction-engine
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+    tag: "24362-patched-pypi-token"
+  env:
+    - name: LOG_FILE_PATH
+      value: "/var/log/interaction-engine"
+  livenessProbe:
+    httpGet:
+      path: /interaction-engine/health
+      port: 8001
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 5
+  readinessProbe:
+    httpGet:
+      path: /interaction-engine/readiness
+      port: 8001
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 5
+  waitForDependencies:
+    enabled: true
+    redis:
+      enabled: true
+    terrarium:
+      enabled: true
+context-engine:
+  engineName: "context-engine"
+  fullnameOverride: "invhub-context-engine"
+  envFromconfigMap: true
+  replicaCount: 2
+  image:
+    tag: "24362-patched-pypi-token"
+    repository: symphonyfs.azurecr.io/symphonysensa/context-engine
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  imagePullSecrets:
+    - name: regcred
+  volumeMounts:
+    - name: db-root-cert
+      mountPath: /pg-ca-cert
+  volumes:
+    - name: db-root-cert
+      secret:
+        secretName: cn-postgres-copilot-ca
+        items:
+          - key: ca.crt
+            path: ca.crt
+  env:
+    - name: LOG_FILE_PATH
+      value: "/var/log/context-engine"
+    - name: SENSA_HOST
+      value: "None"
+    - name: POSTGRESQL_URL
+      valueFrom:
+        secretKeyRef:
+          name: "sensa-global-secrets"
+          key: "COPILOT_DB_URL"
+  command:
+    - sh
+    - -c
+    - pip install sensa.resolver && uvicorn context_engine:app --host 0.0.0.0 --port 8001
+  livenessProbe:
+    httpGet:
+      path: /context-engine/health
+      port: 8001
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 5
+  readinessProbe:
+    httpGet:
+      path: /context-engine/readiness
+      port: 8001
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    failureThreshold: 5
+  waitForDependencies:
+    enabled: true
+    postgres:
+      enabled: true
+    redis:
+      enabled: true
+# end of copilot v1 resources
+copilot-common:
+  config:
+    azureOpenAIEndpoint: ""
+    azureOpenAIApiVersion: ""
+    openAIApiVersion: ""
+    azureDeploymentName: ""
+    azureDeploymentNameSupervisor: ""
+    azureOpenAIApiVersionSupervisor: ""
+    azureEmbeddingsEndpoint: ""
+    azureEmbeddingsDeployment: ""
+    azureEmbeddingsModel: ""
+  secrets:
+    azureOpenAIKey: ""
+    azureEmbeddingsKey: ""
+copilotv2:
+  replicaCount: 1
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-copilot
+    tag: "v0.0.38"
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 120
+    periodSeconds: 10
+    timeoutSeconds: 10
+    failureThreshold: 9
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 10
+    failureThreshold: 9
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "1280Mi"
+    limits:
+      cpu: "500m"
+      memory: "4Gi"
+  initContainers:
+    dbMigration:
+      image:
+        repository: symphonyfs.azurecr.io/symphonysensa/eureka-copilot-v2-db-migration
+        tag: "2.5.0"
+      args: ["upgrade", "2.5.0"]
+copilot-data-adapter:
+  replicaCount: 2
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-copilot-data-adapter
+    tag: "v0.0.21"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "1280Mi"
+    limits:
+      cpu: "500m"
+      memory: "4Gi"
+websearch:
+  engineName: "websearch"
+  fullnameOverride: "invhub-websearch"
+  envFromconfigMap: true
+  replicaCount: 2
+  command:
+    - sh
+    - -c
+    - uvicorn server:app --host 0.0.0.0 --port 8001
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-websearch-py
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+    tag: "v1.8.3"
+  imagePullSecrets:
+    - name: "regcred"
+  # Optional overrides for websearch-specific env vars.
+  # Leave empty to use the application's built-in defaults.
+  config:
+    SEARCH_TERMS_OVERRIDE: ""
+    SEARCH_TERMS_ADDITIONAL: ""
+terrarium:
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/terrarium
+    tag: "v2025.11"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "768Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+cdc:
+  enabled: true
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "768Mi"
+    limits:
+      cpu: "250m"
+      memory: "1536Mi"
+  kafkaConnect:
+    image:
+      repository: symphonyfs.azurecr.io/symphonysensa/invhub-cdc
+      tag: "v2026.07.1"
+    config:
+      template:
+        pod:
+          imagePullSecrets:
+            - name: regcred
+  connectors:
+    subjectUpdatesJdbcConnector:
+      enabled: false
+      state: stopped # running or paused or stopped
+      config:
+        query: "select * from V_IH_SUBJECT_UPDATED_EVENTS"
+        timestampColumnName:
+          oracle: "UPDATE_TIMESTAMP"
+          postgres: "update_timestamp"
+        schemaPattern:
+          oracle: "APPS_EIM"
+          postgres: "public"
+        transforms:
+          keyField:
+            oracle: "CUSTOMER_ID"
+            postgres: "customer_id"
+          payloadField:
+            oracle: "PAYLOAD"
+            postgres: "payload"
+        dbTimezone: "UTC"
+    unusualActivitiesJdbcConnector:
+      enabled: false
+      state: stopped # running or paused or stopped
+      config:
+        query: "select * from V_IH_UNUSUAL_ACTIVITY_EVENTS"
+        timestampColumnName:
+          oracle: "CREATION_TIMESTAMP"
+          postgres: "creation_timestamp"
+        schemaPattern:
+          oracle: "APPS_EIM"
+          postgres: "public"
+        transforms:
+          keyField:
+            oracle: "CUSTOMER_ID"
+            postgres: "customer_id"
+          payloadField:
+            oracle: "PAYLOAD"
+            postgres: "payload"
+        dbTimezone: "UTC"
+    paymentFraudJdbcConnector:
+      enabled: false
+      state: stopped # running or paused or stopped
+      config:
+        query: "select * from V_IH_PAYMENT_FRAUD_EVENTS"
+        timestampColumnName:
+          oracle: "CREATION_TIMESTAMP"
+          postgres: "creation_timestamp"
+        schemaPattern:
+          oracle: "APPS_EIM"
+          postgres: "public"
+        transforms:
+          keyField:
+            oracle: "CUSTOMER_ID"
+            postgres: "customer_id"
+          payloadField:
+            oracle: "PAYLOAD"
+            postgres: "payload"
+        dbTimezone: "UTC"
+    customersScreeningWmlJdbcConnector:
+      enabled: false
+      state: stopped # running or paused or stopped
+      config:
+        query: "select * from V_IH_WLM_CUSTOMER_SCREENING_EVENTS"
+        timestampColumnName:
+          oracle: "CREATION_TIMESTAMP"
+          postgres: "creation_timestamp"
+        schemaPattern:
+          oracle: "APPS_EIM"
+          postgres: "public"
+        transforms:
+          keyField:
+            oracle: "CUSTOMER_ID"
+            postgres: "customer_id"
+          payloadField:
+            oracle: "PAYLOAD"
+            postgres: "payload"
+        dbTimezone: "UTC"
+    subjectScoredJdbcConnector:
+      enabled: false
+      state: stopped # running or paused or stopped
+      config:
+        query: "select * from V_IH_SUBJECT_SCORED_EVENTS"
+        timestampColumnName:
+          oracle: "UPDATE_TIMESTAMP"
+          postgres: "update_timestamp"
+        schemaPattern:
+          oracle: "APPS_EIM"
+          postgres: "public"
+        transforms:
+          keyField:
+            oracle: "CUSTOMER_ID"
+            postgres: "customer_id"
+          payloadField:
+            oracle: "PAYLOAD"
+            postgres: "payload"
+        dbTimezone: "UTC"
+    transactionScreeningJdbcConnector:
+      enabled: false
+      state: stopped # running or paused or stopped
+      config:
+        query: "select * from V_IH_WLM_TRANSACTION_SCREENING_EVENTS"
+        timestampColumnName:
+          oracle: "CREATION_TIMESTAMP"
+          postgres: "creation_timestamp"
+        schemaPattern:
+          oracle: "APPS_EIM"
+          postgres: "public"
+        transforms:
+          keyField:
+            oracle: "CUSTOMER_ID"
+            postgres: "customer_id"
+          payloadField:
+            oracle: "PAYLOAD"
+            postgres: "payload"
+        dbTimezone: "UTC"
+keycloak:
+  fullnameOverride: "invhub-keycloak"
+  global:
+    security:
+      allowInsecureImages: true
+    imagePullSecrets:
+      - regcred
+    imageRegistry: "symphonyfs.azurecr.io"
+  proxy: edge
+  extraEnvVars:
+    - name: KC_PROXY_HEADERS
+      value: xforwarded
+  auth:
+    adminUser: admin
+    existingSecret: "keycloak-creds"
+    passwordSecretKey: "password"
+  postgresql:
+    enabled: false
+  externalDatabase:
+    host: "cn-postgres-keycloak-rw"
+    port: 5432
+    user: bn_keycloak
+    database: bitnami_keycloak
+    existingSecret: postgres-credential-keycloak-cn
+    existingSecretPasswordKey: password
+    extraParams: "sslmode=verify-full&sslrootcert=/pg-ca-cert/ca.crt"
+  extraVolumes:
+    - name: db-root-cert
+      secret:
+        secretName: cn-postgres-keycloak-ca
+        items:
+          - key: ca.crt
+            path: ca.crt
+  extraVolumeMounts:
+    - name: db-root-cert
+      mountPath: /pg-ca-cert
+      readOnly: true
+  calicoNetworkPolicy:
+    enabled: false
+keycloak-ingress:
+  enabled: true
+  nameOverride: keycloak
+  host: '{{ include "global.basename" . }}-auth.{{ include "global.domain" . }}'
+  service:
+    - name: invhub-keycloak
+      port: 80
+      pathType: Prefix
+      paths:
+        - /
+  annotations:
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+  tls:
+    - hosts:
+        - '{{ include "global.basename" . }}-auth.{{ include "global.domain" . }}'
+      secretName: ingress-tls
+global:
+  imagePullPolicy: Always   # platform default; the umbrella global overrides it
+  # Set to true alongside api.enabled=false to deploy split-responsibility API pods.
+  # Controls both which charts are deployed AND which API service URL all components use.
+  # Replaces the former tags.separate-api-responsibilities mechanism.
+  separateApiResponsibilities: false
+  # Internal (cluster-local) base URL for the InvHub API, propagated automatically to all subcharts.
+  # Leave empty for auto-detection: http://api:3001 (default) or http://api-for-ui:3001 when
+  # separateApiResponsibilities=true. Set explicitly only to override the auto-detected URL.
+  internalApiBaseUrl: ""
+  # ingress tls secret name that will be applied to all Investigation Hub ingresses
+  # can be disabled on specified ingresses when ingress.enableGlobalTlsSecret is set to false (true by default)
+  # if ingressTlsSecretName is not specified or empty, the ingress.tls[].secretName will be used as usual
+  ingressTlsSecretName: "ingress-tls"
+  # Canonical service names for infrastructure dependencies.
+  # migration-job auto-derives these from chart config (cn-postgres.clusterName, kafka-cluster.name, etc.).
+  # api and disc-api subcharts cannot reach parent-chart config, so set these when you change infra chart names.
+  # Leave empty to use auto-derived defaults.
+  #
+  # in-tree patch (naming migration): the api subchart's CLAMAV_HOST/CLAMAV_PORT
+  # already read global.CLAMAV_HOST but it was never declared, so the literal
+  # "clamavd" was the only reachable value — and the api chart is aliased five
+  # times, so that one line feeds five Deployments. Declared here; empty keeps
+  # today's default.
+  CLAMAV_HOST: ""
+  CLAMAV_PORT: ""
+  services:
+    postgresRw: "" # auto-derived from cn-postgres.clusterName
+    kafkaBootstrap: "" # auto-derived from kafka-cluster.name
+    opensearchMaster: "" # auto-derived from opensearch.masterService
+    minio: "" # auto-derived from minioop.tenant.name
+    redisMaster: "" # auto-derived from redis.fullnameOverride
+    # in-tree patch (naming migration): the copilot engines' own dependencies.
+    # These were consumed by copilot/copilotv2's wait-dependencies helpers
+    # before they were declared here — postgresCopilotRw already was, in the
+    # deploy overlay only. Declared now so the map is the complete contract:
+    # a component whose name is renamed is corrected ONCE here rather than
+    # once per copilot alias (copilot is aliased four times).
+    postgresCopilotRw: "" # -> cn-postgres-copilot-rw
+    postgresCopilotv2Rw: "" # -> cn-postgres-copilotv2-rw
+    terrarium: "" # -> terrarium (also PYTHON_SANDBOX_URL in copilotv2)
+    copilotDataAdapter: "" # -> copilot-data-adapter (COPILOT_DATA_ADAPTER_URL)
+    postgresPort: 5432
+    kafkaPort: 9093
+    opensearchPort: 9200
+    minioPort: 9000
+    redisPort: 6379
+  # Network policy configuration for network segmentation
+  # Requires a CNI that supports NetworkPolicy (Calico, Cilium, etc.)
+  networkPolicy:
+    # Enable standard Kubernetes NetworkPolicy resources
+    enabled: false
+    # Namespace where the ingress controller runs (for allowing ingress traffic)
+    ingressNamespace: "ingress-nginx"
+    # Enable default-deny policy for the namespace (all traffic blocked except explicit rules)
+    defaultDeny: false
+  # ingress hostname configuration
+  # end result will be https://<basename>.<domain>/
+  basename: ""
+  domain: ""
+  # external HTTPS port used when components construct public ingress URLs.
+  # keep 443 for standard environments.
+  externalHttpsPort: 443
+  # hash of client deployment for Pendo (third-party product-analytics app)
+  # the goal is to hide the name of the client from Pendo
+  # echo -n "<name>" | sha256sum | cut -d ' ' -f1
+  pendoAccountId: ""
+  pendoApiKey: ""
+  # email server configuration if login codes 2FA method is chosen over SSO with SAML
+  emailFrom: ""
+  emailHost: ""
+  emailPort: ""
+  emailUsername: ""
+  emailFromName: ""
+  emailPassword: ""
+  # external subjects/detections/transactions database configuration
+  remoteDataDbType: ""
+  remoteDataDbHost: ""
+  remoteDataDbName: ""
+  remoteDataDbPort: ""
+  remoteDataDbUsername: ""
+  remoteDataDbPassword: ""
+  remoteDataDbUseSsl: false
+  remoteDataDbSslSelfSigned: false
+  # token for Google maps.
+  # domain of the environment must be added to an allow list in Google Cloud Console
+  # that is managed by the Investigation Hub team
+  googleMapsApiKey: ""
+  # default value for maximum number of records that can be exported in CSV format
+  csvMaxExportRecords: 10000
+  # Enable Node.js inspect port for debugging (exposes the Node.js debugger protocol).
+  # This allows remote debugging of Node.js processes via Chrome DevTools or similar tools.
+  # WARNING: This should only ever be enabled when requested by Engineering.
+  enableNodeInspect: false
+  # version of Eureka platform
+  eurekaVersion: "v1.8.3"
+  # main password for the application
+  PASSWORD: ""
+  secrets:
+    # Rotation nonce: change this value to rotate "keep" Secrets that otherwise remain stable.
+    # This is still being tested; do not enable in production.
+    rotationId: ""
+    # When true, render Secrets even if they already exist but are not Helm-owned.
+    # Use with care and only when intentionally adopting existing Secrets into this release.
+    adoptExisting: false
+  # Database connection limit for API pods. When increasing ensure there are enough connections in the database pool
+  DB_CONNECTION_LIMIT: 10
+  # Seconds the DB client waits when acquiring a connection from the pool (Prisma/pg URL: pool_timeout).
+  # Wired into SENSA_DB_URL query string; override per environment in values.overrides.yaml.
+  dbPoolTimeout: 4
+  # Seconds to wait for a new TCP connection to Postgres before failing (URL: connect_timeout).
+  dbConnectTimeout: 4
+  # TCP keepalive settings for database connections - enables faster detection of dead connections
+  # keepalives=1 enables TCP keepalives, idle=60s before first probe,
+  # interval=10s between probes, count=6 failed probes before dead
+  # Total detection time: 60s + (10s × 6) = ~2 minutes (vs PostgreSQL's default 2+ hours)
+  DB_KEEPALIVES: "&keepalives=1&keepalives_idle=60&keepalives_interval=10&keepalives_count=6"
+  # copilot v1 configuration, to be removed in future.
+  # copilot is at the moment being migrated to copilot v2 and Flows
+  copilot:
+    AZURE_OPENAI_ENDPOINT_GPT4O_MINI: https://changeme.openai.azure.com/
+    OPENAI_API_KEY_GPT4O_MINI: ""
+    DEPLOYMENT_NAME_GPT4O_MINI: gpt-4o-mini
+    OPENAI_API_VERSION_GPT4O_MINI: 2024-02-15-preview
+    OPENAI_API_TYPE_GPT4O_MINI: azure
+    MODEL_NAME_GPT4O_MINI: gpt-4o-mini
+    AZURE_OPENAI_ENDPOINT_GPT4O: https://changeme.openai.azure.com/
+    OPENAI_API_KEY_GPT4O: ""
+    DEPLOYMENT_NAME_GPT4O: gpt-4o
+    OPENAI_API_VERSION_GPT4O: 2024-02-15-preview
+    OPENAI_API_TYPE_GPT4O: azure
+    MODEL_NAME_GPT4O: gpt-4o
+    OPENAI_ENDPOINT_EMBEDDING: https://changeme.openai.azure.com/
+    OPENAI_API_KEY_EMBEDDING: ""
+    AZURE_DEPLOYMENT_NAME_EMBEDDING: text-embedding-ada-002
+    OPENAI_API_VERSION_EMBEDDING: 2023-03-15-preview
+    OPENAI_MODEL_NAME_EMBEDDING: text-embedding-ada-002
+    OPENAI_CLIENT_ID: ""
+    OPENAI_TOKEN_URL: ""
+    CERT_FILE_PATH: ""
+    KEY_FILE_PATH: ""
+    SERPAPI_API_KEY: INVHUB_SERPAPI_API_KEY
+    GQL_API_KEY: INVHUB_SENSA_API_KEY_SECRET
+    INTROSPECTION_GQL_API_KEY: INVHUB_SENSA_API_KEY_SECRET
+  # end of copilot v1
+  AGENT_BATCH_MAX_CONCURRENT_REQUESTS: 15
+  AGENT_REQUESTS_BATCH_CRON: "*/3 * * * *"
+  # ── API / migration job defaults ────────────────────────────────────────────
+  # Defaults shared by the api subcharts and the parent migration job.
+  # Override per environment in your values.overrides.yaml.
+  SENSA_API_DOCS: true
+  SENSA_SERVICE_USER: "service@symphony.ai"
+  SENSA_LOG_LEVEL: "warn"
+  SENSA_THROTTLE_LIMIT: 100
+  EVENT_SCHEDULER_CRON: "0 0-23/12 * * *"
+  ENABLED_DISCLOSURE_TYPES: ""
+  ENTITY_RESOLUTION_URL: ""
+  SERVICES_MANAGER_URL: ""
+  SENSA_JWT_EXPIRESIN: 300
+  SENSA_JWT_REFRESH_EXPIRESIN: 3600
+  SENSA_CORS_ORIGIN: ""
+  KAFKA_CONNECTOR_URL: "http://cdc-connect-api:8083"
+  SENSA_KAFKA_BOOTSTRAP: "invhub-kafka-bootstrap:9093"
+  SENSA_KAFKA_SSL: "true"
+  SENSA_KAFKA_MAX_BYTES: "10485880"
+  SENSA_KAFKA_SSL_CA_PATH: "/kafka-ca-cert/ca.crt"
+  SENSA_KAFKA_INITIAL_RETRY_TIME: 5000
+  SENSA_KAFKA_RETRIES: 3
+  SENSA_KAFKA_SESSION_TIMEOUT: 45000
+  SENSA_KAFKA_HEARTBEAT_INTERVAL: 15000
+  SENSA_PROMETHEUS_URL: "http://prometheus:9090"
+  MINIO_SSL_CA_PATH: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  INVESTIGATION_HUB_OPEN_SEARCH_URL: "https://opensearch-cluster-master:9200"
+  INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH: true
+
+minioop-extensions:
+  # P7: the minio-operator Tenant's companion chart (bucket/user provisioning
+  # for invhub's own Tenant). Follows minioop.enabled — turn both off when
+  # using a shared object store.
+  enabled: true
+
+
+# ── InvHub's own Keycloak provisioning (templates/keycloak-setup-job.yaml) ────
+# Registers InvHub's Keycloak material — its SAML client, that client's attribute
+# mappers, and the realm roles it authorizes on — into a realm ANOTHER chart owns
+# (the platform realm `SRI`). Sibling of detectionhub's Job; the two provision
+# disjoint material and may run in any order.
+#
+# DEFAULT OFF, and note this is not the only switch: InvHub's application-side
+# auth is `LOGIN_FORM` (see the `auth:` block above), so provisioning this client
+# does NOT by itself put InvHub on SSO. Enabling SSO is an app-side change (auth
+# type + SP configuration) that must land in the same change as this flag.
+keycloakSetup:
+  enabled: false
+  # kcadm ships in the Keycloak image; reuse the platform's own so no extra image
+  # has to be mirrored into the private registry.
+  image: symphonyfs.azurecr.io/bitnami/keycloak:26.3.3-debian-12-r0
+  imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+  # REQUIRED for a private registry. This chart's `global` carries no pull
+  # secret, so it must be named here — invhub's own pods use `regcred`.
+  # Omitting it fails as ImagePullBackOff, not as a template error.
+  imagePullSecrets:
+    - name: regcred
+  # Bitnami's path; the upstream quay.io image uses /opt/keycloak/bin/kcadm.sh.
+  kcadmPath: /opt/bitnami/keycloak/bin/kcadm.sh
+  # REQUIRED, and must be the IN-CLUSTER URL: the master-realm admin token lives
+  # 60 seconds and public-ingress latency has outlived it mid-Job.
+  internalUrl: ""
+  realm: SRI
+  adminRealm: master
+  adminUser: admin
+  adminPasswordSecret:
+    name: ""
+    key: admin-password
+  # The client body is sent to the admin API verbatim, so anything Keycloak
+  # accepts on a client can be set here without touching the template.
+  client:
+    clientId: investigation-hub
+    name: Investigation Hub
+    enabled: true
+    protocol: saml
+    fullScopeAllowed: true
+    rootUrl: ""
+    # Master SAML Processing URL / assertion consumer service. The published
+    # spec is inconsistent about this path (/v1/api/callback in the UI
+    # walkthrough vs /v1/auth/callback in the JSON), so it is a value with NO
+    # default — set it to whatever the deployed InvHub build actually posts to.
+    # A wrong value fails only at login, never at deploy.
+    adminUrl: ""
+    redirectUris: []
+    attributes:
+      saml.force.post.binding: "true"
+      saml.authnstatement: "true"
+      # IdP-initiated SSO name. THE GOTCHA: InvHub must be pointed at
+      # {keycloak}/realms/{realm}/protocol/saml/clients/{this-name}, NOT the
+      # plain realm SAML URL that Keycloak's metadata advertises by default.
+      saml_idp_initiated_sso_url_name: investigation-hub
+  # Group list mapper. `Role` / `Groups` are case-sensitive on the InvHub side
+  # (they are predefined Keycloak attribute names, referenced there as
+  # `attributes, Role` / `attributes, Groups`).
+  groupMapper:
+    enabled: true
+    name: group list
+    attributeName: Groups
+  # InvHub's documented out-of-the-box realm-role set (HARMONY 193889346).
+  # CORRECTED 2026-08-13: two of these were previously misspelled
+  # (`-aml-investigator`, `-fin-crime-manager`) because they were copied from an
+  # illustrative example on a different page, and three were missing.
+  #
+  # These names are OURS to choose — the InvHub backend contains no
+  # `investigation-hub-*` literal anywhere (verified by grepping the deployed
+  # image). They are only ever matched against `samlSettings.groupMappings[].groupId`
+  # below. What is NOT ours to choose is the `roleIds` on the other side of that
+  # mapping: those must be real ids from InvHub's own `roles` table. Keeping the
+  # documented spelling means a customer realm built to the published guide maps
+  # straight onto this chart with no edits.
+  roles:
+    - name: investigation-hub-admin
+      description: Investigation Hub administrator
+    - name: investigation-hub-aml-l1-investigator
+      description: Investigation Hub AML level 1 investigator
+    - name: investigation-hub-aml-l2-investigator
+      description: Investigation Hub AML level 2 investigator
+    - name: investigation-hub-fincrime-manager
+      description: Investigation Hub financial crime manager
+    - name: investigation-hub-guest
+      description: Investigation Hub guest
+    - name: investigation-hub-readonly
+      description: Investigation Hub read-only user
+  # Customer IDPs (Entra ID, Okta, Auth0) federate INTO the realm here. This is
+  # CUSTOMER-SPECIFIC and intentionally empty: the chart ships the mechanism, not
+  # one customer's federation. Each entry is an admin-API identityProvider body.
+  identityProviders: []
+  # Only used when identityProviders is non-empty: a copy of `first broker login`
+  # with idp-review-profile DISABLED, so brokered users are not prompted to
+  # confirm a profile whose attributes are already mapped.
+  firstBrokerLoginFlowAlias: first broker login - no review
+  roleAssignments: {}
+  backoffLimit: 6
+  # 7200, not 600: a TTL shorter than helm's wait deletes a completed Job
+  # while the watcher still needs it, and the release fails as NotFound
+  ttlSecondsAfterFinished: 7200
+  resources: {}
+
+# ---------------------------------------------------------------------------
+# InvHub's APP-SIDE SAML settings (the other half of keycloakSetup above).
+#
+# keycloakSetup only ever writes KEYCLOAK material — client, roles, mappers. It
+# cannot make InvHub USE any of it: that lives in InvHub's own database, as the
+# `SAML_SETTINGS` row of `key_values`, and until it is set the login page shows
+# the built-in email-verification-code form and `getSamlSettings.status` is
+# `Empty`. This block is that missing half.
+#
+# WRITE PATH — the `updateSamlSettings` GraphQL mutation on the invhub api
+# (`POST /graphql`), NOT a SQL insert. The mutation downloads and parses the IdP
+# metadata, validates the payload, writes an audit log, and re-initialises the
+# live samlify providers in the running process. A hand-written row would skip
+# all four, and would not even take effect: SamlService caches the providers and
+# `setupProviders()` early-returns once they are set.
+#
+# ONE-WAY DOOR, accepted deliberately by the platform owner on 2026-08-13:
+# once `status` becomes `Set`, `createNewLoginCode` returns `samlCallbackUrl`
+# for EVERY email unconditionally, so the email-code login is gone for all
+# users and every account must come from Keycloak. The UI additionally refuses
+# to edit or deactivate users. See docs/INVHUB-SSO.md for the reversal path.
+samlSettings:
+  # OFF by default. A cold install must be able to reach the app to create the
+  # Keycloak accounts BEFORE the local login is taken away.
+  enabled: false
+  # Hook weight 11 — strictly AFTER keycloakSetup (10) so the client and roles
+  # exist, and after the configurator (4) which seeds users; enabling SAML
+  # blocks in-app user edits, so all user seeding must already have happened.
+  hookWeight: "11"
+  image:
+    repository: curlimages/curl
+    tag: "8.10.1"
+    pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  # Realm SAML descriptor. Fetched SERVER-SIDE by the invhub api pod, so this
+  # must be an IN-CLUSTER URL — the api has no route to the public ingress.
+  # The raw XML it returns is stored verbatim and is where the IdP signing
+  # certificate comes from; there is no separate certificate field.
+  samlMetaDataUrl: ""
+  # THE DOCUMENTED GOTCHA. Must be the IDP-INITIATED SSO URL
+  # (.../protocol/saml/clients/<saml_idp_initiated_sso_url_name>), NOT the plain
+  # realm URL `.../protocol/saml` that Keycloak's own metadata advertises. This
+  # backend REJECTS SP-initiated login outright ("SP-initiated login is not
+  # supported!"), so the plain realm URL yields a login that always fails.
+  idpSsoUrl: ""
+  # Attribute mappings. The backend splits each value on ", " (comma-SPACE) and
+  # walks the result as a path into the parsed assertion, so `attributes, Role`
+  # means `extract.attributes.Role`. All four are mandatory for status `Set`.
+  #
+  # THESE MUST MATCH THE MAPPER NAMES *OUR* CLIENT EMITS, not the ones in the
+  # HARMONY guide. The guide specifies `attributes, surname` and `nameID`, which
+  # describe a client whose mappers were named to a different convention. The
+  # `investigation-hub` client that keycloakSetup creates emits attributes named
+  # firstName / lastName / email / username, plus `Role` from the realm's
+  # built-in role_list scope. Verified by decoding a real assertion.
+  #
+  # Using the guide's values verbatim was tried and FAILED SILENTLY — the login
+  # succeeded, but InvHub stored an empty surname (no `surname` attribute exists
+  # to read) and put the *username* in the email column (nameID is the username,
+  # because the client's NameID format is `username`). Nothing errored; the
+  # account was simply wrong. Hence:
+  #   * last name reads `lastName`, NOT the guide's `surname`
+  #   * email reads the `email` ATTRIBUTE, not `nameID` — this also decouples
+  #     the email column from the client's NameID format
+  # `Role` stays capitalised: it is Keycloak's predefined role-list attribute.
+  fieldMappingFirstName: "attributes, firstName"
+  fieldMappingLastName: "attributes, lastName"
+  fieldMappingEmail: "attributes, email"
+  fieldMappingGroup: "attributes, Role"
+  # Keycloak realm role -> InvHub role ids. `groupId` and `groupName` are the
+  # Keycloak realm role name (for a Keycloak IdP groupName == groupId).
+  # `roleIds` MUST be ids from InvHub's `roles` table, not display names.
+  #
+  # HARD VALIDATION RULE: at least one entry's roleIds must contain the literal
+  # string `admin` (AdminRoleValues.ADMIN_ROLE_ID), or the mutation fails with
+  # SamlSettingsMissingAdminRoleMappingError and nothing is written.
+  #
+  # AML L1/L2 both map to `amlInvestigator` because InvHub draws the L1/L2
+  # distinction at TEAM level ("AML L1 Team" / "AML L2 Team"), not role level.
+  groupMappings:
+    - groupId: investigation-hub-admin
+      groupName: investigation-hub-admin
+      roleIds: ["admin"]
+    - groupId: investigation-hub-aml-l1-investigator
+      groupName: investigation-hub-aml-l1-investigator
+      roleIds: ["amlInvestigator"]
+    - groupId: investigation-hub-aml-l2-investigator
+      groupName: investigation-hub-aml-l2-investigator
+      roleIds: ["amlInvestigator"]
+    - groupId: investigation-hub-fincrime-manager
+      groupName: investigation-hub-fincrime-manager
+      roleIds: ["finCrimeManager"]
+    - groupId: investigation-hub-guest
+      groupName: investigation-hub-guest
+      roleIds: ["guest"]
+    - groupId: investigation-hub-readonly
+      groupName: investigation-hub-readonly
+      roleIds: ["guest"]
+  backoffLimit: 6
+  # 7200, not 600: a TTL shorter than helm's wait deletes a completed Job
+  # while the watcher still needs it, and the release fails as NotFound
+  ttlSecondsAfterFinished: 7200
+  resources: {}

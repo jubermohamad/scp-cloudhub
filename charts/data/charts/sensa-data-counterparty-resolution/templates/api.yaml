@@ -1,0 +1,229 @@
+{{- $pgSecret := include "cpr.pg.secretName" . -}}
+{{- $pgSecretKey := include "cpr.pg.secretKey" . -}}
+{{- $api := include "cpr.api.fullname" . -}}
+{{- /* On-demand build dataset dir: ONE knob (messages.hostPath) drives all three of the node path,
+       the in-pod mount path, and the enumerated dataset root — so they can't drift out of sync (the
+       D2b gotcha: hostPath=/data/smoke but datasetRoot=/data → /data/1m not mounted → PATH_NOT_FOUND).
+       mountPath defaults to hostPath (mount at the SAME path, so input_location == the node path); the
+       dataset root defaults to the mount path. Override either only for an existingClaim/advanced case. */ -}}
+{{- $ds := .Values.api.builds.messages -}}
+{{- $dsMount := $ds.mountPath | default $ds.hostPath -}}
+{{- $dsRoot := $ds.datasetRoot | default $dsMount -}}
+{{- if .Values.api.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $api }}
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+  {{- with .Values.api.serviceAccount.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+# NOTE (R38): a dedicated identity with HEADROOM for the future trigger/monitor APIs — later this SA
+# can be bound to RBAC that submits/watches Argo Workflows or Spark Operator SparkApplications. No
+# roles are granted now.
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $api }}
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "cpr.name" . }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "cpr.name" . }}
+        app.kubernetes.io/component: api
+    spec:
+      {{- include "cpr.imagePullSecrets" . | nindent 6 }}
+      {{- if .Values.api.serviceAccount.create }}
+      serviceAccountName: {{ $api }}
+      {{- end }}
+      containers:
+        - name: api
+          image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: CPR_PG_CONNINFO
+              value: {{ include "cpr.pg.conninfo" . | quote }}
+            # Password from the CNPG-managed <cluster>-app Secret (or the external existingSecret) —
+            # libpq reads PGPASSWORD from the env, so no password is rendered into values/helm history.
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $pgSecret }}
+                  key: {{ $pgSecretKey }}
+            - name: CPR_METRICS_FILE
+              value: {{ .Values.sharedWorkdir.metricsFile | quote }}
+            # R69 write seam. The api does not write the store, so this is here to be PROPAGATED:
+            # BuildConfig.from_env picks it up and stamps it on every build CR it submits, so a
+            # UI-triggered build writes the same store a chart-installed backfill does.
+            - name: CPR_STORAGE_BACKEND
+              value: {{ .Values.storage.backend | quote }}
+            # R69 READ seam — which QueryBackend the API's entity/network/explainability/transaction
+            # reads go through. Independent of the write selector, and it must MATCH where the data
+            # lives (design §8): an Iceberg write served by the Postgres query backend reads an empty
+            # store. Control-plane metadata (config/model/build) stays Postgres either way (§4 class C),
+            # which is why the PG conninfo above is unconditional.
+            - name: CPR_QUERY_BACKEND
+              value: {{ .Values.query.backend | quote }}
+            {{- include "cpr.iceberg.env" . | nindent 12 }}
+            {{- if eq .Values.query.backend "iceberg" }}
+            # DuckDB sizes its memory limit and thread count from the HOST, so in this pod it would see
+            # the node's RAM and cores while its cgroup allows far less — and get OOM-killed. Pinned to
+            # a budget that fits api.resources.limits.memory (see values.yaml).
+            - name: CPR_DUCKDB_MEMORY_LIMIT
+              value: {{ .Values.api.duckdb.memoryLimit | quote }}
+            - name: CPR_DUCKDB_THREADS
+              value: {{ .Values.api.duckdb.threads | quote }}
+            # Where DuckDB spills once it hits memoryLimit. Must be writable by the container user —
+            # its default is a relative `.tmp`, which is not.
+            - name: CPR_DUCKDB_TEMP_DIR
+              value: {{ .Values.api.duckdb.tempDir | quote }}
+            {{- end }}
+            {{- if include "cpr.iceberg.enabled" . }}
+            # Propagated onto every build CR so a UI-triggered Iceberg build writes the SAME warehouse
+            # (mounted at the SAME path — Iceberg manifests are absolute, spike finding 2).
+            - name: CPR_BUILD_ICEBERG_MOUNT
+              value: {{ .Values.storage.iceberg.mountPath | quote }}
+            {{- if eq .Values.storage.iceberg.persistence.type "pvc" }}
+            - name: CPR_BUILD_ICEBERG_CLAIM
+              value: {{ include "cpr.iceberg.claimName" . | quote }}
+            {{- else }}
+            - name: CPR_BUILD_ICEBERG_HOSTPATH
+              value: {{ .Values.storage.iceberg.persistence.hostPath | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.api.builds.enabled }}
+            # ── R38 on-demand builds: CR params from the same chart values the backfill uses ───────
+            - name: CPR_BUILDS_ENABLED
+              value: "true"
+            # R35 rebuild trigger (POST /builds {kind:rebuild}). Enabled now that the engine's
+            # rebuild(...) is merged; set api.builds.rebuild=false to gate it off (→ 501).
+            - name: CPR_REBUILD_ENABLED
+              value: {{ .Values.api.builds.rebuild | quote }}
+            - name: CPR_BUILD_ALLOW_CONCURRENT
+              value: {{ .Values.api.builds.allowConcurrent | quote }}
+            - name: CPR_BUILD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CPR_BUILD_ENGINE_IMAGE
+              value: "{{ .Values.images.engine.repository }}:{{ .Values.images.engine.tag }}"
+            - name: CPR_BUILD_IMAGE_PULL_POLICY
+              value: {{ .Values.images.pullPolicy | quote }}
+            - name: CPR_BUILD_SPARK_SA
+              value: {{ index .Values "spark-operator" "spark" "serviceAccount" "name" | quote }}
+            - name: CPR_BUILD_SPARK_VERSION
+              value: {{ .Values.backfill.sparkVersion | quote }}
+            - name: CPR_BUILD_PG_SECRET_NAME
+              value: {{ $pgSecret | quote }}
+            - name: CPR_BUILD_PG_SECRET_KEY
+              value: {{ $pgSecretKey | quote }}
+            - name: CPR_BUILD_SHARED_CLAIM
+              value: {{ printf "%s-shared" (include "cpr.fullname" .) | quote }}
+            - name: CPR_WORKDIR
+              value: {{ .Values.sharedWorkdir.path | quote }}
+            - name: CPR_BUILD_NAME_PREFIX
+              value: {{ include "cpr.fullname" . | quote }}
+            - name: CPR_BUILD_DRIVER_CORES
+              value: {{ .Values.backfill.driver.cores | quote }}
+            {{- with .Values.backfill.driver.coreLimit }}
+            - name: CPR_BUILD_DRIVER_CORE_LIMIT
+              value: {{ . | quote }}
+            {{- end }}
+            - name: CPR_BUILD_DRIVER_MEMORY
+              value: {{ .Values.backfill.driver.memory | quote }}
+            - name: CPR_BUILD_EXECUTOR_INSTANCES
+              value: {{ .Values.backfill.executor.instances | quote }}
+            - name: CPR_BUILD_EXECUTOR_CORES
+              value: {{ .Values.backfill.executor.cores | quote }}
+            - name: CPR_BUILD_EXECUTOR_MEMORY
+              value: {{ .Values.backfill.executor.memory | quote }}
+            - name: CPR_BUILD_RESTART_POLICY
+              value: {{ .Values.backfill.restartPolicy | quote }}
+            # A scale build DROPs + recreates the store first (clean throughput; ignored by rebuild).
+            - name: CPR_BUILD_RESET_STORE
+              value: {{ .Values.backfill.resetStore | quote }}
+            {{- with .Values.backfill.sparkConf }}
+            # Right-sizing knobs (shuffle partitions, parallelism) → merged into the build CR sparkConf.
+            - name: CPR_BUILD_SPARK_CONF
+              value: {{ toJson . | quote }}
+            {{- end }}
+            {{- with $ds.existingClaim }}
+            - name: CPR_BUILD_MSG_CLAIM
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $ds.hostPath }}
+            - name: CPR_BUILD_MSG_HOSTPATH
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $dsMount }}
+            - name: CPR_BUILD_MSG_MOUNT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $dsRoot }}
+            # D2: the api enumerates this dir's subdirs for the Builds-page dataset dropdown (defaults
+            # to the mount path so it can't drift from what the build CRs actually mount).
+            - name: CPR_BUILD_DATASET_ROOT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+          readinessProbe:
+            httpGet: { path: /openapi.json, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /openapi.json, port: 8000 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: shared
+              mountPath: {{ dir .Values.sharedWorkdir.metricsFile }}
+              readOnly: true
+            {{- if and .Values.api.builds.enabled $ds.hostPath }}
+            # D2: mount the dataset dir RO so GET /builds/datasets can list its subdirs (mounted at
+            # the same path the build CRs use, so the api and the builds agree on where datasets live).
+            - name: datasets
+              mountPath: {{ $dsMount | quote }}
+              readOnly: true
+            {{- end }}
+            {{- if include "cpr.iceberg.enabled" . }}
+            # The Iceberg warehouse, at the SAME mountPath the Spark pods use (absolute manifest paths).
+            # readOnly: the query backend only ever scans — PyIceberg + DuckDB, no writer in the api.
+            - name: warehouse
+              mountPath: {{ .Values.storage.iceberg.mountPath | quote }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: shared
+          persistentVolumeClaim:
+            claimName: {{ include "cpr.fullname" . }}-shared
+        {{- if and .Values.api.builds.enabled $ds.hostPath }}
+        - name: datasets
+          hostPath:
+            path: {{ $ds.hostPath | quote }}
+            type: Directory
+        {{- end }}
+        {{- include "cpr.iceberg.volume" . | nindent 8 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $api }}
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "cpr.name" . }}
+    app.kubernetes.io/component: api
+  ports:
+    - port: {{ .Values.api.service.port }}
+      targetPort: 8000

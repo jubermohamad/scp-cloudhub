@@ -1,0 +1,164 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "copilotv2.fullname" . }}
+  labels:
+    {{- include "copilotv2.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "copilotv2.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "copilotv2.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "copilotv2.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        {{- include "copilotv2.waitDependenciesInitContainer" . | nindent 8 }}
+        - name: db-migration
+          image: "{{ .Values.initContainers.dbMigration.image.repository }}:{{ .Values.initContainers.dbMigration.image.tag | default .Chart.AppVersion }}"
+          args: {{- toYaml .Values.initContainers.dbMigration.args | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.initContainers.dbMigration.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.initContainers.dbMigration.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- if ne .Values.dbRootCert.secretName "" }}
+            - name: db-root-cert
+              mountPath: {{ .Values.dbRootCert.mountPath }}
+              readOnly: true
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.copilotCommonConfigMapName }}
+            - secretRef:
+                name: {{ .Values.copilotCommonSecretName }}
+          env:  
+            - name: HOME
+              value: /tmp
+            - name: PIP_CACHE_DIR
+              value: /tmp/pip-cache
+            - name: DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds-copilotv2
+                  key: uri
+            - name: DATABASE_DSN_WITH_PSYCOPG_DRIVER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds-copilotv2
+                  key: psycopg-uri
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- if ne .Values.dbRootCert.secretName "" }}
+            - name: db-root-cert
+              mountPath: {{ .Values.dbRootCert.mountPath }}
+              readOnly: true
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.copilotCommonConfigMapName }}
+            - secretRef:
+                name: {{ .Values.copilotCommonSecretName }}
+            - configMapRef:
+                name: {{ include "copilotv2.fullname" . }}
+          env:
+            - name: BENTOML_HOME
+              value: /tmp/bentoml
+          {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+            - name: DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds-copilotv2
+                  key: uri
+            - name: DATABASE_DSN_WITH_PG_DRIVER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-creds-copilotv2
+                  key: psycopg-uri
+            - name: GQL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: invhub-service-api-keys
+                  key: investigation-hub-copilot-service-user-api-key
+          {{- range .Values.extraSecretEnv }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: {{ .key }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+      {{- if ne .Values.dbRootCert.secretName "" }}
+        - name: db-root-cert
+          secret:
+            secretName: {{ .Values.dbRootCert.secretName }}
+            items:
+              - key: {{ .Values.dbRootCert.key }}
+                path: {{ .Values.dbRootCert.key }}
+      {{- end }}
+      {{- if .Values.topologySpreadConstraints.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpreadConstraints.maxSkew | default 1 }}
+          topologyKey: {{ .Values.topologySpreadConstraints.topologyKey | default "kubernetes.io/hostname" }}
+          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.whenUnsatisfiable | default "ScheduleAnyway" }}
+          labelSelector:
+            matchLabels:
+              {{- include "copilotv2.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

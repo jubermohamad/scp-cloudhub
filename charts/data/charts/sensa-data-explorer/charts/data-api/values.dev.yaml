@@ -1,0 +1,18 @@
+# Dev overrides. A real development database must be supplied through
+# `database.url` or `database.existingSecret`; this chart does not create or seed
+# a database.
+image:
+  tag: dev
+
+settings:
+  keycloak:
+    # Dev gets a real issuer, because without one every caller is anonymous and the
+    # audit log records nothing but `anonymous` — which cannot demonstrate PRD VA-04
+    # on the one deployment meant for showing the product working.
+    #
+    # This is the only external name in this file, and it degrades safely where the
+    # realm is unreachable: signing keys are fetched lazily, on the first token that
+    # needs them, so the pod still starts, `/readyz` still passes and anonymous reads
+    # still work — only token-bearing callers get a 401. A throwaway cluster with no
+    # route to it is therefore unaffected, which is what keeps `e2e.sh` self-contained.
+    issuer: https://sri-dev-keycloak.invhub.fseng.net/realms/SRI

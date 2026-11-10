@@ -1,0 +1,5 @@
+enabled: true
+replicaCount: 1
+image:
+  repository: sensa-data-pipeline
+  tag: latest

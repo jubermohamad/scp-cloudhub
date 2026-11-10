@@ -1,0 +1,6 @@
+apiVersion: v2
+name: storageclass
+description: A Helm chart for installing storage classes
+type: application
+version: 2.0.0
+appVersion: "9.5.0"

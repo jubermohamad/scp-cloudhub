@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tagging>
+    <file_base_path>./conf</file_base_path>
+    <datasource name="Transaction">
+        <database_input_spec_file>./dbspec_TRANSACTIONS.xml</database_input_spec_file>
+        <views>
+            <view name="Account">
+                <profilekey_field name="AccountID">
+                    <value>profilekey</value>
+                </profilekey_field>
+                <excludedprofile_elements>
+                    <excludedprofile_element name="SixMonthMaxCashWithdrawal">
+                        <check>(PB006 _ Large Cash Withdrawal)</check>
+                        <definition>(max.month.present, max2.month.present, max2.month.total, max.month.total, max.month.past\d+, max2.month.past\d+)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="DayMax">
+                        <check>(DayAmtDaily)</check>
+                        <definition>(max.day.present,max.day.total,max.day.past\d+)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CombinationAccumulator">
+                        <check>(MAPGETScenario)</check>
+                        <definition>(acc.month.present)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="TestAccum6Days">
+                        <check>(TC_10_Acc_Total, TC_12_Max_Total)</check>
+                        <definition>(acc.day.past\d+, acc.day.total) used in scenarios(TC_10_Acc_Total,TC_12_Max_Total)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="TestMax6Days">
+                        <check>(TC_10_Acc_Total, TC_12_Max_Total)</check>
+                        <definition>(max.day.total, max2.day.past\d+,max2.day.total, max.day.past\d+)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="DayAmt">
+                        <check>(WeekBalance)</check>
+                        <definition>(acc.day.past\d+,acc.day.total)</definition>
+                    </excludedprofile_element>
+                </excludedprofile_elements>
+            </view>
+            <view name="Client">
+                <profilekey_field name="CustomerID">
+                    <value>profilekey</value>
+                </profilekey_field>
+                <excludedprofile_elements>
+                    <excludedprofile_element name="SixMonthMaxCashWithdrawal">
+                        <check>(PB006 _ Large Cash Withdrawal)</check>
+                        <definition>(max2.month.present, max2.month.total, max.month.total, max.month.past\d+, max2.month.past\d+)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="TestAccum6Days">
+                        <check>(TC_10_Acc_Total, TC_12_Max_Total)</check>
+                        <definition>(acc.day.past\d+, acc.day.total)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="TestMax6Days">
+                        <check>(TC_10_Acc_Total, TC_12_Max_Total)</check>
+                        <definition>(max.day.total, max.day.past\d+)</definition>
+                    </excludedprofile_element>
+                </excludedprofile_elements>
+            </view>
+        </views>
+    </datasource>
+</tagging>

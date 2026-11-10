@@ -1,0 +1,168 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-apisix
+  labels:
+    app: assembly-apisix
+    tier: gateway
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.apisix.replicas }}
+  revisionHistoryLimit: 3
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-apisix
+  template:
+    metadata:
+      labels:
+        app: assembly-apisix
+        tier: gateway
+        {{- include "aw.labels" . | nindent 8 }}
+      annotations:
+        # Forces a rollout whenever the routes/config ConfigMaps change — both
+        # are subPath-mounted, which kubelet never live-refreshes, so without
+        # this a route/config edit deploys the ConfigMap object but never
+        # actually reaches the running pod (#1319).
+        checksum/apisix-routes: {{ include (print $.Template.BasePath "/configmap-apisix-routes.yaml") . | sha256sum }}
+        checksum/apisix-config: {{ include (print $.Template.BasePath "/configmap-apisix.yaml") . | sha256sum }}
+    spec:
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.scheduling" . | nindent 6 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: assembly-apisix
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "aw.prefix" . }}-apisix-config
+        - name: routes
+          configMap:
+            name: {{ include "aw.prefix" . }}-apisix-routes
+        {{- if (include "aw.apisixTerminatesTls" .) }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.apisix.tls.existingSecret }}
+        - name: generated
+          emptyDir: {}
+        {{- end }}
+      {{- if (include "aw.apisixTerminatesTls" .) }}
+      initContainers:
+        # mode "apisix": APISIX's SNI matcher requires the cert to be IN the `ssls`
+        # list — an empty `ssls` with a cert mounted at the default path fails the
+        # handshake (verified against apache/apisix:3.8). Splice the mounted Secret's
+        # cert/key into the routes' `ssls: []` at startup so the private key never
+        # lands in a ConfigMap and there is no render-time cluster lookup. A cert
+        # rotation is picked up on the next pod start (the deploy restarts the pod).
+        - name: assemble-tls
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.apisix.image "ctx" $) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PUBLIC_HOSTNAME
+              value: {{ .Values.apisix.tls.publicHostname | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              awk -v host="$PUBLIC_HOSTNAME" '
+                { line = $0; sub(/^[ \t]*/, "", line); sub(/[ \t]*$/, "", line) }
+                line == "ssls: []" {
+                  print "ssls:";
+                  print "  - id: 1";
+                  print "    snis:";
+                  print "      - " host;
+                  print "    cert: |";
+                  while ((getline l < "/tls/tls.crt") > 0) print "      " l; close("/tls/tls.crt");
+                  print "    key: |";
+                  while ((getline l < "/tls/tls.key") > 0) print "      " l; close("/tls/tls.key");
+                  next
+                }
+                { print }
+              ' /raw/apisix-routes.yaml > /generated/apisix.yaml
+          volumeMounts:
+            - name: routes
+              mountPath: /raw/apisix-routes.yaml
+              subPath: apisix-routes.yaml
+              readOnly: true
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+            - name: generated
+              mountPath: /generated
+      {{- end }}
+      containers:
+        - name: {{ include "aw.prefix" . }}-apisix
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.apisix.image "ctx" $) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          volumeMounts:
+            - name: config
+              mountPath: /usr/local/apisix/conf/config.yaml
+              subPath: config.yaml
+            {{- if (include "aw.apisixTerminatesTls" .) }}
+            # apisix.yaml with the TLS `ssls` spliced in by the assemble-tls init
+            # container (from the mounted Secret) — not the raw routes ConfigMap.
+            - name: generated
+              mountPath: /usr/local/apisix/conf/apisix.yaml
+              subPath: apisix.yaml
+            {{- else }}
+            - name: routes
+              mountPath: /usr/local/apisix/conf/apisix.yaml
+              subPath: apisix-routes.yaml
+            {{- end }}
+          ports:
+            - containerPort: 9080
+              name: http
+            - containerPort: 9443
+              name: https
+          resources:
+            {{- toYaml .Values.apisix.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 9080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 9080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-apisix
+  labels:
+    app: assembly-apisix
+    {{- include "aw.labels" . | nindent 4 }}
+  {{- with .Values.apisix.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.apisix.service.type }}
+  {{- if and (eq .Values.apisix.service.type "LoadBalancer") .Values.apisix.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.apisix.service.loadBalancerIP }}
+  {{- end }}
+  {{- /* Guarded on LoadBalancer: k8s rejects this field on a ClusterIP Service. */}}
+  {{- if and (eq .Values.apisix.service.type "LoadBalancer") .Values.apisix.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml .Values.apisix.service.loadBalancerSourceRanges | nindent 4 }}
+  {{- end }}
+  ports:
+    - port: 80
+      targetPort: 9080
+      name: http
+    {{- if (include "aw.apisixTerminatesTls" .) }}
+    # Only exposed when APISIX terminates TLS. In mode "ingress" the gateway is
+    # plain HTTP behind ingress-nginx, reached via the Ingress on :80.
+    - port: 443
+      targetPort: 9443
+      name: https
+    {{- end }}
+  selector:
+    app: assembly-apisix

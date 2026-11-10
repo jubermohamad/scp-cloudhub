@@ -1,0 +1,77 @@
+{{- if and .Values.enabled .Values.ingress.enabled .Values.ingress.host }}
+# /docs and /openapi.json are intentionally public (no nginx auth). /mcp is protected at the app layer (API key).
+# Regex paths + use-regex: if any Ingress on this host uses use-regex/rewrite-target, ingress-nginx applies regex
+# matching to all paths on the host; explicit patterns avoid /healthz and /train falling through to 404.
+# Order is by descending path length in the controller; longer patterns win over /.* (HTTP API catch-all).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "model-training-tool.fullname" . }}-public
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "model-training-tool.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    {{- /*
+      TM-31 / AC-449: throttle a burst of POST /train submissions at the edge,
+      per source IP ($binary_remote_addr), independent of caller identity. This
+      complements the app-side per-job resource cap and the global queue /
+      cluster-budget admission. Applies to the whole training host (docs/mcp/
+      train share it). Mirrors the models-mcp-ingress limit-* pattern.
+    */}}
+    {{- if .Values.ingress.limitRps }}
+    nginx.ingress.kubernetes.io/limit-rps: {{ .Values.ingress.limitRps | quote }}
+    {{- end }}
+    {{- if .Values.ingress.limitConnections }}
+    nginx.ingress.kubernetes.io/limit-connections: {{ .Values.ingress.limitConnections | quote }}
+    {{- end }}
+    {{- if .Values.ingress.limitBurstMultiplier }}
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: {{ .Values.ingress.limitBurstMultiplier | quote }}
+    {{- end }}
+    {{- if .Values.ingress.limitWhitelist }}
+    nginx.ingress.kubernetes.io/limit-whitelist: {{ .Values.ingress.limitWhitelist | quote }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tlsSecretName }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /docs(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "model-training-tool.fullname" . }}
+                port:
+                  number: {{ .Values.service.httpPort }}
+          - path: /openapi\.json
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "model-training-tool.fullname" . }}
+                port:
+                  number: {{ .Values.service.httpPort }}
+          - path: /mcp(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "model-training-tool.fullname" . }}
+                port:
+                  number: {{ .Values.service.mcpPort }}
+          - path: /.*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "model-training-tool.fullname" . }}
+                port:
+                  number: {{ .Values.service.httpPort }}
+{{- end }}

@@ -1,0 +1,151 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ include "aap.fullname" . | trunc 53 }}-init-{{ randAlphaNum 4 | lower}}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: aap-instance-pod
+    app.kubernetes.io/name: {{ include "aap.fullname" . }}
+    {{- include "common.helm.metadata.labels" . | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.job.backofflimit }}
+  ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      name:  {{ include "aap.fullname" . }}
+      labels:
+        app: aap-instance-pod
+        app.kubernetes.io/name: {{ include "aap.fullname" . }}
+        {{- include "common.helm.metadata.labels" . | nindent 8 }}
+    spec:
+      securityContext:
+        runAsUser: 200
+        runAsGroup: 200
+        fsGroup: 200
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+      - name: wait-for-postgres
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            /wait-for-it/wait-for-it.sh {{ include "db.url" . }} --timeout=500
+
+      - name: aap-folder-init
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          {{- if .Values.global.useRootAccountForInit }}
+          runAsUser: 0
+          {{- end }}
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          {{- if not .Values.global.useRootAccountForInit }}
+          runAsNonRoot: true
+          {{- end }}
+        command:
+          - /bin/bash
+          - -c
+          - |
+            set +x
+            set -e
+            {{- if .Values.global.useRootAccountForInit }}
+            echo "Update folder permissions..."
+            chown -R 200:200 /opt/advanced-analytics-platform/db-file-flag
+            chown -R 200:200 /opt/advanced-analytics-platform/data
+            chown -R 200:200 /opt/advanced-analytics-platform/logs
+            echo "Folder permissions updated...."
+            {{- end }}
+            echo "Copy conf folder to /tmp/conf"
+            cp -r /opt/advanced-analytics-platform/conf/. /tmp/conf
+            {{- if .Values.global.useRootAccountForInit }}
+            chown -R 200:200 /tmp/conf
+            {{- end }}
+
+        volumeMounts:
+          - name: {{ .Release.Name }}-aml-smbd-data-pvc
+            mountPath: "/opt/advanced-analytics-platform/db-file-flag"
+            subPath: db-file-flag
+          - name: {{ .Release.Name }}-aap-init-conf
+            mountPath: "/tmp/conf"
+          - name: {{ .Release.Name }}-aap-init-data
+            mountPath: "/opt/advanced-analytics-platform/data"
+          - name: {{ .Release.Name }}-aap-init-logs
+            mountPath: "/opt/advanced-analytics-platform/logs"
+          - name: "{{ .Release.Name }}-aap-install-config"
+            mountPath: "/opt/advanced-analytics-platform/conf/install-config.json"
+            subPath: install-config.json
+
+{{- include "image.pull.secrets" . | nindent 6 }}
+
+      containers:
+      - name: "aap-job-init"
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/bash
+          - -c
+          - |
+            set +x
+            if [ -f "/opt/advanced-analytics-platform/db-file-flag/aap_db_job_completed.flag" ]; then
+              echo "AAP has been initialised. Skipping AAP init step."
+            else
+              echo "AAP has not been initialised. Initialising AAP..."
+              ./advanced-analytics-platform.sh -i ${AAP_HOME}/conf/install-config.json -p 6789 -e | tee ${AAP_HOME}/logs/aap-installation.log
+              if grep 'ERROR' ${AAP_HOME}/logs/aap-installation.log; then
+                exit 1
+              fi
+              echo "File '/opt/advanced-analytics-platform/db-file-flag/aap_db_job_completed.flag' is not present. Creating flag file..."
+              touch "/opt/advanced-analytics-platform/db-file-flag/aap_db_job_completed.flag" && echo "Flag files is created. DB Schema successfully applied" || echo "Flag files is not created, something went wrong. Please check the logs."
+            fi
+
+        volumeMounts:
+          {{ include "postgres.server.secret-mount" . | nindent 10 }}
+          - name: {{ .Release.Name }}-aap-init-logs
+            mountPath: "/opt/advanced-analytics-platform/logs"
+          - name: "{{ .Release.Name }}-aap-init-conf"
+            mountPath: "/opt/advanced-analytics-platform/conf"
+          - name: {{ .Release.Name }}-aap-init-server-jks
+            mountPath: /opt/advanced-analytics-platform/conf/server.jks
+            subPath: server.jks
+          - name: {{ .Release.Name }}-aml-smbd-data-pvc
+            mountPath: "/opt/advanced-analytics-platform/db-file-flag"
+            subPath: db-file-flag
+          - name: {{ .Release.Name }}-aap-init-data
+            mountPath: "/opt/advanced-analytics-platform/data"
+          - name: {{ .Release.Name }}-aap-tmp
+            mountPath: "/tmp"
+
+      volumes:
+        {{ include "postgres.server.secret-volume" . | nindent 8 }}
+        - name: {{ .Release.Name }}-aml-smbd-data-pvc
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "aml-smbd-data-pvc") | quote }}
+        - name: "{{ .Release.Name }}-aap-install-config"
+          secret:
+            secretName: "{{ .Release.Name }}-aap-install-config"
+        - name: {{ .Release.Name }}-aap-init-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-aap
+            items:
+            - key: keystore.p12
+              path: server.jks
+        - name: {{ .Release.Name }}-aap-init-conf
+          emptyDir: {}
+        - name: {{ .Release.Name }}-aap-init-logs
+          emptyDir: {}
+        - name: {{ .Release.Name }}-aap-init-data
+          emptyDir: {}
+        - name: {{ .Release.Name }}-aap-tmp
+          emptyDir: {}
+      restartPolicy: Never

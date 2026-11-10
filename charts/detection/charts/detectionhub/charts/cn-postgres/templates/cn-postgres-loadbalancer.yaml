@@ -1,0 +1,26 @@
+{{- if .Values.externalAccess.enabled | default false }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "cn-postgres.fullname" . }}-external-lb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cn-postgres.labels" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: LoadBalancer
+  ports:
+  - protocol: TCP
+    port: 5432
+    targetPort: 5432
+  selector:
+    cnpg.io/cluster: {{ include "cn-postgres.fullname" . }}
+    {{- if .Values.externalAccess.readOnly }}
+    role: replica
+    {{- else }}
+    role: primary
+    {{- end }}
+{{- end }}

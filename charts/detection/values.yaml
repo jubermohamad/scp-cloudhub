@@ -1,0 +1,10 @@
+# Render the registry pull secrets (global.pullSecrets) in this release?
+# false only where ANOTHER chart in the SAME release already renders them
+# — i.e. the umbrella, where all four domains share one release.
+pullSecrets:
+  render: true
+
+ai-store:
+  enabled: true
+detectionhub:
+  enabled: true

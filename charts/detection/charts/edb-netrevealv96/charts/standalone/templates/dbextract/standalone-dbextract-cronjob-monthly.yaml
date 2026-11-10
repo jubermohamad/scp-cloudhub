@@ -1,0 +1,215 @@
+{{- if .Values.dbextract.job.enableMonthlyJob }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: "{{ include "cron.job.dbextract.monthly.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+spec:
+  schedule: "{{ .Values.dbextract.job.monthlySchedule }}"
+  {{- if .Values.global.timeZone }}
+  timeZone: "{{ .Values.global.timeZone }}"
+  {{- end }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.dbextract.job.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.dbextract.job.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: {{ .Values.dbextract.job.ttlSecondsAfterFinished }}
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: "{{ .Release.Name }}-dbextract"
+        spec:
+          terminationGracePeriodSeconds: 60
+          securityContext:
+            runAsUser: 200
+            runAsGroup: 200
+          initContainers:
+          - name: wait-for-postgresql
+            image: "{{- include "standalone.docker.image" . -}}"
+            securityContext:
+              runAsNonRoot: true
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+            imagePullPolicy: IfNotPresent
+            command:
+              - /bin/bash
+              - -exec
+              - |
+                /wait-for-it/wait-for-it.sh {{ include "db.url" . }} --timeout=500
+                timeout {{ .Values.global.standalone.dbInit.dbJobFileFlagTimeout }} bash -c 'while [ ! -f /opt/WLM/db_job_completed.flag ]; do echo "Wait for the db init job to complete"; sleep 2; done'
+            volumeMounts:
+            - name: {{ .Release.Name }}-wlm-indexes
+              mountPath: /opt/WLM
+          {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.dbExtract }}
+          ##############################
+          # NROD OVERRIDE
+          ##############################
+          - name: nrod-override
+            image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+              runAsNonRoot: true
+            volumeMounts:
+              - name: {{ .Release.Name }}-standalone-dbextract-data
+                mountPath: /opt/netreveal/standaloneHome/input
+                subPath: input
+              - name: {{ .Release.Name }}-standalone-dbextract-data
+                mountPath: /opt/netreveal/standaloneHome/sql
+                subPath: sql
+              - name: {{ .Release.Name }}-ui-conf-override
+                mountPath: /opt/conf-override
+            command:
+              - /bin/bash
+              - -exec
+              - |
+                set +x
+                if [ -f /opt/override/override_version.properties ]; then
+                  echo "Override version file found, copying to conf-override"
+                  cp /opt/override/override_version.properties /opt/conf-override
+                fi
+                if [ -d /opt/override/dbextract/input ]; then
+                  echo "Override input directory found, copying to standaloneHome/input"
+                  ls -l /opt/override/dbextract/input
+                  cp -r /opt/override/dbextract/input/. /opt/netreveal/standaloneHome/input
+
+                else
+                  echo "Override input directory not found."
+                fi
+                if [ -d /opt/override/dbextract/sql ]; then
+                  echo "Override sql directory found, copying to standaloneHome/sql"
+                  ls -l /opt/override/dbextract/sql
+                  cp -r /opt/override/dbextract/sql/. /opt/netreveal/standaloneHome/sql
+                else
+                  echo "Override sql directory not found."
+                fi
+          {{- end }}
+          containers:
+          - name: dbextract
+            image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.psqlDockerImage }}"
+            workingDir: /opt/netreveal/standaloneHome/
+            securityContext:
+              runAsNonRoot: true
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+            {{- if eq .Values.global.useResourceConstraints "true" }}
+            resources:
+              requests:
+                memory: "{{ .Values.dbextract.job.pod.resources.requests.memory }}"
+                cpu: "{{ .Values.dbextract.job.pod.resources.requests.cpu }}"
+              limits:
+                memory: "{{ .Values.dbextract.job.pod.resources.limits.memory }}"
+                cpu: "{{ .Values.dbextract.job.pod.resources.limits.cpu }}"
+            {{- end }}
+            command:
+              - /bin/bash
+              - -c
+              - |
+                {{- if and .Values.dbextract.script.monthly.inputFileName (ne .Values.dbextract.script.monthly.inputFileName "") }}
+                echo "DEPRECATED NOTICE: 'standalone.dbextract.script.monthly.inputFileName' is deprecated. Please use 'standalone.dbextract.script.monthly.inputFilePaths' instead."
+                echo "Running dbExtract.sh with input file '{{ .Values.dbextract.script.monthly.inputFileName }}' and zip file '{{ .Values.dbextract.script.zipFileName }}'"
+                /opt/netreveal/standaloneHome/dbExtractScripts/dbExtract.sh "month" "{{ .Values.dbextract.script.monthly.inputFileName }}" "{{ .Values.dbextract.script.zipFileName }}"
+                {{- end }}
+
+                {{- if .Values.dbextract.script.monthly.inputFilePaths }}
+                  {{- if ne (len .Values.dbextract.script.monthly.inputFilePaths) 0 }}
+                    {{- range $value := .Values.dbextract.script.monthly.inputFilePaths }}
+                echo "Processing input file: {{ $value }}"
+                /opt/netreveal/standaloneHome/dbExtractScripts/dbExtract.sh "month" "{{ $value }}" "{{ $.Values.dbextract.script.zipFileName }}"
+                    {{- end }}
+                  {{- end }}
+                {{- end }}
+
+                echo "Processing automated_exports db table"
+                /opt/netreveal/standaloneHome/dbExtractScripts/dbExtract.sh "month" "" "{{ $.Values.dbextract.script.zipFileName }}"
+            env:
+              - name: PGPASSWORD_APPS
+                valueFrom:
+                  secretKeyRef:
+                    name: postgres-credential-apps-user-cnpg
+                    key: password
+              - name: PGPASSWORD_APPS_IMPORT
+                valueFrom:
+                  secretKeyRef:
+                    name: postgres-credential-apps-import-user-cnpg
+                    key: password
+              - name: LOG_LEVEL
+                value: "{{ .Values.dbextract.script.logLevel }}"
+              - name: ADD_QUERY_LIMIT
+                value: "{{ .Values.dbextract.script.addQueryLimit }}"
+              - name: QUERY_LIMIT
+                value: "{{ .Values.dbextract.script.queryLimit }}"
+              - name: MAX_RETRIES
+                value: "{{ .Values.dbextract.script.maxRetries }}"
+              - name: BASE_RETRY_DELAY
+                value: "{{ .Values.dbextract.script.baseRetryDelay }}"
+              - name: MAX_RETRY_DELAY
+                value: "{{ .Values.dbextract.script.maxRetryDelay }}"
+              - name: MINIO_URL
+                value: "{{ include "minio.url" . }}"
+              {{- if .Values.global.timeZone }}
+              - name: TZ
+                value: "{{ .Values.global.timeZone }}"
+              {{- end }}
+            envFrom:
+              - secretRef:
+                  name: "minio-sftp-creds"
+            volumeMounts:
+              {{ include "postgres.server.secret-mount" . | nindent 14 }}
+              - name: "{{ include "secret.standalone.dbextract.script.name" . }}"
+                mountPath: /opt/netreveal/standaloneHome/dbExtractScripts/dbExtract.sh
+                subPath: dbExtract.sh
+              - name: {{ .Release.Name }}-standalone-dbextract-data
+                mountPath: /opt/netreveal/standaloneHome/input
+                subPath: input
+              - name: {{ .Release.Name }}-standalone-dbextract-data
+                mountPath: /opt/netreveal/standaloneHome/sql
+                subPath: sql
+              - name: {{ .Release.Name }}-standalone-dbextract-data
+                mountPath: /opt/netreveal/standaloneHome/output
+                subPath: output
+              - name: {{ .Release.Name }}-standalone-dbextract-data
+                mountPath: /opt/netreveal/standaloneHome/zip_output
+                subPath: zip_output
+              - name: {{ .Release.Name }}-wlm-indexes
+                mountPath: /opt/netreveal/standaloneHome/tmp
+                subPath: dbextract/tmp
+              - name: "{{ include "config.map.standalone.dbextract.automatedexport.sql.name" . }}"
+                mountPath: /opt/netreveal/standaloneHome/dbExtractScripts/automated_exports_orgunitList.sql
+                subPath: automated_exports_orgunitList.sql
+              - name: "{{ include "config.map.standalone.dbextract.automatedexport.sql.name" . }}"
+                mountPath: /opt/netreveal/standaloneHome/dbExtractScripts/automated_exports_exportList.sql
+                subPath: automated_exports_exportList.sql
+              - name: "{{ include "config.map.standalone.dbextract.automatedexport.sql.name" . }}"
+                mountPath: /opt/netreveal/standaloneHome/dbExtractScripts/automated_exports_tableVerify.sql
+                subPath: automated_exports_tableVerify.sql
+              - name: mc-tmp-config
+                mountPath: /mc-config/.mc
+          restartPolicy: Never
+          volumes:
+            {{ include "postgres.server.secret-volume" . | nindent 12 }}
+            - name: "{{ include "secret.standalone.dbextract.script.name" . }}"
+              secret:
+                secretName: "{{ include "secret.standalone.dbextract.script.name" . }}"
+                defaultMode: 493
+            - name: {{ .Release.Name }}-wlm-indexes
+              persistentVolumeClaim:
+                claimName: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+            - name: {{ .Release.Name }}-standalone-dbextract-data
+              emptyDir: {}
+            - name: "{{ include "config.map.standalone.dbextract.automatedexport.sql.name" . }}"
+              configMap:
+                name: "{{ include "config.map.standalone.dbextract.automatedexport.sql.name" . }}"
+            {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.dbExtract }}
+            - name: {{ .Release.Name }}-ui-conf-override
+              emptyDir: {}
+            {{- end }}
+            - name: mc-tmp-config
+              emptyDir: {}
+
+{{- include "image.pull.secrets" . | nindent 10 }}
+
+{{- end }}

@@ -1,0 +1,32 @@
+{{- /* Iceberg warehouse claim (R69, design §6) — rendered only when an Iceberg seam is selected AND
+       the warehouse is a PVC the chart should create.
+
+       On minikube the default is `type: hostPath` and NOTHING here renders: a single-node cluster makes
+       a node-local directory behave as shared storage for the driver, every executor and the api, which
+       is the same trick the dataset mount uses and avoids needing an RWX provisioner for a demo.
+
+       On a real cluster the claim must be RWX — driver, executors and the api all mount the SAME
+       warehouse at the SAME path (Iceberg manifests record absolute file paths, spike finding 2), so a
+       ReadWriteOnce volume can only work where every pod lands on one node. The default accessMode is
+       left at RWO because that is what a minikube/`standard` class provides; a multi-node install must
+       set `storage.iceberg.persistence.accessMode: ReadWriteMany` with a class that supports it (or
+       point `existingClaim` at one), and the NOTES call that out. */ -}}
+{{- if and (include "cpr.iceberg.enabled" .) (eq .Values.storage.iceberg.persistence.type "pvc") }}
+{{- if not .Values.storage.iceberg.persistence.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "cpr.iceberg.claimName" . }}
+  labels:
+    {{- include "cpr.labels" . | nindent 4 }}
+    app.kubernetes.io/component: iceberg-warehouse
+spec:
+  accessModes: [{{ .Values.storage.iceberg.persistence.accessMode | quote }}]
+  resources:
+    requests:
+      storage: {{ .Values.storage.iceberg.persistence.size }}
+  {{- with .Values.storage.iceberg.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}
+{{- end }}

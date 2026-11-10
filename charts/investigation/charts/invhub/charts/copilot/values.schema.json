@@ -1,0 +1,673 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "affinity": {
+            "type": "object"
+        },
+        "calicoNetworkPolicy": {
+            "type": "object",
+            "properties": {
+                "egress": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "ingress": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "action": {
+                                "type": "string"
+                            },
+                            "destination": {
+                                "type": "object",
+                                "properties": {
+                                    "ports": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                }
+                            },
+                            "protocol": {
+                                "type": "string"
+                            },
+                            "source": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "command": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            }
+        },
+        "config": {
+            "type": "object"
+        },
+        "engineName": {
+            "type": "string"
+        },
+        "envFromconfigMap": {
+            "type": "boolean"
+        },
+        "fullnameOverride": {
+            "type": "string"
+        },
+        "global": {
+            "type": "object",
+            "properties": {
+                "copilot": {
+                    "type": "object",
+                    "properties": {
+                        "AML_DETECTIONS_FILTER_ROWS": {
+                            "type": "string"
+                        },
+                        "AML_DETECTIONS_INITIALSUMMARY_FILTER_ROWS": {
+                            "type": "string"
+                        },
+                        "AML_DETECTION_FILTER_ROWS": {
+                            "type": "string"
+                        },
+                        "AML_DETECTION_INITIALSUMMARY_FILTER_ROWS": {
+                            "type": "string"
+                        },
+                        "AUTH_TYPE": {
+                            "type": "string"
+                        },
+                        "AZURE_OPENAI_ENDPOINT_GPT35_16K": {
+                            "type": "string"
+                        },
+                        "AZURE_OPENAI_ENDPOINT_GPT4": {
+                            "type": "string"
+                        },
+                        "AZURE_OPENAI_ENDPOINT_GPT4O": {
+                            "type": "string"
+                        },
+                        "AZURE_OPENAI_ENDPOINT_GPT4O_MINI": {
+                            "type": "string"
+                        },
+                        "AZURE_OPENAI_ENDPOINT_GPT4_32K": {
+                            "type": "string"
+                        },
+                        "CHAT_ENGINE": {
+                            "type": "string"
+                        },
+                        "COMPONENT_LLM_MAPPING": {
+                            "type": "string"
+                        },
+                        "CONTEXT_ENGINE_TIMEOUT": {
+                            "type": "string"
+                        },
+                        "CONTEXT_ENGINE_URL": {
+                            "type": "string"
+                        },
+                        "CONTEXT_EXPIRE_TIME": {
+                            "type": "string"
+                        },
+                        "CUSTOM_PROMPTS_DIRECTORY": {
+                            "type": "string"
+                        },
+                        "DATA_ADAPTER_CLASS": {
+                            "type": "string"
+                        },
+                        "DB_TYPE": {
+                            "type": "string"
+                        },
+                        "DEFAULT_API_RESULT_LIMIT": {
+                            "type": "string"
+                        },
+                        "DEFAULT_FOLLOW_UP": {
+                            "type": "string"
+                        },
+                        "DELAY": {
+                            "type": "string"
+                        },
+                        "DEPLOYMENT_NAME_GPT35_16K": {
+                            "type": "string"
+                        },
+                        "DEPLOYMENT_NAME_GPT4": {
+                            "type": "string"
+                        },
+                        "DEPLOYMENT_NAME_GPT4O": {
+                            "type": "string"
+                        },
+                        "DEPLOYMENT_NAME_GPT4O_MINI": {
+                            "type": "string"
+                        },
+                        "DEPLOYMENT_NAME_GPT4_32K": {
+                            "type": "string"
+                        },
+                        "DISABLE_CACHE": {
+                            "type": "string"
+                        },
+                        "DISABLE_CALLBACKS": {
+                            "type": "string"
+                        },
+                        "ENABLE_DIMENSION_INJECTION": {
+                            "type": "string"
+                        },
+                        "ENABLE_FOLLOW_UP": {
+                            "type": "string"
+                        },
+                        "ENABLE_GENERIC_CACHE": {
+                            "type": "string"
+                        },
+                        "ENVIRONMENT_NAME": {
+                            "type": "string"
+                        },
+                        "EXCLUDED": {
+                            "type": "string"
+                        },
+                        "GQL_EMAIL": {
+                            "type": "string"
+                        },
+                        "INIT_CLASS": {
+                            "type": "string"
+                        },
+                        "INIT_FILE": {
+                            "type": "string"
+                        },
+                        "INTERACTION_ENGINE_URL": {
+                            "type": "string"
+                        },
+                        "INTROSPECTION_GQL_EMAIL": {
+                            "type": "string"
+                        },
+                        "KEYCLOAK_REALM": {
+                            "type": "string"
+                        },
+                        "KEYCLOAK_SERVER_URL": {
+                            "type": "string"
+                        },
+                        "LANGFUSE_ENABLED": {
+                            "type": "string"
+                        },
+                        "LLM_SERVICE": {
+                            "type": "string"
+                        },
+                        "LLM_SERVICE_MAPPER": {
+                            "type": "string"
+                        },
+                        "LLM_TOOLS_MAPPING": {
+                            "type": "string"
+                        },
+                        "MAX_CONTEXT_WINDOW_SIZE": {
+                            "type": "string"
+                        },
+                        "MAX_FOLLOW_UP": {
+                            "type": "string"
+                        },
+                        "METADATA_OVERRIDE_DIMENSIONS_TRANSACTION_TXNTYPE.INSTRUMENT_VALID_VALUES": {
+                            "type": "string"
+                        },
+                        "MODEL_NAME_GPT35_16K": {
+                            "type": "string"
+                        },
+                        "MODEL_NAME_GPT4": {
+                            "type": "string"
+                        },
+                        "MODEL_NAME_GPT4O": {
+                            "type": "string"
+                        },
+                        "MODEL_NAME_GPT4O_MINI": {
+                            "type": "string"
+                        },
+                        "MODEL_NAME_GPT4_32K": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_KEY_GPT35_16K": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_KEY_GPT4": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_KEY_GPT4O": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_KEY_GPT4O_MINI": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_KEY_GPT4_32K": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_TYPE_GPT35_16K": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_TYPE_GPT4": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_TYPE_GPT4O": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_TYPE_GPT4O_MINI": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_TYPE_GPT4_32K": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_VERSION": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_VERSION_GPT35_16K": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_VERSION_GPT4": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_VERSION_GPT4O": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_VERSION_GPT4O_MINI": {
+                            "type": "string"
+                        },
+                        "OPENAI_API_VERSION_GPT4_32K": {
+                            "type": "string"
+                        },
+                        "OTEL_TOKEN_METRICS_EXPORT_ENABLED": {
+                            "type": "string"
+                        },
+                        "OTEL_TRACELOOP_ENABLED": {
+                            "type": "string"
+                        },
+                        "PGVECTOR_DB_HOST": {
+                            "type": "string"
+                        },
+                        "PGVECTOR_DB_NAME": {
+                            "type": "string"
+                        },
+                        "PGVECTOR_DB_PASSWORD": {
+                            "type": "string"
+                        },
+                        "PGVECTOR_DB_PORT": {
+                            "type": "integer"
+                        },
+                        "PGVECTOR_DB_USER": {
+                            "type": "string"
+                        },
+                        "PREVIOUS_CONTEXT_SIZE": {
+                            "type": "string"
+                        },
+                        "PRODUCTION_ENV": {
+                            "type": "string"
+                        },
+                        "PROMPT_ENGINE_TIMEOUT": {
+                            "type": "string"
+                        },
+                        "PROMPT_ENGINE_URL": {
+                            "type": "string"
+                        },
+                        "PYTHONUNBUFFERED": {
+                            "type": "string"
+                        },
+                        "PYTHON_SANDBOX_URL": {
+                            "type": "string"
+                        },
+                        "RBAC_ENABLED": {
+                            "type": "string"
+                        },
+                        "REACT_APP_SOCKET_IO_HANDSHAKE": {
+                            "type": "string"
+                        },
+                        "REDIS_DECODE_RESPONSES": {
+                            "type": "string"
+                        },
+                        "REDIS_HOST": {
+                            "type": "string"
+                        },
+                        "REDIS_PORT": {
+                            "type": "string"
+                        },
+                        "RELEASE_VERSION": {
+                            "type": "string"
+                        },
+                        "RERUNS": {
+                            "type": "string"
+                        },
+                        "RETURN_LINKS": {
+                            "type": "string"
+                        },
+                        "RUN_ENV": {
+                            "type": "string"
+                        },
+                        "SENSA_DATAADAPTER_ADDITIONAL_CONFIG": {
+                            "type": "string"
+                        },
+                        "SENSA_DATA_ADAPTER_CLASS": {
+                            "type": "string"
+                        },
+                        "SENSA_URL_SCHEME": {
+                            "type": "string"
+                        },
+                        "SERPAPI_API_KEY": {
+                            "type": "string"
+                        },
+                        "SOCKETIO_PATH": {
+                            "type": "string"
+                        },
+                        "TIMEOUT": {
+                            "type": "integer"
+                        },
+                        "TRACELOOP_BASE_URL": {
+                            "type": "string"
+                        },
+                        "TRACELOOP_TELEMETRY": {
+                            "type": "string"
+                        },
+                        "TRACELOOP_TRACE_CONTENT": {
+                            "type": "string"
+                        },
+                        "TRANSACTIONS_FILTER_ROWS": {
+                            "type": "string"
+                        },
+                        "UI_RESPONSE_PATH": {
+                            "type": "string"
+                        },
+                        "URL": {
+                            "type": "string"
+                        },
+                        "VERTICAL": {
+                            "type": "string"
+                        },
+                        "WEBSEARCH_URL": {
+                            "type": "string"
+                        },
+                        "context_service": {
+                            "type": "string"
+                        },
+                        "interaction_service": {
+                            "type": "string"
+                        },
+                        "prompt_service": {
+                            "type": "string"
+                        },
+                        "websearch_svc": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "image": {
+            "type": "object",
+            "properties": {
+                "pullPolicy": {
+                    "type": "string"
+                },
+                "repository": {
+                    "type": "string"
+                },
+                "tag": {
+                    "type": "string"
+                }
+            }
+        },
+        "imagePullSecrets": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "nameOverride": {
+            "type": "string"
+        },
+        "nodeSelector": {
+            "type": "object"
+        },
+        "podAnnotations": {
+            "type": "object"
+        },
+        "podDisruptionBudget": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "maxUnavailable": {
+                    "type": "integer"
+                }
+            }
+        },
+        "podSecurityContext": {
+            "type": "object",
+            "properties": {
+                "runAsGroup": {
+                    "type": "integer"
+                },
+                "runAsNonRoot": {
+                    "type": "boolean"
+                },
+                "runAsUser": {
+                    "type": "integer"
+                },
+                "seccompProfile": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "replicaCount": {
+            "type": "integer"
+        },
+        "resources": {
+            "type": "object",
+            "properties": {
+                "limits": {
+                    "type": "object",
+                    "properties": {
+                        "cpu": {
+                            "type": "string"
+                        },
+                        "memory": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "requests": {
+                    "type": "object",
+                    "properties": {
+                        "cpu": {
+                            "type": "string"
+                        },
+                        "memory": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "securityContext": {
+            "type": "object",
+            "properties": {
+                "allowPrivilegeEscalation": {
+                    "type": "boolean"
+                },
+                "capabilities": {
+                    "type": "object",
+                    "properties": {
+                        "drop": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "readOnlyRootFilesystem": {
+                    "type": "boolean"
+                },
+                "runAsGroup": {
+                    "type": "integer"
+                },
+                "runAsNonRoot": {
+                    "type": "boolean"
+                },
+                "runAsUser": {
+                    "type": "integer"
+                }
+            }
+        },
+        "service": {
+            "type": "object",
+            "properties": {
+                "port": {
+                    "type": "integer"
+                },
+                "portName": {
+                    "type": "string"
+                },
+                "targetPort": {
+                    "type": "integer"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "serviceAccount": {
+            "type": "object",
+            "properties": {
+                "annotations": {
+                    "type": "object"
+                },
+                "create": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "tolerations": {
+            "type": "array"
+        },
+        "topologySpreadConstraints": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "maxSkew": {
+                    "type": "integer"
+                },
+                "topologyKey": {
+                    "type": "string"
+                },
+                "whenUnsatisfiable": {
+                    "type": "string"
+                }
+            }
+        },
+        "waitForDependencies": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "image": {
+                    "type": "string"
+                },
+                "imagePullPolicy": {
+                    "type": "string"
+                },
+                "postgres": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "port": {
+                            "type": "integer"
+                        },
+                        "service": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "redis": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "port": {
+                            "type": "integer"
+                        },
+                        "service": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "resources": {
+                    "type": "object",
+                    "properties": {
+                        "limits": {
+                            "type": "object",
+                            "properties": {
+                                "cpu": {
+                                    "type": "string"
+                                },
+                                "memory": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "requests": {
+                            "type": "object",
+                            "properties": {
+                                "cpu": {
+                                    "type": "string"
+                                },
+                                "memory": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                },
+                "terrarium": {
+                    "type": "object",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "port": {
+                            "type": "integer"
+                        },
+                        "service": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "timeoutSeconds": {
+                    "type": "integer"
+                }
+            }
+        }
+    }
+}

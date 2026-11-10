@@ -1,0 +1,67 @@
+apiVersion: v2
+name: data
+description: Data domain umbrella chart
+type: application
+version: 0.1.30
+appVersion: "0.1.0"
+dependencies:
+  # Assembly Workflows — visual workflow authoring with AI agents, an LLM
+  # gateway and Temporal execution. Vendored from the sri-assembly handoff
+  # (chart 0.18.2); `condition` keeps it OFF unless an environment asks for it,
+  # so every existing render is byte-identical until someone enables it.
+  - name: assembly-workflows
+    version: 0.18.7
+    condition: assembly-workflows.enabled
+  - name: dxv
+    version: 1.0.1
+    condition: dxv.enabled
+  - name: sensa-data-fin-data-service
+    version: 0.5.0
+    condition: sensa-data-fin-data-service.enabled
+  # CRA/KYC backend + Module-Federation widget UI — vendored 2026-08-20 from
+  # sensa-data-fin-cra-service@802c0997 (real chart replaces the placeholder)
+  - name: sensa-data-fin-cra-service
+    version: 0.1.2
+    condition: sensa-data-fin-cra-service.enabled
+  # RETIRED 2026-08-24 — replaced by sensa-data-foundational-platform (prism).
+  # The dependency stays so an environment can re-enable it to read old data;
+  # it is OFF everywhere (values + switchboard) and its component declaration
+  # is gone, so nothing turns it on by accident.
+  - name: sensa-data-ontology
+    version: 0.1.2
+    condition: sensa-data-ontology.enabled
+  # Foundational Platform (prism): graph + ledger + warehouse + consoles.
+  # Re-vendored WHOLE 2026-08-25 from sensa-data-foundational-platform@e96c499
+  # (branch feat/helm-chart, deploy/helm) — the commit that dropped
+  # `global.pullSecrets` and made prism.imagePullSecrets map-aware. The two
+  # copies diverged once already and that drift cost an environment its
+  # platform pass, so this one is vendored whole rather than patched.
+  - name: sensa-data-foundational-platform
+    version: 0.1.9
+    condition: sensa-data-foundational-platform.enabled
+  # ListOps data API + Data Explorer micro-frontend — wrapper over the two
+  # charts vendored 2026-08-20 from sensa-data-explorer@16e05bcb
+  - name: sensa-data-explorer
+    version: 0.1.2
+    condition: sensa-data-explorer.enabled
+  # Counterparty Entity Resolution — vendored 2026-08-20 from
+  # sensa-data-counterparty-resolution@28e48861. Ships operator subcharts
+  # (spark, CNPG) that MUST stay install=false on SRI clusters — the
+  # operators layer owns both.
+  - name: sensa-data-counterparty-resolution
+    version: 0.1.2
+    condition: sensa-data-counterparty-resolution.enabled
+  # FS pipeline platform (config/exec/ui + bundled redis) — a NEW product
+  # (upstream also names its chart fin-pipeline;
+  # the vendored copy is renamed to this values key). Vendored 2026-08-20
+  # from sensa-data-fin-pipeline-service@67518a56.
+  - name: sensa-data-fin-pipeline-service
+    version: 0.2.6
+    condition: sensa-data-fin-pipeline-service.enabled
+  # placeholders until these repos expose a helm chart
+  - name: sensa-data-watchlist-management
+    version: 0.1.0
+    condition: sensa-data-watchlist-management.enabled
+  - name: sensa-data-pipeline
+    version: 0.1.0
+    condition: sensa-data-pipeline.enabled

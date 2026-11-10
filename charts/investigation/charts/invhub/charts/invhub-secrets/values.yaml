@@ -1,0 +1,44 @@
+copilotv2:
+  copilot:
+    username: "copilot"
+    host: "cn-postgres-copilotv2-rw"
+    port: "5432"
+    dbname: "copilot"
+  copilotDataAdapter:
+    username: "copilot"
+    host: "cn-postgres-copilot-data-adapter-rw"
+    port: "5432"
+    dbname: "copilot"
+
+global:
+  # Main password for generated credentials in this chart.
+  # Recommended: set via parent chart `global.PASSWORD` or provide per-service secrets.
+  # If left empty, secrets will generate strong values and reuse existing values on upgrade.
+  PASSWORD: ""
+  secrets:
+    # When true, render Secrets even if they already exist but are not Helm-owned.
+    # Use with care and only when intentionally adopting existing Secrets into this release.
+    adoptExisting: false
+    # Rotation nonce: change this value to rotate "keep" Secrets that otherwise remain stable.
+    rotationId: ""
+  DB_TYPE: "postgres"
+  DB_HOST: "cn-postgres-rw"
+  DB_PORT: "5432"
+  DB_USER: "ayasdi"
+  DB_NAME: "ayasdi"
+  DB_SSLMODE: "sslmode=verify-full"
+  DB_SSLROOTCERT: "&sslrootcert=/pg-ca-cert/ca.crt"
+  COPILOT_DB_TYPE: "postgres"
+  COPILOT_DB_USER: "copilot"
+  COPILOT_DB_HOST: "cn-postgres-copilot-rw"
+  COPILOT_DB_SSLMODE: "sslmode=verify-full"
+  COPILOT_DB_SSLROOTCERT: "&sslrootcert=/pg-ca-cert/ca.crt"
+  MINIO_USER: "minio"
+  INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH: true
+  TRANSACTIONS_API_DB_TYPE: "postgres"
+  TRANSACTIONS_API_DB_HOST: "cn-postgres-transactions-rw"
+  TRANSACTIONS_API_DB_PORT: "5432"
+  TRANSACTIONS_API_DB_USER: "invhub"
+  TRANSACTIONS_API_DB_NAME: "invhub-transactions"
+  TRANSACTIONS_API_DB_SSLMODE: "sslmode=verify-full"
+  TRANSACTIONS_API_DB_SSLROOTCERT: "&sslrootcert=/pg-ca-cert/ca.crt"

@@ -1,0 +1,61 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "certificates": {
+            "type": "object",
+            "properties": {
+                "admin": {
+                    "type": "object",
+                    "properties": {
+                        "duration": {
+                            "type": "string"
+                        },
+                        "renewBefore": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "ca": {
+                    "type": "object",
+                    "properties": {
+                        "duration": {
+                            "type": "string"
+                        },
+                        "renewBefore": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "dashboard": {
+                    "type": "object",
+                    "properties": {
+                        "duration": {
+                            "type": "string"
+                        },
+                        "renewBefore": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "nodes": {
+                    "type": "object",
+                    "properties": {
+                        "duration": {
+                            "type": "string"
+                        },
+                        "renewBefore": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "clusterName": {
+            "type": "string"
+        },
+        "nodeGroup": {
+            "type": "string"
+        }
+    }
+}

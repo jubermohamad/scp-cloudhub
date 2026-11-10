@@ -1,0 +1,8 @@
+CREATE SCHEMA apps AUTHORIZATION apps;
+ALTER TYPE int4 OWNER TO apps;
+ALTER TYPE float8 OWNER TO apps;
+ALTER TYPE bool OWNER TO apps;
+ALTER TYPE bytea OWNER TO apps;
+ALTER TYPE timestamp OWNER TO apps;
+ALTER TYPE date OWNER TO apps;
+ALTER TYPE numeric OWNER TO apps;

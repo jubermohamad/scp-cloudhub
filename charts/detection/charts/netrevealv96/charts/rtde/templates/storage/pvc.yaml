@@ -1,0 +1,36 @@
+{{- $rootContext := . -}}
+{{- range $solution := .Values.global.nrSparkSolutionSwitches.rtde }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  {{- with $rootContext }}
+  name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s" $solution "rtde-data-pvc")) | quote }}
+  {{- end }}
+  namespace: {{ $.Values.global.namespace }}
+  {{- if $.Values.global.database.testBackupMode }}
+  annotations:
+    helm.sh/resource-policy: keep
+    {{- with $rootContext }}
+  {{- include "storage.pvc.annotations" (list $ . "without-annotation-label" (include "storage.class.name.selectRwmStorageClassName" .)) | indent 2 }}
+    {{- end }}
+  {{- else }}
+    {{- with $rootContext }}
+  {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectRwmStorageClassName" .)) | indent 2 }}
+    {{- end }}
+  {{- end }}
+  labels:
+    {{- include "rtde.labels" $rootContext | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  {{- with $rootContext }}
+  {{ include "storage.selectRwmStorageClassName" . | indent 2 }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $.Values.storage.storage  }}
+{{- if (or (eq $.Values.global.clusterType "nfs") (eq $.Values.global.clusterType "minikube")) }}
+  volumeName: {{ $.Release.Name }}-{{ $solution }}-rtde-data-pv
+{{- end }}
+---
+{{- end}}

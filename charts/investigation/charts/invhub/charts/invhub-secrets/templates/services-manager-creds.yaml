@@ -1,0 +1,9 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "services-manager-creds"
+type: kubernetes.io/basic-auth
+stringData:
+  password: "{{ .Values.global.SERVICES_MANAGER_PASSWORD | default "" }}"
+  user: "{{ .Values.global.SERVICES_MANAGER_USERNAME | default "" }}"

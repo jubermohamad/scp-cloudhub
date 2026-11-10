@@ -1,0 +1,172 @@
+# username is retrieved from the environment with the format SYMPHONYFS_USERNAME
+# password is retrieved from the environment with the format SYMPHONYFS_PASSWORD
+repositories:
+  - name: symphonyfs
+    url: https://helm.symphonyfs.net
+  - name: k8s-as-helm
+    url: https://ameijer.github.io/k8s-as-helm/
+
+helmDefaults:
+  timeout: 1800
+  wait: false  # 'true' will cause deadlock for NR with helm waiting for override-volume-claim indefinitely
+               # more: https://netreveal.atlassian.net/browse/FCENGX-3005
+  kubeContext: aks-UPDATE_ME_NC_SUFFIX
+
+---
+
+# The environments section to define the reusable variables
+environments:
+  default:
+    values:
+      - owners: "UPDATE_ME_OWNERS"
+      - client_facing: "UPDATE_ME_CLIENT_FACING"
+      - dr_enabled: false  # Default is false for most environments. Should only be set to true for production or pre-production environments where active-active/active-passive DR using ANF cross-region replication is enabled. Note: Enabling this incurs additional cost - enable only if specifically included & budgeted. Note: Value must be lowercase (true/false), without quotes.
+      - applicationPrefix: "nr"
+      - clientSubDomain: "UPDATE_ME_CLIENT_SUBDOMAIN"
+      - envType: "UPDATE_ME_ENV_TYPE"
+      - overlayRepoName: "nrod-overlay-{{ .Values.clientSubDomain }}"
+      - namespace: '{{ requiredEnv "INSTANCE_NAME" | trimSuffix "-dr" }}'
+      - appName: netreveal # This is hard coded to allow the rest of the code to be consistent with other apps.
+      - helm_chart_repo_forwardslash_name: 'symphonyfs/{{ requiredEnv "APP_NAME" }}'
+      - helm_chart_version: '{{ env "CLOUDHUB_UPDATE_ME_NAMESPACE__HELM_CHART_VERSION" }}'
+      - helm_chart_values_file_name: UPDATE_ME_HELM_CHART_VALUES_FILE_NAME # Ensure to update this based on the envType - check other similar env types if unsure what to set to.
+      - helm_chart_values_file_ref: '{{ env "CLOUDHUB_UPDATE_ME_NAMESPACE__HELM_CHART_VERSION" }}'
+      - project_overlay_files_ref: '{{ env "CLOUDHUB_UPDATE_ME_NAMESPACE__PROJECT_OVERLAY_FILES_REF" }}'
+
+---
+
+releases:
+
+  - name: "{{ .Values.namespace }}-secret-https-certs"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "https-certs"
+      - type: "kubernetes.io/tls"
+      - ../../templated-overrides/secrets/certs.gotmpl
+
+  - name: "{{ .Values.namespace }}-secret-kafka-ui-certs"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "kafka-ui-certs"
+      - type: "kubernetes.io/tls"
+      - ../../templated-overrides/secrets/certs.gotmpl
+
+  - name: "{{ .Values.namespace }}-secret-keycloak-admin-ui-certs"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "keycloak-admin-ui-certs"
+      - type: "kubernetes.io/tls"
+      - ../../templated-overrides/secrets/certs.gotmpl
+
+  - name: "{{ .Values.namespace }}-secret-keycloak-ui-certs"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "keycloak-ui-certs"
+      - type: "kubernetes.io/tls"
+      - ../../templated-overrides/secrets/certs.gotmpl
+
+  - name: "{{ .Values.namespace }}-secret-regcred"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "regcred"
+      - type: "kubernetes.io/dockerconfigjson"
+      - secretData:
+          '.dockerconfigjson': '{{ env "CLOUDHUB_DOCKERHUB_AND_ACR__DOCKERCONFIGJSON" }}'
+
+  - name: "{{ .Values.namespace }}-secret-nrodsftp-ssh-key"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "nrodsftp-ssh-key"
+      - type: "Opaque"
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/nrodsftp-ssh-key.values.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+
+  - name: "{{ .Values.namespace }}-secret-nrodsftp-pgp-key"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "nrodsftp-pgp-key"
+      - type: "Opaque"
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/nrodsftp-pgp-key.values.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+
+  - name: "{{ .Values.namespace }}-secret-nrodsftp-archiving-pgp-key"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "nrodsftp-archiving-pgp-key"
+      - type: "Opaque"
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/nrodsftp-archiving-pgp-key.values.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+
+  - name: "{{ .Values.namespace }}-secret-idp-cert"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "idp-cert"
+      - type: "Opaque"
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/idp-cert.values.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+
+  - name: "{{ .Values.namespace }}-secret-idp-metadata"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "idp-metadata"
+      - type: "Opaque"
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/idp-metadata.values.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+
+  - name: "{{ .Values.namespace }}-secret-external-kafka-certificates"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "external-kafka-certificates"
+      - type: "Opaque"
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/external-kafka-certificates.values.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+
+  - name: "{{ .Values.namespace }}-secret-external-certificates"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "external-certificates"
+      - type: "Opaque"
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/external-certificates.values.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+
+  - name: "{{ .Values.namespace }}"
+    namespace: "{{ .Values.namespace }}"
+    chart: "{{ .Values.helm_chart_repo_forwardslash_name }}"
+    version: "{{ .Values.helm_chart_version }}"
+    values:
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/nrod-helm.git@/chart/{{ .Values.helm_chart_values_file_name }}?ref={{ .Values.helm_chart_values_file_ref }}
+      - ../../templated-overrides/{{ .Values.appName }}/common.gotmpl
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/common/1Password.values.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/1Password.values.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/k8s-nrod-override/project-helm-conf.yaml?ref={{ .Values.project_overlay_files_ref }}
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/k8s-nrod-override/project-helm-{{ .Values.envType }}.yaml?ref={{ .Values.project_overlay_files_ref }}
+    needs:
+      - "{{ .Values.namespace }}-secret-https-certs"
+      - "{{ .Values.namespace }}-secret-kafka-ui-certs"
+      - "{{ .Values.namespace }}-secret-keycloak-admin-ui-certs"
+      - "{{ .Values.namespace }}-secret-keycloak-ui-certs"
+      - "{{ .Values.namespace }}-secret-regcred"
+      - "{{ .Values.namespace }}-secret-nrodsftp-ssh-key"
+      - "{{ .Values.namespace }}-secret-nrodsftp-pgp-key"
+      - "{{ .Values.namespace }}-secret-nrodsftp-archiving-pgp-key"
+      - "{{ .Values.namespace }}-secret-idp-cert"
+      - "{{ .Values.namespace }}-secret-idp-metadata"
+      - "{{ .Values.namespace }}-secret-external-kafka-certificates"
+      - "{{ .Values.namespace }}-secret-external-certificates"

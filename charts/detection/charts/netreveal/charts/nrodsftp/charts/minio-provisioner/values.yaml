@@ -1,0 +1,6 @@
+imageRepository: minio/mc
+imageTag: RELEASE.2024-03-13T23-51-57Z.fips
+
+notifyWebhook:
+  queueDir: "/export/events"
+  queueLimit: "10000"

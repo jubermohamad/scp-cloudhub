@@ -1,0 +1,167 @@
+{{- $root := . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "clamavd.fullname" . }}
+  labels:
+    {{- include "clamavd.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "clamavd.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "clamavd.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "clamavd.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: init-clamav-db
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          resources:
+            limits:
+              cpu: 50m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          command:
+            - sh
+            - -c
+            - |-
+              set -eu
+              cp -R /var/lib/clamav/. /workdir-db/
+              cp -R /etc/clamav/. /workdir-etc/
+
+              if [ -n "${CLAMAV_STREAM_MAX_LENGTH:-}" ]; then
+                sed -i "s/^StreamMaxLength.*/StreamMaxLength ${CLAMAV_STREAM_MAX_LENGTH}/" /workdir-etc/clamd.conf || \
+                  echo "StreamMaxLength ${CLAMAV_STREAM_MAX_LENGTH}" >> /workdir-etc/clamd.conf
+              fi
+
+              if [ -n "${CLAMAV_MAX_SCAN_SIZE:-}" ]; then
+                sed -i "s/^MaxScanSize.*/MaxScanSize ${CLAMAV_MAX_SCAN_SIZE}/" /workdir-etc/clamd.conf || \
+                  echo "MaxScanSize ${CLAMAV_MAX_SCAN_SIZE}" >> /workdir-etc/clamd.conf
+              fi
+
+              if [ -n "${CLAMAV_MAX_FILE_SIZE:-}" ]; then
+                sed -i "s/^MaxFileSize.*/MaxFileSize ${CLAMAV_MAX_FILE_SIZE}/" /workdir-etc/clamd.conf || \
+                  echo "MaxFileSize ${CLAMAV_MAX_FILE_SIZE}" >> /workdir-etc/clamd.conf
+              fi
+          env:
+            - name: CLAMAV_STREAM_MAX_LENGTH
+              value: "{{ .Values.global.CLAMAV_STREAM_MAX_LENGTH }}"
+            - name: CLAMAV_MAX_SCAN_SIZE
+              value: "{{ .Values.global.CLAMAV_MAX_SCAN_SIZE }}"
+            - name: CLAMAV_MAX_FILE_SIZE
+              value: "{{ .Values.global.CLAMAV_MAX_FILE_SIZE }}"
+          volumeMounts:
+            - name: clamav-db
+              mountPath: /workdir-db
+            - name: clamav-etc
+              mountPath: /workdir-etc
+      containers:
+        - name: {{ .Chart.Name }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - clamd
+          args:
+            - --foreground
+            - --config-file=/etc/clamav/clamd.conf
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: clamav-etc
+              mountPath: /etc/clamav
+            - name: clamav-db
+              mountPath: /var/lib/clamav
+            - name: clamav-log
+              mountPath: /var/log/clamav
+            - name: clamav-run
+              mountPath: /run/clamav
+            - name: clamav-lock
+              mountPath: /run/lock
+          ports:
+            - name: clamavd
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+             {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: CLAMAV_STREAM_MAX_LENGTH
+              value: "{{ .Values.global.CLAMAV_STREAM_MAX_LENGTH }}"
+            - name: CLAMAV_MAX_SCAN_SIZE
+              value: "{{ .Values.global.CLAMAV_MAX_SCAN_SIZE }}"
+            - name: CLAMAV_MAX_FILE_SIZE
+              value: "{{ .Values.global.CLAMAV_MAX_FILE_SIZE }}"
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: clamav-etc
+          emptyDir:
+            sizeLimit: 48Mi
+        - name: clamav-db
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: clamav-log
+          emptyDir:
+            sizeLimit: 48Mi
+        - name: clamav-run
+          emptyDir:
+            sizeLimit: 48Mi
+        - name: clamav-lock
+          emptyDir:
+            sizeLimit: 48Mi
+      {{- if .Values.topologySpreadConstraints.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpreadConstraints.maxSkew | default 1 }}
+          topologyKey: {{ .Values.topologySpreadConstraints.topologyKey | default "kubernetes.io/hostname" }}
+          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.whenUnsatisfiable | default "ScheduleAnyway" }}
+          labelSelector:
+            matchLabels:
+              {{- include "clamavd.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

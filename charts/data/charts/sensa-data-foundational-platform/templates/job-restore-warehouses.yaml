@@ -1,0 +1,78 @@
+{{- if .Values.jobs.restoreWarehouses.enabled }}
+# Restores the two warehouse databases from the dumps baked into the prism image.
+# Warehouse-side only — the graph never sees this.
+#
+# SKIP-IF-EXISTS by design, which is also its limit: it cannot carry a SCHEMA
+# change (for that, use rebuildWarehouse, which drops and recreates).
+#
+# NOT a helm hook: on-demand, and the init container pulls a multi-hundred-MB
+# image to copy dumps.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "prism.fullname" . }}-restore-warehouses{{ with .Values.jobs.restoreWarehouses.nameSuffix }}-{{ . }}{{ end }}
+  labels:
+    app: prism-restore-warehouses
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.jobs.restoreWarehouses.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.jobs.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app: prism-restore-warehouses
+        {{- include "prism.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "prism.imagePullSecrets" . | nindent 6 }}
+      {{- include "prism.scheduling" . | nindent 6 }}
+      initContainers:
+        # The dumps live in the API image at /dumps; postgres:16-alpine has psql
+        # but not the dumps, so they are handed over through an emptyDir.
+        - name: dumps
+          image: {{ include "prism.image" (dict "ctx" $ "name" "prism-api" "tag" .Values.api.image.tag "registry" .Values.api.image.registry "repository" .Values.api.image.repository) }}
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.api.image.pullPolicy) }}
+          command: [sh, -c, "cp /dumps/*.sql /work/"]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      containers:
+        - name: restore
+          image: "{{ .Values.infra.warehousePostgres.image.repository }}:{{ .Values.infra.warehousePostgres.image.tag }}"
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.infra.warehousePostgres.image.pullPolicy) }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              PGH={{ include "prism.warehouseHost" . }}
+              PGU={{ include "prism.warehouseUser" . }}
+              until pg_isready -h "$PGH" -U "$PGU"; do sleep 2; done
+              # One loop over warehouseDatabases instead of a copied block per
+              # database: the dump baked into the API image is /dumps/<db>.sql,
+              # so the same list drives creation and seeding. Still
+              # SKIP-IF-EXISTS per database — that is this job's contract.
+              for db in {{ join " " .Values.warehouseDatabases }}; do
+                if psql -h "$PGH" -U "$PGU" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1; then
+                  echo "$db exists — skipped"
+                else
+                  psql -h "$PGH" -U "$PGU" -d postgres -c "CREATE DATABASE \"$db\""
+                  psql -h "$PGH" -U "$PGU" -d "$db" -f "/work/$db.sql"
+                  echo "$db restored"
+                fi
+              done
+              echo restored
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.warehousePgExisting | default .Values.secrets.warehousePg }}
+                  key: password
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      volumes:
+        - name: work
+          emptyDir: {}
+{{- end }}

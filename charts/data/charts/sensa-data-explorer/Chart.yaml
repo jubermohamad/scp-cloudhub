@@ -1,0 +1,21 @@
+# WRAPPER for the two charts VENDORED from SymphonySensa/sensa-data-explorer
+# deploy/helm/{data-api,frontend} @ 16e05bcb144a (main, 2026-08-13). The
+# wrapper exists so the umbrella keeps ONE values key (sensa-data-explorer)
+# for the product while upstream ships two charts. Local deltas inside the
+# subcharts, re-apply on re-vendor: fullname helpers produce the platform
+# naming ({{ .Release.Name }}-data-explorer-<component>).
+apiVersion: v2
+name: sensa-data-explorer
+description: Data Explorer — ListOps data API + micro-frontend (wrapper over the two upstream charts)
+type: application
+version: 0.1.1
+appVersion: "0.0.1"
+dependencies:
+  - name: listops-data-api
+    alias: data-api
+    version: 0.1.0
+    condition: data-api.enabled
+  - name: data-explorer-frontend
+    alias: frontend
+    version: 0.1.0
+    condition: frontend.enabled

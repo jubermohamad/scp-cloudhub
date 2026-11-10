@@ -1,0 +1,19 @@
+# Sizing profile: large (20+ nodes)
+agents:
+  replicas: 12
+  hpa: { minReplicas: 12, maxReplicas: 40 }
+agentsWorker:
+  replicas: 20
+agentsCodeWorker:
+  replicas: 16
+agentsSubflowWorker:
+  enabled: true
+  replicas: 10
+llmGateway:
+  replicas: 6
+apisix:
+  replicas: 4
+sandboxExecute:
+  replicas: 16
+sandboxTrigger:
+  replicas: 8

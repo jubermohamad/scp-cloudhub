@@ -1,0 +1,251 @@
+namespace: "{{ tpl .Values.global.namespace . }}"
+
+pod:
+  useResourceConstraints: "true"
+  useImagePullSecrets: "true"
+
+  dockerRegistryName: "519876397211.dkr.ecr.eu-west-1.amazonaws.com"
+  imageRepository: "k8s-sensaai-sanctions"
+  imageTag: "9.6.1.5"
+  toolsDockerImage: "nri-nrod-k8s-tools:1.0.3-1741080425046"
+  replicas: 1
+  minReadySeconds: 60
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+
+  resources:
+    requests:
+      memory: "12Gi"
+      cpu: "4"
+    limits:
+      memory: "16Gi"
+      cpu: "6"
+
+  livenessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 60
+    periodSeconds: 20
+    successThreshold: 1
+    timeoutSeconds: 5
+  startupProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    successThreshold: 1
+    timeoutSeconds: 5
+
+networkPolicy:
+  enabled: false
+
+pv:
+  dynamicResourcesStorageSize: 2Gi
+  storageClassName: "standard"
+  hostPathDynamicResourcesMinikube: "/opt/netreveal/training"
+  hostPathDynamicResources: "/var/nfs_k8s/training"
+
+job:
+  ttlSecondsAfterFinished: 7200
+
+python: "python3.13"
+minioPasswordSecret: "mino-creds"
+
+################################
+# config.properties
+################################
+serverConfig:
+  ACCESS_TOKEN_EXPIRY_MINUTES: "30"
+  LOG_TO_FILE: "False"                        # True|False
+  LOGGING_LEVEL: "info"
+  MAINTENANCE_MODE_MESSAGE: "Server Drain"
+  MAX_TRAINING_DATA_AGE_MONTHS: "24"
+  MODEL_RELOAD_INTERVAL: "30"
+  OPENAPI_URL: "/openapi.json"
+  PROMETHEUS_MULTIPROC_DIR: "resources/prometheus/tmp"
+  REDOC_URL: "/redoc"                         # Use 'None' to disable it.
+  SCHEDULER_CRON_EXP: "0, 15, 30, 45"
+  SERVER_MODE: "default"
+  SSL_KEYFILE_PASSWORD: "None"                # Replace 'None' with SSL Key password when needed
+  STANDARD_MODE_MESSAGE: "Server Up"
+  SWAGGER_URL: "/doc"                         # Use 'None' to disable it
+  TRAINING_DATA_CRON_EXP: "2"
+  WORKERS: 1
+  AUTH_PROVIDER_TYPE: "internal"
+  EXTERNAL_AUTH_INTROSPECTION_URL: "http://<url>:<port>/path/introspect"
+  EXTERNAL_AUTH_USERINFO_URL: "http://<url>:<port>/path/userinfo"
+  EXTERNAL_AUTH_CLIENT_ID: "client-id"
+  EXTERNAL_AUTH_CLIENT_SECRET: "client-secret"
+  EXTERNAL_AUTH_ROLES_FIELD: "roles"
+  EXTERNAL_AUTH_ADMIN_ROLE: "administrator"
+  EXTERNAL_AUTH_JWT_SECRET: "None"
+  TRAINING_FEATURE_GENERATION_WORKERS: "3"
+appConfig:
+  ACRONYM_BEST_MATCH_SCORE: "0.6"
+  ADDITIONAL_COUNTRY_LOOKUP_LANGUAGES: "None"
+  BEST_MATCH_FALLBACK_SCORE: "0.45"
+  COPOD_SAMPLE_SIZE: "10000"
+  DATA_OUTLIER_RATIO: "0.01"
+  DECISION_BOUNDARY_PRECISION: "0.001"
+  DEFAULT_THRESHOLD: "f5"
+  ENABLE_NER: "True"                          # True|False
+  ENABLE_OUTLIER_MODEL_INFERENCE: "True"      # True|False
+  EXPLANATIONS_FILTER_DISTANCE_FROM_MAX: "0.85"
+  MAX_ADDRESS_PARTS: "6"
+  MICRO_BATCH_ENABLED: "False"                 # True|False. Aggregate /getMatchScore requests per worker for batched inference.
+  MICRO_BATCH_WINDOW_MS: "100"               # Max ms to wait for a batch to fill before flushing.
+  MICRO_BATCH_MAX_SIZE: "64"                 # Max requests per batch.
+  MICRO_BATCH_TIMEOUT_MS: "30000"            # Max ms a request waits for its batch before returning a timeout. 0 = wait forever.
+  MODEL_METADATA_OUTLIER_EXAMPLES: "10"
+  MODEL_METADATA_FIELDS_PII_REMOVAL: "lowest_scoring_matches, highest_scoring_non_matches"
+  MODEL_METADATA_REMOVAL_FILE: "data_removal.json"
+  MULTIPLE_LANGUAGES: "True"                  # True|False.
+  PLOT_DISPLAYED_FEATURES: "30"
+  SPACY_MODEL: "en_core_web_lg"
+  SPACY_MODELS: "{\"en\": \"en_core_web_lg\", \"es\": \"es_core_news_md\", \"fr\": \"fr_core_news_md\", \"de\": \"de_core_news_md\"}"
+  STRING_NORMALISATION: "True"                # True|False
+  TEMP_FEATURE_SET_PATH: "resources/tmp/feature_set_temp.csv" # Do not change this path
+  TEMP_MODEL_PATH: "resources/tmp/model_temp.pkl"
+  TRAINING_DATA_SET_SIZE: "0.7"
+  TRAINING_MAX_NEGATIVES: "100000"
+  TRAINING_MAX_POSITIVES: "100000"
+  TRANSLITERATION_PLACEHOLDERS: "{\"¥\": \"yenSymbolPl4ceholder\", \"€\": \"euroSymbolPl4ceholder\", \"£\": \"poundSymbolPl4ceholder\", \"$\": \"dollarSymbolPl4ceholder\", \"₹\": \"rupeeSymbolPl4ceholder\", \"₩\": \"wonSymbolPl4ceholder\", \"₽\": \"rubleSymbolPl4ceholder\"}"
+  WL_TYPES: "individual, organisation, vessel, country, unknown"
+  LOAD_RETRIES: "2"
+  BACKOFF_FACTOR: "1"
+  
+################################
+# password.json
+################################
+# Secret with defined user definition:
+# Example: {"<user_name>": {"password": "<hashed_passwor>", "is_hashed": true}}
+#
+# userPasswordSecretName and userPasswordSecretKey have to be defined to use external secret
+userPasswordSecretName: ""
+userPasswordSecretKey: ""
+
+# pass is hashed password
+users:
+  admin:
+    pass: ""
+    role: "user"       # admin|user Required for version 9.4+
+  sai-admin:
+    pass: ""
+    role: "admin"         # admin|user Required for version 9.4+
+
+################################
+# Ingress
+################################
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+  hosts:
+    - host: sensaai-sanctions-training.local
+      paths:      
+      # This path has to be defined as .serverConfig.SWAGGER_URL. When this parameter is 'None' then this path can be removed
+      # - path: /doc
+      #   pathType: ImplementationSpecific
+      # This path has to be defined as .serverConfig.REDOC_URL. When this parameter is 'None' then this path can be removed
+      # - path: /redoc
+      #   pathType: ImplementationSpecific
+      - path: /addTrainingData
+        pathType: ImplementationSpecific
+      - path: /downloadModel
+        pathType: ImplementationSpecific
+      - path: /getCityLookupList
+        pathType: ImplementationSpecific
+      - path: /getCorporateWordsWeights
+        pathType: ImplementationSpecific
+      - path: /getCountryISOCodes
+        pathType: ImplementationSpecific
+      - path: /getDefaultValues
+        pathType: ImplementationSpecific
+      - path: /getFeatureDictionary
+        pathType: ImplementationSpecific
+      - path: /getIndCleaningRules
+        pathType: ImplementationSpecific
+      - path: /getMetrics
+        pathType: ImplementationSpecific
+      - path: /getModelMetadata
+        pathType: ImplementationSpecific
+      - path: /getModelsList
+        pathType: ImplementationSpecific
+      - path: /getOrgCleaningRules
+        pathType: ImplementationSpecific
+      - path: /getSynonyms
+        pathType: ImplementationSpecific
+      - path: /getTrainingDataFile
+        pathType: ImplementationSpecific
+      - path: /healthz
+        pathType: ImplementationSpecific
+      - path: /setDefaultValues
+        pathType: ImplementationSpecific
+      - path: /setModelToProduction
+        pathType: ImplementationSpecific
+      - path: /token
+        pathType: ImplementationSpecific
+      - path: /updateCityLookupList
+        pathType: ImplementationSpecific
+      - path: /updateCountryISOCodes
+        pathType: ImplementationSpecific
+      - path: /updateFeatureDictionary
+        pathType: ImplementationSpecific
+      - path: /updateIndCleaningRules
+        pathType: ImplementationSpecific
+      - path: /updateOrgCleaningRules
+        pathType: ImplementationSpecific
+      - path: /updateSynonyms
+        pathType: ImplementationSpecific
+      - path: /uploadModel
+        pathType: ImplementationSpecific
+      - path: /appendTrainingData
+        pathType: ImplementationSpecific
+      - path: /getTasksList
+        pathType: ImplementationSpecific
+      - path: /getTaskDetails
+        pathType: ImplementationSpecific
+      - path: /trainModel
+        pathType: ImplementationSpecific
+      - path: /getTrainingDataByGroupId
+        pathType: ImplementationSpecific
+      - path: /deleteTrainingDataByGroupId
+        pathType: ImplementationSpecific
+      - path: /deleteAllTrainingData
+        pathType: ImplementationSpecific
+      - path: /updateCorporateWordsWeights
+        pathType: ImplementationSpecific
+      - path: /getCommonNames
+        pathType: ImplementationSpecific
+      - path: /updateCommonNames
+        pathType: ImplementationSpecific
+      - path: /getGlobalCommonNames
+        pathType: ImplementationSpecific
+      - path: /updateGlobalCommonNames
+        pathType: ImplementationSpecific
+      - path: /getModelOverrideRules
+        pathType: ImplementationSpecific
+      - path: /updateModelOverrideRules
+        pathType: ImplementationSpecific
+  tls:
+    - secretName: sensaai-sensaai-sanctions-cert
+      hosts:
+       - sensaai-sanctions-training.local
+
+#SideCar configuration
+sideCar:
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "350Mi"
+      cpu: "350m"

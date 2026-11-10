@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    service: {{ .Release.Name }}-aap-service
+  name: {{ .Release.Name }}-aap
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    app: aap-instance-pod
+  type: ClusterIP
+  ports:
+    - name: 6789-port
+      port: 6789
+      targetPort: 6789

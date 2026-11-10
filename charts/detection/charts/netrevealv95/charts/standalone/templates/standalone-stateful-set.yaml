@@ -1,0 +1,750 @@
+{{- $solution := "standalone" -}}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "generate.name.with.release.name" (list $ . "standalone") | quote }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-standalone-instance"
+  annotations:
+    ad.datadoghq.com/standalone.logs: |
+      [
+          {
+              "source": "nri-{{ .Release.Name }}-k8s-sa",
+              "service": "nri-{{ .Release.Name }}-k8s-sa",
+              "log_processing_rules": [
+                  {
+                      "type": "multi_line",
+                      "name": "java_log_format",
+                      "pattern": "(app)\\s-\\s(\\d{2}-[A-Za-z]{3}-\\d{4}\\s\\d{2}:\\d{2}:\\d{2},\\d{3})\\s+-\\s+-\\s+(\\w+)\\s+([A-Za-z]+:\\d+)"
+                  }
+              ]
+          },
+          {
+              "source": "nri-{{ .Release.Name }}-k8s-sa",
+              "service": "nri-{{ .Release.Name }}-k8s-sa",
+              "log_processing_rules": [
+                  {
+                      "type": "multi_line",
+                      "name": "java_stats_log_format",
+                      "pattern": "((appmsg)|(appfunc))\\s-\\s(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}),+(.*)"
+                  }
+              ]
+          }
+      ]
+    reloader.stakater.com/search: "true"
+    secret.reloader.stakater.com/reload: "{{ .Release.Name }}-jks-password,{{ .Release.Name }}-cert-aap,cert-opensearch,{{ .Release.Name }}-cert-nr-ui,{{ .Release.Name }}-cert-wlm-pn-rt"
+    configmap.reloader.stakater.com/reload: "{{ include "standalone.config.map.name" . }},{{ .Release.Name }}-{{ .Chart.Name }}-standalone-config,{{ include "config.map.standalone.scheduler.config.name" . }}"
+  {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.standaloneVersions.configuration .Values.global.override.chartEnable.standaloneVersions.database) }}
+    app.override.image: "{{ .Values.global.override.overrideDockerImageName }}"
+    {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.configuration }}
+    app.override.configuration: "{{ .Values.global.override.chartEnable.standaloneVersions.configuration | toString }}"
+    {{- end }}
+    {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.database }}
+    app.override.databse: "{{ .Values.global.override.chartEnable.standaloneVersions.database | toString }}"
+    {{- end }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-standalone-instance-pod
+  serviceName: {{ .Release.Name }}-standalone
+  replicas: {{ .Values.pod.replicas }}
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      namespace: {{ .Values.global.namespace }}
+      labels:
+        app: {{ .Release.Name }}-standalone-instance-pod
+      {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.standaloneVersions.configuration .Values.global.override.chartEnable.standaloneVersions.database) }}
+      annotations:
+        app.override.image: "{{ .Values.global.override.overrideDockerImageName }}"
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.configuration }}
+        app.override.configuration: "{{ .Values.global.override.chartEnable.standaloneVersions.configuration | toString }}"
+        {{- end }}
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.database }}
+        app.override.databse: "{{ .Values.global.override.chartEnable.standaloneVersions.database | toString }}"
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: spark-operator-manipulator
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 1
+      securityContext:
+        runAsUser: 200
+        runAsGroup: 200
+        fsGroup: 200
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: wait-for-kafka-postgresql-db-job
+        image: "{{- include "standalone.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            /wait-for-it/wait-for-it.sh {{ include "kafka.bootstrap.servers.service.name" . }} --timeout=300 && \
+            /wait-for-it/wait-for-it.sh {{ include "db.url" . }} --timeout=500 && \
+          {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.standaloneVersions.configuration .Values.global.override.chartEnable.standaloneVersions.database) }}
+            timeout {{ .Values.global.standalone.override.initialisedFileFlagTimeout }} bash -c 'while [ ! -f /opt/WLM/overrideInitialised.flag ]; do echo "Wait for the override job to complete"; sleep 2; done' && \
+          {{- end }}
+            timeout {{ .Values.global.standalone.dbInit.dbJobFileFlagTimeout }} bash -c 'while [ ! -f /opt/WLM/db_job_completed.flag ]; do echo "Wait for the db init job to complete"; sleep 2; done'
+        volumeMounts:
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+
+      - name: keystore-cert-init
+        image: "{{- include "standalone.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/sh
+          - -c
+          - |
+            set +x
+            set -e
+
+            cp /opt/tools/java/lib/security/cacerts /opt/netreveal/standaloneHome/server.jks
+            keytool -storepasswd -new $KEYSTORE_PASS -keystore /opt/netreveal/standaloneHome/server.jks -storepass changeit
+
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/nr-ui.jks -srcalias 1 -destkeystore /opt/netreveal/standaloneHome/server.jks -destalias nrui -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            {{- if .Values.global.nrSolutionsSwitches.aml.enableAmlAlertGeneration.enabled }}
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/aap.jks -srcalias 1 -destkeystore /opt/netreveal/standaloneHome/server.jks -destalias aap -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            {{- end }}
+            {{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+            /opt/tools/java/bin/keytool -importcert -file "{{ .Values.global.sparkOperator.serviceaccount }}/ca.crt" -keystore /opt/netreveal/standaloneHome/server.jks -alias sparkoperator -storepass $KEYSTORE_PASS -noprompt
+            {{- end }}
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/opensearch.jks -srcalias 1 -destkeystore /opt/netreveal/standaloneHome/server.jks -destalias opensearch -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            {{- if .Values.global.nrSubChartSwitches.enableWlm }}
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/wlm-pn-rt.jks -srcalias 1 -destkeystore /opt/netreveal/standaloneHome/server.jks -destalias wlm24procrt -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            {{- if .Values.global.nrSolutionsSwitches.wlm.sensaAiSanctions.enabled }}
+            openssl pkcs12 -export -in /tmp/sensaai.crt -inkey /tmp/sensaai.key -out /opt/netreveal/standaloneHome/sensaai.p12 -password pass:$KEYSTORE_PASS
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /opt/netreveal/standaloneHome/sensaai.p12 -srcalias 1 -destkeystore /opt/netreveal/standaloneHome/server.jks -destalias sensaai -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            rm /opt/netreveal/standaloneHome/sensaai.p12
+            {{- end }}
+            {{- end }}
+{{- include "definition.external.certificates" (list $ . "standalone") | indent 12 }}
+            echo "Certificate import finished."
+        env:
+        - name: KEYSTORE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-jks-password
+              key: password
+        volumeMounts:
+        {{- if .Values.global.nrSolutionsSwitches.aml.enableAmlAlertGeneration.enabled }}
+        - name: {{ .Release.Name }}-aap-server-jks
+          mountPath: /tmp/aap.jks
+          subPath: aap.jks
+        {{- end }}
+        - name: {{ .Release.Name }}-opensearch-server-jks
+          mountPath: /tmp/opensearch.jks
+          subPath: opensearch.jks
+        - name: {{ .Release.Name }}-nr-ui-server-jks
+          mountPath: /tmp/nr-ui.jks
+          subPath: nr-ui.jks
+        {{- if .Values.global.nrSubChartSwitches.enableWlm }}
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-jks
+          mountPath: /tmp/wlm-pn-rt.jks
+          subPath: wlm-pn-rt.jks
+        {{- if .Values.global.nrSolutionsSwitches.wlm.sensaAiSanctions.enabled }}
+        - name: {{ .Release.Name }}-sensaai-sanctions-cert
+          mountPath: /tmp/sensaai.crt
+          subPath: sensaai.crt
+        - name: {{ .Release.Name }}-sensaai-sanctions-cert
+          mountPath: /tmp/sensaai.key
+          subPath: sensaai.key
+        {{- end }}
+        {{- end }}
+        - name: {{ .Release.Name }}-standalone-merged-keystore
+          mountPath: /opt/netreveal/standaloneHome
+{{- include "secret-volume-mounts.external.certificates" . | indent 8 }}
+        {{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+        - name: {{ .Release.Name }}-spark-operator-serviceaccount
+          mountPath: "{{ .Values.global.sparkOperator.serviceaccount }}"
+          readOnly: true
+        {{- end }}
+
+      - name: standalone-config-merge
+        image: "{{- include "standalone.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            {{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+            echo "Put SMBD variables into base_config.properties."
+            cat /tmp/standalone-conf/base_config.properties.orig > /tmp/standalone-conf/base_config.properties
+            echo -e "\nspark.operator.token=$(cat {{ .Values.global.sparkOperator.serviceaccount }}/token)" | \
+            tee -a /tmp/standalone-conf/base_config.properties > /dev/null
+            cat /tmp/standalone-conf/smbd_standalone_config.properties | \
+            tee -a /tmp/standalone-conf/base_config.properties > /dev/null
+            {{- else }}
+            echo "Copy base_config.properties file."
+            cat /tmp/standalone-conf/base_config.properties.orig > /tmp/standalone-conf/base_config.properties
+            {{- end }}
+        volumeMounts:
+        - name: {{ .Release.Name }}-standalone-merged-config
+          mountPath: /tmp/standalone-conf
+        - name: {{ .Release.Name }}-standalone-base-config-properties
+          mountPath: /tmp/standalone-conf/base_config.properties.orig
+          subPath: base_config.properties
+        {{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+        - name: {{ .Release.Name }}-smbd-standalone-config
+          mountPath: /tmp/standalone-conf/smbd_standalone_config.properties
+          subPath: smbd_standalone_config.properties
+        - name: {{ .Release.Name }}-spark-operator-serviceaccount
+          mountPath: "{{ .Values.global.sparkOperator.serviceaccount }}"
+          readOnly: true
+        {{- end }}
+      - name: init-standalone
+        image: "{{- include "standalone.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          {{- if .Values.global.useRootAccountForInit }}
+          runAsUser: 0
+          {{- end }}
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          {{- if not .Values.global.useRootAccountForInit }}
+          runAsNonRoot: true
+          {{- end }}
+        volumeMounts:
+        - name: {{ include "generate.name.with.release.name" (list $ . "standalone-logs") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/logs
+        - name: {{ include "generate.name.with.release.name" (list $ . "standalone-data") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/data
+        - name: {{ .Release.Name }}-standalone-java-tmp
+          mountPath: /opt/netreveal/standaloneHome/java
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+        - name: {{ include "generate.name.with.release.name" (list $ . "standalone-conf-wlm") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/conf/wlm
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standalone }}
+        - name: {{ .Release.Name }}-standalone-conf-override
+          mountPath: /opt/conf-override
+        - name: {{ .Release.Name }}-standalone-lib-override
+          mountPath: /opt/lib-override
+        {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            export ACQ_END_OF_DAY="{{ .Values.global.standalone.acquisition.endOfDay }}"
+            echo "ACQ_END_OF_DAY: ${ACQ_END_OF_DAY}"
+            {{- if .Values.global.nrOrgUnits }}
+              {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+            export ORG_UNIT_LIST="{{- range $key, $value := .Values.global.nrOrgUnits }},{{ $value.orgUnitCode }}{{- end }}"
+            echo "ORG_UNIT_LIST: ${ORG_UNIT_LIST}"
+              {{- end }}
+            {{- end }}
+            {{- if .Values.global.useRootAccountForInit }}
+            echo "Enable 'chown' for the standalone container."
+            export RUN_CHOWN="true"
+            {{- else }}
+            echo "Disable 'chown' for the standalone container."
+            export RUN_CHOWN="false"
+            {{- end }}
+            echo "Run the init script."
+            /opt/docker/initApplication.sh
+            {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standalone }}
+            echo "Prepare override 'conf' directory."
+            cp -r /opt/netreveal/standaloneHome/conf/. /opt/conf-override
+            echo "prepare override 'lib' directory."
+            cp -r /opt/netreveal/standaloneHome/lib/. /opt/lib-override
+            {{- if .Values.global.useRootAccountForInit }}
+            echo "Run 'chown' for the override 'conf' directory."
+            chown -R 200:200 /opt/conf-override
+            chown -R 200:200 /opt/lib-override
+            {{- end }}
+            {{- end }}
+
+      {{- include "init-container.kafka.jks" (merge (dict "solution" $solution) . ) | nindent 6 }}
+      ##############################
+      # NROD OVERRIDE
+      ##############################
+      {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standalone }}
+      - name: nrod-override
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        volumeMounts:
+          - name: {{ include "generate.name.with.release.name" (list $ . "standalone-data") | quote }}
+            mountPath: /opt/netreveal/standaloneHome/data
+          - name: {{ include "generate.name.with.release.name" (list $ . "standalone-conf-wlm") | quote }}
+            mountPath: /opt/netreveal/standaloneHome/conf/wlm
+          - name: {{ .Release.Name }}-standalone-conf-override
+            mountPath: /opt/conf-override
+          - name: {{ .Release.Name }}-standalone-lib-override
+            mountPath: /opt/lib-override
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            if [ -f /opt/override/override_version.properties ]; then
+              echo "Override version file exists. Copy it to the 'conf-override' directory."
+              cp /opt/override/override_version.properties /opt/conf-override
+            fi
+            if [ -d /opt/override/conf/standalone ]; then
+              echo "Override 'conf' directory exists. Copy it to the 'conf-override' directory."
+              echo ">>>>"
+              find /opt/override/conf/standalone/.
+              echo "<<<<"
+              cp -r /opt/override/conf/standalone/. /opt/conf-override
+            fi
+            if [ -d /opt/override/conf/standalone/wlm ]; then
+              echo "Override 'conf/wlm' directory exists. Copy it to the 'conf/wlm' directory."
+              echo ">>>>"
+              find /opt/override/conf/standalone/wlm/.
+              echo "<<<<"
+              cp -r /opt/override/conf/standalone/wlm/. /opt/netreveal/standaloneHome/conf/wlm
+            fi
+            # base_config.properties cannot be overwritten.
+            if [ -f /opt/conf-override/base_config.properties ]; then
+              echo "Override 'base_config.properties' file exists. Remove it."
+              rm -f /opt/conf-override/base_config.properties
+            fi
+
+            # lib directory override
+            if [ -d /opt/override/customcode/common/lib ]; then
+              countFiles=$(find /opt/override/customcode/common/lib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/common/lib to /opt/lib-override"
+                cp -r /opt/override/customcode/common/lib/* /opt/lib-override
+                echo ">>>>>"
+                find /opt/override/customcode/common/lib -type f ! -name ".*"
+                echo "<<<<<"
+              else
+                echo "No files found in /opt/override/customcode/common/lib"
+              fi
+            else
+              echo "No /opt/override/customcode/common/lib found."
+            fi
+
+            if [ -d /opt/override/customcode/standalone ]; then
+              countFiles=$(find /opt/override/customcode/standalone -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/standalone to /opt/lib-override"
+                cp -r /opt/override/customcode/standalone/* /opt/lib-override
+                echo ">>>>>"
+                find /opt/override/customcode/standalone -type f ! -name ".*"
+                echo "<<<<<"
+              else
+                echo "No files found in /opt/override/customcode/standalone"
+              fi
+            else
+              echo "No /opt/override/customcode/standalone found."
+            fi
+      {{- end }}
+
+{{- include "image.pull.secrets" . | nindent 6 }}
+
+      containers:
+      - name: mc-sidecar
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.toolsDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        workingDir: /opt/netreveal/standaloneHome/
+        {{- if eq .Values.global.useResourceConstraints "true" }}
+        resources:
+          requests:
+            memory: {{ .Values.sideCar.resources.requests.memory }}
+            cpu: {{ .Values.sideCar.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.sideCar.resources.limits.memory }}
+            cpu: {{ .Values.sideCar.resources.limits.cpu }}
+        {{- end }}
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+
+            mkdir -p "${MC_CONFIG_DIR}" "${TMPDIR}"
+
+            PID_DIR="/opt/netreveal/standaloneHome/pvc-mounts/tmp"
+            for pid_file in "$PID_DIR/acq_pid" "$PID_DIR/amlopt_pid" "$PID_DIR/acq-feedback-mover-pid"; do
+              if [ -f "$pid_file" ]; then
+                echo "Removing stale PID file: $pid_file"
+                rm -f "$pid_file"
+              fi
+            done
+
+            until mc --quiet alias set minio "${MINIO_URL}" "${MINIO_USER}" "${MINIO_PASSWORD}" > /dev/null 2>&1
+            do
+              echo "Trying to connect to ${MINIO_URL} server..."
+              sleep 10
+            done
+            echo "MinIO alias 'minio' created successfully"
+
+            exec /opt/netreveal/standaloneHome/sidecar-scripts/sidecar-scheduler.sh
+        env:
+        - name: MINIO_URL
+          value: "{{ include "minio.url" . }}"
+        - name: MC_CONFIG_DIR
+          value: "/opt/netreveal/standaloneHome/s3-temp/mc"
+        - name: TMPDIR
+          value: "/opt/netreveal/standaloneHome/s3-temp/tmp"
+        - name: ACQ_FEEDBACK_FILES_MOVE_CRON
+          value: "{{ .Values.sideCar.acqFeedbackFilesMoveCron }}"
+        - name: ACQ_ENVELOPE_EXTRACTOR_CRON
+          value: "{{ .Values.sideCar.acqEnvelopeExtractorCron }}"
+        {{- if .Values.global.nrSolutionsSwitches.aml.amlOpt.enabled }}
+        - name: AMLOPT_ENVELOPE_EXTRACTOR_CRON
+          value: "{{ .Values.sideCar.amloptEnvelopeExtractorCron }}"
+        {{- end }}
+        {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+        - name: WLM_MOVER_CRON
+          value: "{{ .Values.sideCar.wlmMoverCron }}"
+        - name: WLM_ARCHIVE_CLEANER_CRON
+          value: "{{ .Values.sideCar.wlmArchiveCleanerCron }}"
+        {{- end }}
+        envFrom:
+          - secretRef:
+              name: "{{ include "secret.s3.private.bucket.name" . }}"
+        {{- if .Values.sideCar.readinessProbe }}
+        readinessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - -c
+              - mc ls minio/ >/dev/null 2>&1
+          {{- toYaml .Values.sideCar.readinessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.sideCar.livenessProbe }}
+        livenessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - -c
+              - pgrep -f 'sidecar-scheduler.sh' >/dev/null 2>&1
+          {{- toYaml .Values.sideCar.livenessProbe | nindent 10 }}
+        {{- end }}
+        volumeMounts:
+        - name: "{{ include "config.map.standalone.sidecar.scripts.name" . }}"
+          mountPath: /opt/netreveal/standaloneHome/sidecar-scripts
+        - name: {{ include "generate.name.with.release.name" (list $ . "standalone-data") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/pvc-mounts/data
+        {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+        - name: {{ include "generate.name.with.release.name" (list $ . "standalone-conf-wlm") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/pvc-mounts/wlm
+        {{- end }}
+        {{- if .Values.global.nrSolutionsSwitches.aml.amlOpt.enabled }}
+        - name: {{ $.Release.Name }}-amlopt-smbd-data-pvc
+          mountPath: /opt/netreveal/standaloneHome/pvc-mounts/amlopt/data
+          subPath: data
+          {{- if .Values.global.nrOrgUnits }}
+            {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+              {{- range $key, $value := .Values.global.nrOrgUnits }}
+        - name: {{ $.Release.Name }}-amlopt-smbd-data-pvc
+          mountPath: /opt/netreveal/standaloneHome/pvc-mounts/amlopt{{ $value.orgUnitCode }}/data
+          subPath: data{{ $value.orgUnitCode }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+        - name: {{ include "generate.name.with.release.name" (list $ . "standalone-data") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/pvc-mounts/tmp
+          subPath: tmp
+        - name: {{ .Release.Namespace }}-s3-temp
+          mountPath: /opt/netreveal/standaloneHome/s3-temp
+      - name: standalone
+        image: "{{- include "standalone.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        {{- if eq .Values.global.useResourceConstraints "true" }}
+        resources:
+          requests:
+            memory: {{ .Values.pod.resources.requests.memory }}
+            cpu: {{ .Values.pod.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.pod.resources.limits.memory }}
+            cpu: {{ .Values.pod.resources.limits.cpu }}
+        {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            export JAVA_OPTS="${JAVA_OPTS} {{ .Values.pod.java.extraJavaOpts }} -XX:MaxRAM={{ .Values.pod.java.standaloneMaxRam }} "
+            export JAVA_OPTS="${JAVA_OPTS} -Djava.io.tmpdir=/opt/netreveal/standaloneHome/java/tmp"
+            set -x
+            export JAVA_OPTS="${JAVA_OPTS} -Djavax.net.ssl.trustStore=/opt/netreveal/standaloneHome/server.jks -Djavax.net.ssl.trustStorePassword=${KEYSTORE_PASS} "
+            set +x
+            export JAVA_OPTS="${JAVA_OPTS} "
+            {{- if eq .Values.pod.java.switchOnDebug true }}
+            export JAVA_OPTS="${JAVA_OPTS} -Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=0.0.0.0:8788 "
+            {{- end }}
+            /opt/netreveal/standaloneHome/standalone-start.sh
+        env:
+        - name: KEYSTORE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-jks-password
+              key: password
+        - name: SCHEDULE_RUNNER_HEAP_MAX
+          value: {{ .Values.pod.java.scheduleRunnerHeapMax }}
+        - name: SCHEDULE_RUNNER_HEAP_MIN
+          value: {{ .Values.pod.java.scheduleRunnerHeapMin }}
+        - name: IMPORT_EXPORT_HEAP_MAX
+          value: {{ .Values.pod.java.importExportHeapMax }}
+        - name: IMPORT_EXPORT_HEAP_MIN
+          value: {{ .Values.pod.java.importExportHeapMin }}
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        {{- if eq .Values.pod.java.switchOnDebug true }}
+        ports:
+        - containerPort:  8788
+        {{- end }}
+        volumeMounts:
+        {{ include "postgres.server.secret-mount" . | nindent 8 }}
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standalone }}
+        - name: {{ .Release.Name }}-standalone-conf-override
+          mountPath: /opt/netreveal/standaloneHome/conf
+        - name: {{ .Release.Name }}-standalone-lib-override
+          mountPath: /opt/netreveal/standaloneHome/lib
+        {{- end }}
+        - name: {{ include "generate.name.with.release.name" (list $ . "standalone-logs") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/logs
+        - name: {{ include "generate.name.with.release.name" (list $ . "standalone-data") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/data
+        - name: {{ .Release.Name }}-standalone-java-tmp
+          mountPath: /opt/netreveal/standaloneHome/java
+        - name: {{ .Release.Name }}-standalone-conf-temp
+          mountPath: /opt/netreveal/standaloneHome/conf/temp
+        - name: {{ include "generate.name.with.release.name" (list $ . "standalone-conf-wlm") | quote }}
+          mountPath: /opt/netreveal/standaloneHome/conf/wlm
+        - name: {{ .Release.Name }}-standalone-merged-config
+          mountPath: /opt/netreveal/standaloneHome/conf/base_config.properties
+          subPath: base_config.properties
+        {{- include "std.log4j2.volume.mount" . | indent 8 }}
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+        - name: {{ .Release.Name }}-standalone-merged-keystore
+          mountPath: /opt/netreveal/standaloneHome/server.jks
+          subPath: server.jks
+          readOnly: true
+        - name: "{{ include "config.map.standalone.scheduler.config.name" . }}"
+          mountPath: /opt/netreveal/standaloneHome/conf/acquisition/Compliance-ACQ/scheduleconfig_compliance_standalone.xml
+          subPath: scheduleconfig_compliance_standalone.xml
+        {{- if ne $.Values.global.baseConfigProperties.kafka.securityProtocol "PLAINTEXT" }}
+        - name: {{ .Release.Name }}-kafka-standalone-jks-volume
+          mountPath: /opt/netreveal/standaloneHome/conf/keys/kafka.keystore.jks
+          subPath: kafka.keystore.jks
+          readOnly: true
+        - name: {{ .Release.Name }}-kafka-standalone-jks-volume
+          mountPath: /opt/netreveal/standaloneHome/conf/keys/kafka.truststore.jks
+          subPath: kafka.truststore.jks
+          readOnly: true
+          {{- if .Values.global.kafka.externalKafkaCertificates }}
+            {{- if gt (len .Values.global.kafka.externalKafkaCertificates) 0 }}
+              {{- range $key, $value := .Values.global.kafka.externalKafkaCertificates }}
+        - name: {{ $.Release.Name }}-kafka-standalone-jks-volume
+          mountPath: /opt/netreveal/standaloneHome/conf/keys/{{ $key }}.kafka.truststore.jks
+          subPath: {{ $key }}.kafka.truststore.jks
+          readOnly: true
+        - name: {{ $.Release.Name }}-kafka-standalone-jks-volume
+          mountPath: /opt/netreveal/standaloneHome/conf/keys/{{ $key }}.kafka.keystore.jks
+          subPath: {{ $key }}.kafka.keystore.jks
+          readOnly: true
+              {{- end }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+        {{- if .Values.pod.livenessProbe }}
+        livenessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - '-c'
+              - ps -ef | grep -E '[s]cheduleRunner|[s]tartScenarioEngineRunner' && exit 0 || exit 1
+          {{- toYaml .Values.pod.livenessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.readinessProbe }}
+        readinessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - '-c'
+              - ps -ef | grep -E '[s]cheduleRunner|[s]tartScenarioEngineRunner' && exit 0 || exit 1
+          {{- toYaml .Values.pod.readinessProbe | nindent 10 }}
+        {{- end }}
+      volumes:
+        {{ include "postgres.server.secret-volume" . | nindent 8 }}
+        {{ include "secret-volumes.kafka.jks" (merge (dict "solution" $solution ) . ) | nindent 8 }}
+        {{ include "secret-volumes.external.certificates" . | nindent 8 }}
+        {{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+        - name: {{ .Release.Name }}-spark-operator-serviceaccount
+          secret:
+            secretName: spark-operator-manipulator-token
+            items:
+            - key: token
+              path: token
+            - key: ca.crt
+              path: ca.crt
+            - key: namespace
+              path: namespace
+        {{- end }}
+        - name: {{ .Release.Namespace }}-s3-temp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-merged-config
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-merged-keystore
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-java-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-conf-temp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-temp-reports
+          emptyDir: {}
+        - name: "{{ include "config.map.standalone.sidecar.scripts.name" . }}"
+          configMap:
+            name: "{{ include "config.map.standalone.sidecar.scripts.name" . }}"
+            defaultMode: 488
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standalone }}
+        - name: {{ .Release.Name }}-standalone-conf-override
+          emptyDir: {}
+        - name: {{ .Release.Name }}-standalone-lib-override
+          emptyDir: {}
+        {{- end }}
+        - name: {{ .Release.Name }}-wlm-indexes
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+        {{- if .Values.global.nrSolutionsSwitches.aml.amlOpt.enabled }}
+        - name: {{ .Release.Name }}-amlopt-smbd-data-pvc
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "amlopt-smbd-data-pvc") | quote }}
+        {{- end }}
+        - name: {{ .Release.Name }}-standalone-base-config-properties
+          configMap:
+            name: "{{ include "standalone.config.map.name" . }}"
+            items:
+            - key: base_config.properties
+              path: base_config.properties
+        {{- include "std.log4j2.volume" . | indent 8 }}
+        {{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+        - name: {{ .Release.Name }}-smbd-standalone-config
+          configMap:
+            name: {{ .Release.Name }}-smbd-standalone-config
+            items:
+            - key: smbd_standalone_config.properties
+              path: smbd_standalone_config.properties
+        {{- end }}
+        {{- if .Values.global.nrSolutionsSwitches.aml.enableAmlAlertGeneration.enabled }}
+        - name: {{ .Release.Name }}-aap-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-aap
+            items:
+            - key: keystore.p12
+              path: aap.jks
+        {{- end }}
+        - name: {{ .Release.Name }}-opensearch-server-jks
+          secret:
+            secretName: cert-opensearch
+            items:
+            - key: keystore.p12
+              path: opensearch.jks
+        - name: {{ .Release.Name }}-nr-ui-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-nr-ui
+            items:
+            - key: keystore.p12
+              path: nr-ui.jks
+        {{- if .Values.global.nrSubChartSwitches.enableWlm }}
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-wlm-pn-rt
+            items:
+            - key: keystore.p12
+              path: wlm-pn-rt.jks
+        {{- if .Values.global.nrSolutionsSwitches.wlm.sensaAiSanctions.enabled }}
+        - name: {{ .Release.Name }}-sensaai-sanctions-cert
+          secret:
+            secretName: {{ .Release.Name }}-sensaai-sanctions-cert
+            items:
+            - key: tls.crt
+              path: sensaai.crt
+            - key: tls.key
+              path: sensaai.key
+        {{- end }}
+        {{- end }}
+        - name: "{{ include "config.map.standalone.scheduler.config.name" . }}"
+          configMap:
+            name: "{{ include "config.map.standalone.scheduler.config.name" . }}"
+            items:
+            - key: scheduleconfig_compliance_standalone.xml
+              path: scheduleconfig_compliance_standalone.xml
+      restartPolicy: Always
+  volumeClaimTemplates:
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "standalone-logs") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "standalone.pvcApplicationLogsStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "standalone-conf-wlm") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "standalone.pvcConfWlmStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "standalone-data") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "standalone.pvcDataStorage" . }}

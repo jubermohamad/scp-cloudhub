@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aw.prefix" . }}-platform-config
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+data:
+  environment: {{ .Values.global.environment | quote }}
+  assembly-edition: {{ .Values.platform.edition | quote }}
+  vite-assembly-edition: {{ .Values.platform.edition | quote }}
+  auth-mode: {{ .Values.platform.authMode | quote }}
+  redis-url: {{ include "aw.redisUrl" . | quote }}
+  keycloak-url: {{ .Values.externalInfra.keycloak.publicUrl | quote }}
+  keycloak-realm: {{ .Values.externalInfra.keycloak.realm | quote }}
+  api-url: {{ .Values.platform.apiUrl | quote }}
+  vite-feature-sandbox: {{ .Values.platform.features.sandbox | toString | quote }}
+  vite-feature-workbench: {{ .Values.platform.features.workbench | toString | quote }}
+  vite-feature-workbench-assistant: {{ .Values.platform.features.workbenchAssistant | toString | quote }}
+  vite-feature-workflow-deployments: {{ .Values.platform.features.workflowDeployments | toString | quote }}
+  disabled-workflow-node-types: {{ .Values.platform.disabledWorkflowNodeTypes | quote }}

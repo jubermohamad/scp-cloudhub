@@ -1,0 +1,6 @@
+apiVersion: v2
+name: keycloak
+description: A Helm chart for deploying Keycloak as a standalone identity provider
+type: application
+version: 0.1.1
+appVersion: "26.2.0"

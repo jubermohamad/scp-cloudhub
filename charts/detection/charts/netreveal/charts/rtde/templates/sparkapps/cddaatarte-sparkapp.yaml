@@ -1,0 +1,216 @@
+{{ if has "cddaatarte" .Values.global.nrSparkSolutionSwitches.rtde }}
+{{- $releaseName := .Release.Name -}}
+{{- $solution := "cddaatarte" -}}
+{{- $rootContext := . -}}
+---
+apiVersion: "sparkoperator.k8s.io/v1beta2"
+kind: SparkApplication
+metadata:
+  name: "{{ include "rtde.fullname" . }}-{{ $solution }}"
+  namespace: {{ .Values.global.namespace }}
+  annotations:
+    checksum/config: {{ include (print $.Template.BasePath "/configmap-main.yaml") . | sha256sum }}
+    checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+  labels:
+    {{- include "rtde.labels" . | nindent 4 }}
+spec:
+  timeToLiveSeconds: {{ .Values.timeToLiveSeconds }}
+  {{- if eq .Values.global.useImagePullSecrets "true" }}
+  imagePullSecrets:
+    - regcred
+  {{- end }}
+  sparkConf:
+  {{- range $key, $value := .Values.sparkConf }}
+    {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  type: Scala
+  mode: cluster
+  {{- if eq .Values.useNodeSelector "true" }}
+  nodeSelector:
+  {{- toYaml .Values.nodeSelector | nindent 4 }}
+  {{- end }}
+  image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+  imagePullPolicy: {{ .Values.imagePullPolicy }}
+  mainClass: {{ .Values.mainClass }}
+  mainApplicationFile: {{ .Values.mainApplicationFile }}
+  {{- if .Values.arguments }}
+  arguments: {{- $args := splitList ";" .Values.arguments -}}
+    {{- range $args }}
+    - "{{ . }}"
+    {{- end }}
+  {{- end }}
+  sparkVersion: {{ .Values.sparkVersion  }}
+  restartPolicy:
+    type: {{ .Values.restartPolicy.type  }}
+    {{if eq .Values.restartPolicy.type "OnFailure" }}
+{{ .Values.restartPolicy.retries | toYaml | indent 4 }}
+    {{ end }}
+  volumes:
+{{ include "postgres.server.secret-volume" . | nindent 4 }}
+{{ include "rtde.config-volumes" (merge (dict "solution" $solution ) . ) | nindent 4 }}
+{{ include "secret-volumes.kafka.jks" (merge (dict "solution" $solution ) . ) | nindent 4 }}
+{{- if or (eq .Values.app_env "qa") (eq .Values.app_env "dev") }}
+{{ include "rtde.qa-volumes" (merge (dict "solution" $solution ) . ) | nindent 4 }}
+{{- end }}
+    {{- range .Values.volumes }}
+    - name: {{ printf "%s-%s-%s" $.Release.Name $solution .name  | quote }}
+      persistentVolumeClaim:
+        {{- $claimName := .persistentVolumeClaim.claimName }}
+        {{- with $rootContext }}
+        claimName: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s" $solution $claimName)) | quote }}
+        {{- end }}
+    {{- end }}
+{{- if .Values.extraVolumes }}
+{{ .Values.extraVolumes | toYaml | indent 4 }}
+{{- end }}
+
+{{- if .Values.monitoring }}
+  monitoring:
+{{ .Values.monitoring | toYaml | indent 4}}
+{{- end }}
+  driver:
+    cores:  {{ index .Values.solutionsParameters $solution "driver" "cores" }}
+    coreLimit: {{ index .Values.solutionsParameters $solution "driver" "coreLimit" }}
+    memory: {{ index .Values.solutionsParameters $solution "driver" "memory" }}
+    javaOptions: {{ .Values.driver.javaOptions }}
+    annotations:
+      checksum/config: {{ include (print $.Template.BasePath "/configmap-main.yaml") . | sha256sum }}
+      checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    labels:
+      version: {{ .Values.sparkVersion  }}
+      solution : {{ $solution }}
+      app.kubernetes.io/release.name: {{ .Release.Name }}
+    {{- if .Values.labels }}
+    {{- toYaml .Values.labels | nindent 6 }}
+    {{- end }}
+    serviceAccount: {{ .Values.serviceAccount }}
+    volumeMounts:
+    {{ include "postgres.server.secret-mount" . | nindent 6 }}
+    {{ include "rtde.secret-mount.kafka.jks" (merge (dict "solution" $solution ) . ) | nindent 4 }}
+    {{ include "rtde.cm-mount" (merge (dict "solution" $solution ) . ) | nindent 4 }}
+    {{ include "rtde.secret-mount" (merge (dict "solution" $solution ) . ) | nindent 4 }}
+    {{- if or (eq .Values.app_env "qa") (eq .Values.app_env "dev") }}
+    {{ include "rtde.aml-cm-mount" (merge (dict "solution" $solution ) . ) | nindent 4 }}
+    {{ include "rtde.aml2-cm-mount" (merge (dict "solution" $solution) . ) | nindent 4 }}
+    {{ include "rtde.model-cm-mount" (merge (dict "solution" $solution ) . ) | nindent 4 }}
+    {{- end }}
+      {{- range .Values.volumemounts }}
+      - name: {{ printf "%s-%s-%s" $releaseName $solution .name | quote }}
+        mountPath: {{ .mountPath | quote }}
+      {{- if .subPath }}
+        subPath: {{ .subPath | quote }}
+      {{- end }}
+      {{- end }}
+    initContainers:
+    {{- include "init-container.kafka.jks" (merge (dict "solution" $solution ) . ) | nindent 4 }}
+    - name: folder-init
+      {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.rtde }}
+      image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+      {{- else }}
+      image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+      {{- end }}
+      imagePullPolicy: {{ .Values.imagePullPolicy }}
+      command:
+        - /bin/bash
+        - -exec
+        - |
+          cp -r /opt/tmpConf/. /opt/rtde/conf/;
+          {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.rtde }}
+          if [ -f /opt/override/override_version.properties ]; then cp /opt/override/override_version.properties /opt/rtde/conf; fi
+          if [ -d  /opt/override/conf/rtde/{{ $solution }} ]; then cp -r /opt/override/conf/rtde/{{ $solution }}/. /opt/rtde/conf/; fi
+          {{- end }}
+          chown -R 200:200 /opt/rtde/;
+      env:
+        - name: CONF_HASH
+          value: {{ include (print $.Template.BasePath "/configmap-main.yaml") . | sha256sum }}
+        - name: SECRET_HASH
+          value: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      securityContext:
+        {{- if .Values.global.useRootAccountForInit }}
+        runAsUser: 0
+        {{- end }}
+        allowPrivilegeEscalation: false
+        {{- if not .Values.global.useRootAccountForInit }}
+        runAsNonRoot: true
+        {{- end }}
+      volumeMounts:
+        {{ include "rtde.secret-mount.kafka.jks" (merge (dict "solution" $solution ) . ) | nindent 6 }}
+        {{ include "rtde.cm-mount" (merge (dict "solution" $solution ) . ) | nindent 6 }}
+        {{ include "rtde.secret-mount" (merge (dict "solution" $solution ) . ) | nindent 6 }}
+        {{- if or (eq .Values.app_env "qa") (eq .Values.app_env "dev") }}
+        {{ include "rtde.aml-cm-mount" (merge (dict "solution" $solution ) . ) | nindent 6 }}
+        {{ include "rtde.aml2-cm-mount" (merge (dict "solution" $solution) . ) | nindent 6 }}
+        {{ include "rtde.model-cm-mount" (merge (dict "solution" $solution ) . ) | nindent 6 }}
+        {{- end }}
+        {{- range .Values.volumemounts }}
+        - name: {{ printf "%s-%s-%s" $releaseName $solution .name | quote }}
+          mountPath: {{ .mountPath | quote }}
+        {{- if .subPath }}
+          subPath: {{ .subPath | quote }}
+        {{- end }}
+        {{- end }}
+{{- if .Values.extraVolumemounts }}
+{{ .Values.extraVolumemounts | toYaml | indent 6 }}
+{{- end }}
+    - name: wait-for-kafka-postgresql-nr-ui
+      image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+      imagePullPolicy: {{ .Values.imagePullPolicy }}
+      securityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+      command:
+        - /bin/bash
+        - -exec
+        - |
+          /wait-for-it/wait-for-it.sh {{ include "kafka.bootstrap.servers.service.name" . }} --timeout=500 && \
+          /wait-for-it/wait-for-it.sh {{ include "db.url" . }} --timeout=500  && \
+          /wait-for-it/wait-for-it.sh {{ .Release.Name }}-nr-ui.{{ .Values.global.namespace }}.svc.cluster.local:8443 --timeout=1200
+  executor:
+    cores:  {{ index .Values.solutionsParameters $solution "executor" "cores" }}
+    memory: {{ index .Values.solutionsParameters $solution "executor" "memory" }}
+    instances: {{ index .Values.solutionsParameters $solution "executor" "instances" }}
+    javaOptions: {{ .Values.executor.javaOptions }}
+    labels:
+      version: {{ .Values.sparkVersion  }}
+      solution : {{ $solution }}
+      app.kubernetes.io/release.name: {{ .Release.Name }}
+    {{- if .Values.labels }}
+    {{- toYaml .Values.labels | nindent 6 }}
+    {{- end }}
+    volumeMounts:
+      {{ include "postgres.server.secret-mount" . | nindent 6 }}
+      {{- range .Values.volumemounts }}
+      - name: {{ printf "%s-%s-%s" $releaseName $solution .name | quote }}
+        mountPath: {{ .mountPath | quote }}
+      {{- if .subPath }}
+        subPath: {{ .subPath | quote }}
+      {{- end }}
+      {{- end }}
+{{- if .Values.extraVolumemounts }}
+{{ .Values.extraVolumemounts | toYaml | indent 6 }}
+{{- end }}
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: solution
+                    operator: In
+                    values:
+                      - cddaatarte
+                  - key: app.kubernetes.io/release.name
+                    operator: In
+                    values:
+                      - {{ .Release.Name }}
+                  - key: app
+                    operator: In
+                    values:
+                      - rtde
+                  - key: spark-app-name
+                    operator: In
+                    values:
+                      - smrt
+              topologyKey: topology.kubernetes.io/zone
+{{ end }}

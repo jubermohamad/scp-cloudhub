@@ -1,0 +1,100 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+# Core API Configuration
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/dethub-core-api
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+# Frontend build configuration
+# NOTE: The frontend is built separately in dethub-core-web image and then
+# included in the core-api image during build time.
+frontend:
+  supersetUrl: ""  # Configure Superset URL for frontend
+  defaultIdleTimeout: "" # Configure Idle Timeout
+  enableSSORedirect: "" # Enabled SSO Redirect
+
+investigationsIntegration:
+    enabled: false
+
+# Keycloak configuration
+# baseUrl is the browser-facing/public route (maps to keycloak.base-url)
+# internalBaseUrl is used by backend startup metadata fetches
+keycloak:
+  baseUrl: ""
+  internalBaseUrl: ""
+  # Provide a Keycloak realm JSON here to create a ConfigMap for sidecar --import-realm.
+  # Leave empty to skip ConfigMap creation.
+  realm:
+    existingConfigMapName: ""
+    json: ""
+
+# Deployment configuration
+replicaCount: 1
+command: []
+args: []
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "200m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+# Service configuration
+service:
+  type: ClusterIP  # Internal service, external access via Ingress
+  port: 8080
+  extraPorts: []
+
+# Database configuration will use global settings
+# Override specific settings if needed
+database: {}
+
+# Extra init containers (e.g. wait-for-keycloak before app starts)
+extraInitContainers: []
+
+# Extra sidecar containers (e.g. Keycloak for SAML metadata endpoint)
+extraContainers: []
+
+# Extra volumes/mounts for the main container (e.g. SAML secrets)
+extraVolumes: []
+extraVolumeMounts: []
+
+# Extra container env entries (list of name/value or valueFrom maps), e.g. SAML paths when mounting a secret
+extraEnvRaw: []
+
+# Health probe configuration
+# Note: DetectionHub Core API is a traditional WAR deployed on Tomcat
+# All HTTP endpoints require authentication, so TCP probes are used
+probes:
+  startup:
+    enabled: true
+    type: tcp                           # TCP socket check (recommended)
+    # Alternative: httpPath: /smc2 (expects 401 response)
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+    successThreshold: 1
+  liveness:
+    enabled: true
+    type: tcp                           # TCP socket check (recommended)
+    # Alternative: httpPath: /smc2 (expects 401 response)
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readiness:
+    enabled: true
+    type: tcp                           # TCP socket check (recommended)
+    # Alternative: httpPath: /smc2 (expects 401 response)
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1

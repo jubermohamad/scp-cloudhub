@@ -1,0 +1,14 @@
+apiVersion: v2
+name: datadog
+description: >-
+  CloudHub-vendored Datadog observability stack. Wraps the upstream
+  datadog/datadog chart (agents + cluster agent) so CloudHub Native
+  deployments have no dependency on the SymphonyFS/scripts repository.
+type: application
+version: 1.0.0
+appVersion: "7"
+dependencies:
+  - name: datadog
+    version: "3.110.5"
+    repository: https://helm.datadoghq.com
+    condition: datadog.enabled

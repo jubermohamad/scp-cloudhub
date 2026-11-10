@@ -1,0 +1,2 @@
+datasource:
+  url: jdbc:postgresql://myazurepostgres.postgres.database.azure.com:5432/cloudhub

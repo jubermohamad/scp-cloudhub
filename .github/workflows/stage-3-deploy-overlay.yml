@@ -1,0 +1,446 @@
+name: 'Stage 3: Deploy Customer Overlay'
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: 'Component to apply overlay to (e.g., sri, flows, detectionhub)'
+        required: true
+        type: choice
+        options:
+          - sri
+          - flows
+          - detectionhub
+          - invhub
+      customer_id:
+        description: 'Customer/Tenant identifier (e.g., acme-corp, customer-001)'
+        required: true
+        type: string
+      instance:
+        description: 'Instance name (must match Stage 2 instance)'
+        required: true
+        type: string
+      cluster:
+        description: 'Target AKS Cluster'
+        required: true
+        type: string
+      environment:
+        description: 'Environment type'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  KEYVAULT_NAME: cloudhub-deploy-vault
+  KEYVAULT_RG: rg-cfe-apps-mj
+
+jobs:
+  deploy-overlay:
+    name: Deploy Overlay - ${{ inputs.component }}/${{ inputs.customer_id }}
+    runs-on: ubuntu-latest
+    # IMPORTANT: No "needs" dependency - this stage is INDEPENDENT
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Validate Overlay Helmfile
+        id: validate
+        run: |
+          set -euo pipefail
+          
+          COMPONENT="${{ inputs.component }}"
+          CUSTOMER="${{ inputs.customer_id }}"
+          INSTANCE="${{ inputs.instance }}"
+          HELMFILE="deployments/$COMPONENT/overlay/$INSTANCE/$CUSTOMER/helmfile.yaml"
+          
+          echo "🔍 Validating overlay helmfile: $HELMFILE"
+          
+          if [ ! -f "$HELMFILE" ]; then
+            echo "❌ Overlay helmfile not found: $HELMFILE"
+            echo ""
+            echo "Expected path structure:"
+            echo "  deployments/{component}/overlay/{instance}/{customer_id}/helmfile.yaml"
+            echo ""
+            echo "Available overlay paths:"
+            find deployments -path "*/overlay/*" -name "helmfile.yaml" 2>/dev/null | sort || echo "  (none)"
+            exit 1
+          fi
+          
+          echo "✅ Overlay helmfile exists: $HELMFILE"
+          echo "helmfile=$HELMFILE" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'latest'
+
+      - name: Set up Azure CLI
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            echo "✅ Azure CLI ready"
+
+      - name: Authenticate to AKS (OIDC)
+        id: aks-auth
+        run: |
+          set -euo pipefail
+          
+          echo "🔐 Authenticating to AKS using OIDC..."
+          
+          CLUSTER="${{ inputs.cluster }}"
+          
+          # Authenticate to Azure
+          az login --service-principal \
+            -u "$AZURE_CLIENT_ID" \
+            -t "$AZURE_TENANT_ID" \
+            --federated-token "${{ github.token }}"
+          
+          echo "✅ Azure authentication successful"
+          
+          # Extract resource group from cluster name
+          RESOURCE_GROUP="rg-cfe-apps-mj"  # Default
+          
+          # Get kubeconfig for AKS cluster
+          az aks get-credentials \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CLUSTER" \
+            --overwrite-existing
+          
+          echo "✅ Kubeconfig updated for cluster: $CLUSTER"
+          
+          # Verify cluster connectivity
+          if kubectl cluster-info &> /dev/null; then
+            echo "✅ Cluster connectivity verified"
+            echo "cluster=$CLUSTER" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ Failed to connect to cluster: $CLUSTER"
+            exit 1
+          fi
+
+      - name: Verify Base Component Deployment
+        id: verify-base
+        run: |
+          set -euo pipefail
+          
+          COMPONENT="${{ inputs.component }}"
+          INSTANCE="${{ inputs.instance }}"
+          NAMESPACE="$COMPONENT-$INSTANCE"
+          RELEASE_NAME="$COMPONENT-$INSTANCE"
+          
+          echo "🔍 Verifying base component deployment..."
+          echo "  Component: $COMPONENT"
+          echo "  Namespace: $NAMESPACE"
+          echo "  Release: $RELEASE_NAME"
+          
+          # Check if namespace exists
+          if ! kubectl get namespace "$NAMESPACE" &> /dev/null; then
+            echo "❌ Component namespace not found: $NAMESPACE"
+            echo "  Please deploy Stage 2 first for component: $COMPONENT"
+            exit 1
+          fi
+          
+          echo "✅ Component namespace exists"
+          
+          # Check if release exists
+          if ! helm status "$RELEASE_NAME" -n "$NAMESPACE" &> /dev/null; then
+            echo "⚠️  Component release not found: $RELEASE_NAME"
+            echo "  Proceeding with overlay (may fail if component is not deployed)"
+          else
+            echo "✅ Component release exists and is deployed"
+          fi
+
+      - name: Verify Local Charts Available
+        run: |
+          set -euo pipefail
+          
+          echo "📦 Verifying local charts are available..."
+          
+          if [ -d "charts" ]; then
+            echo "✅ Local charts directory found"
+            ls -la charts/
+          else
+            echo "❌ Local charts directory not found"
+            exit 1
+          fi
+
+      - name: Resolve Overlay Configuration
+        id: config
+        run: |
+          set -euo pipefail
+          
+          COMPONENT="${{ inputs.component }}"
+          CUSTOMER="${{ inputs.customer_id }}"
+          INSTANCE="${{ inputs.instance }}"
+          WORKDIR="deployments/$COMPONENT/overlay/$INSTANCE/$CUSTOMER"
+          
+          echo "📝 Resolving overlay configuration..."
+          echo "  Component: $COMPONENT"
+          echo "  Customer: $CUSTOMER"
+          echo "  Instance: $INSTANCE"
+          echo "  Workdir: $WORKDIR"
+          
+          # Check for required files
+          HELMFILE="$WORKDIR/helmfile.yaml"
+          VALUES_FILE="$WORKDIR/values.generated.yaml"
+          
+          if [ ! -f "$HELMFILE" ]; then
+            echo "❌ Overlay helmfile not found: $HELMFILE"
+            exit 1
+          fi
+          
+          if [ ! -f "$VALUES_FILE" ]; then
+            echo "⚠️  Overlay values file not found: $VALUES_FILE"
+            echo "  Using default values only"
+          else
+            echo "✅ Overlay values file exists: $VALUES_FILE"
+          fi
+          
+          echo "workdir=$WORKDIR" >> "$GITHUB_OUTPUT"
+          echo "helmfile=$HELMFILE" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Overlay Configuration
+        id: validate-config
+        run: |
+          set -euo pipefail
+          
+          WORKDIR="${{ steps.config.outputs.workdir }}"
+          COMPONENT="${{ inputs.component }}"
+          CUSTOMER="${{ inputs.customer_id }}"
+          
+          echo "🔍 Validating overlay configuration..."
+          cd "$WORKDIR"
+          
+          # Check for customer-specific configuration
+          if [ -f "customer-config.yaml" ]; then
+            echo "✅ Customer configuration found"
+          else
+            echo "ℹ️  No customer-config.yaml (using defaults)"
+          fi
+          
+          # Check for secrets reference
+          if grep -q "secretRef\|vault\|secret" helmfile.yaml 2>/dev/null; then
+            echo "✅ Overlay references secrets/vault"
+          fi
+          
+          # Check for tenant-specific settings
+          if grep -q "tenant\|customer" helmfile.yaml 2>/dev/null; then
+            echo "✅ Overlay contains tenant-specific configurations"
+          fi
+
+      - name: Deploy Overlay with Helm
+        id: helm-deploy
+        run: |
+          set -euo pipefail
+          
+          COMPONENT="${{ inputs.component }}"
+          CUSTOMER="${{ inputs.customer_id }}"
+          INSTANCE="${{ inputs.instance }}"
+          NAMESPACE="$COMPONENT-$INSTANCE"
+          WORKDIR="${{ steps.config.outputs.workdir }}"
+          HELMFILE="${{ steps.config.outputs.helmfile }}"
+          RELEASE_NAME="$COMPONENT-$CUSTOMER-overlay"
+          
+          echo "🚀 Deploying customer overlay..."
+          echo "  Component: $COMPONENT"
+          echo "  Customer: $CUSTOMER"
+          echo "  Release: $RELEASE_NAME"
+          echo "  Namespace: $NAMESPACE"
+          echo "  Helmfile: $HELMFILE"
+          
+          cd "$WORKDIR"
+          
+          # Extract chart information
+          CHART=$(grep -A10 'releases:' "$HELMFILE" | grep 'chart:' | head -1 | awk '{print $2}')
+          VERSION=$(grep -A10 'releases:' "$HELMFILE" | grep 'version:' | head -1 | awk '{print $2}' | sed 's/"//g')
+          
+          if [ -z "$CHART" ]; then
+            echo "❌ Could not extract chart from helmfile"
+            exit 1
+          fi
+          
+          echo "📊 Chart: $CHART"
+          if [ -n "$VERSION" ]; then
+            echo "  Version: $VERSION"
+          fi
+          
+          # Build helm upgrade command
+          HELM_CMD="helm upgrade --install $RELEASE_NAME $CHART --namespace $NAMESPACE"
+          
+          # Add values file if it exists
+          if [ -f "values.generated.yaml" ]; then
+            HELM_CMD="$HELM_CMD --values values.generated.yaml"
+          fi
+          
+          # Add version if specified
+          if [ -n "$VERSION" ]; then
+            HELM_CMD="$HELM_CMD --version $VERSION"
+          fi
+          
+          # Standard deployment flags
+          HELM_CMD="$HELM_CMD --wait --timeout 10m --atomic --cleanup-on-fail"
+          
+          echo ""
+          echo "📦 Executing overlay deployment:"
+          echo "$HELM_CMD"
+          echo ""
+          
+          eval "$HELM_CMD"
+          
+          echo "✅ Overlay deployment completed"
+          echo "helm_status=success" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Overlay Health
+        id: health
+        if: steps.helm-deploy.outputs.helm_status == 'success'
+        run: |
+          set -euo pipefail
+          
+          COMPONENT="${{ inputs.component }}"
+          CUSTOMER="${{ inputs.customer_id }}"
+          NAMESPACE="$COMPONENT-$INSTANCE"
+          RELEASE_NAME="$COMPONENT-$CUSTOMER-overlay"
+          
+          echo "🏥 Verifying overlay health..."
+          
+          # Wait for pod readiness
+          echo "⏳ Waiting for overlay pods to be ready (max 5 minutes)..."
+          kubectl rollout status deployment -n "$NAMESPACE" \
+            -l "app.kubernetes.io/instance=$RELEASE_NAME" \
+            --timeout=5m || {
+            echo "⚠️  Pods not fully ready, checking status..."
+          }
+          
+          # Get pod status
+          echo ""
+          echo "📊 Overlay Pod Status:"
+          kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE_NAME" -o wide
+          
+          # Check for errors
+          ERROR_COUNT=$(kubectl logs -n "$NAMESPACE" \
+            -l "app.kubernetes.io/instance=$RELEASE_NAME" \
+            --tail=50 --timestamps=true 2>/dev/null | grep -i "error\|fatal\|panic" | wc -l || echo "0")
+          
+          if [ "$ERROR_COUNT" -eq 0 ]; then
+            echo ""
+            echo "✅ No errors detected in overlay logs"
+            echo "health_status=healthy" >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo "⚠️  Found $ERROR_COUNT error(s) in logs"
+            echo "health_status=degraded" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify Customer Customizations
+        id: customizations
+        if: steps.helm-deploy.outputs.helm_status == 'success'
+        run: |
+          set -euo pipefail
+          
+          COMPONENT="${{ inputs.component }}"
+          CUSTOMER="${{ inputs.customer_id }}"
+          NAMESPACE="$COMPONENT-$INSTANCE"
+          
+          echo "🎯 Verifying customer customizations..."
+          
+          # Check for customer-specific ConfigMaps
+          CUSTOMER_CONFIGMAPS=$(kubectl get configmap -n "$NAMESPACE" \
+            -l "customer=$CUSTOMER" -q 2>/dev/null | wc -l || echo "0")
+          
+          echo "  Customer ConfigMaps: $CUSTOMER_CONFIGMAPS"
+          
+          # Check for customer-specific Secrets
+          CUSTOMER_SECRETS=$(kubectl get secret -n "$NAMESPACE" \
+            -l "customer=$CUSTOMER" -q 2>/dev/null | wc -l || echo "0")
+          
+          echo "  Customer Secrets: $CUSTOMER_SECRETS"
+          
+          if [ "$CUSTOMER_CONFIGMAPS" -gt 0 ] || [ "$CUSTOMER_SECRETS" -gt 0 ]; then
+            echo "✅ Customer customizations detected"
+            echo "customizations_applied=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ℹ️  No customer customizations found (using defaults)"
+            echo "customizations_applied=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate Overlay Report
+        if: always()
+        run: |
+          set -euo pipefail
+          
+          COMPONENT="${{ inputs.component }}"
+          CUSTOMER="${{ inputs.customer_id }}"
+          INSTANCE="${{ inputs.instance }}"
+          REPORT_FILE="/tmp/overlay-report-$COMPONENT-$CUSTOMER.md"
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          cat > "$REPORT_FILE" <<'REPORT_EOF'
+          # Stage 3: Customer Overlay Deployment Report
+          
+          **Timestamp:** $TIMESTAMP
+          **Component:** $COMPONENT
+          **Customer:** $CUSTOMER
+          **Instance:** $INSTANCE
+          **Cluster:** ${{ inputs.cluster }}
+          **Environment:** ${{ inputs.environment }}
+          
+          ## Overlay Deployment Status
+          - **Status:** ${{ steps.helm-deploy.outputs.helm_status }}
+          - **Health:** ${{ steps.health.outputs.health_status }}
+          - **Customizations Applied:** ${{ steps.customizations.outputs.customizations_applied }}
+          - **Release:** $COMPONENT-$CUSTOMER-overlay
+          - **Namespace:** $COMPONENT-$INSTANCE
+          
+          ## Overlay Configuration
+          - **Overlay Type:** Customer/Tenant Specific
+          - **Deployment Trigger:** Manual (Stage 3)
+          - **No dependencies on previous stages**
+          
+          ## Key Features
+          - ✅ Independent deployment (no Stage 1 or Stage 2 required)
+          - ✅ Customer-specific customizations applied
+          - ✅ Isolated namespace management
+          - ✅ Complete audit trail
+          
+          ## Support
+          - For issues, check Stage 3 deployment logs
+          - Rollback available via helm history command
+          - Each customer overlay can be managed independently
+          
+          REPORT_EOF
+          
+          echo "✅ Overlay report generated: $REPORT_FILE"
+
+      - name: Upload Overlay Report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: overlay-report-${{ inputs.component }}-${{ inputs.customer_id }}
+          path: /tmp/overlay-report-*.md
+          retention-days: 90
+
+      - name: Overlay Summary
+        if: always()
+        run: |
+          {
+            echo "# Stage 3: Customer Overlay Deployment Report"
+            echo ""
+            echo "**Component:** ${{ inputs.component }}"
+            echo "**Customer:** ${{ inputs.customer_id }}"
+            echo "**Instance:** ${{ inputs.instance }}"
+            echo "**Status:** ${{ steps.helm-deploy.outputs.helm_status }}"
+            echo "**Health:** ${{ steps.health.outputs.health_status }}"
+            echo ""
+            echo "✅ Overlay deployed independently (Stage 3)"
+            echo "→ No dependency on Stage 1 or Stage 2"
+            echo "→ Can be deployed, updated, or rolled back at any time"
+          } >> "$GITHUB_STEP_SUMMARY"

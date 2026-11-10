@@ -1,0 +1,927 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-wlm-pn-rt-base-config-property"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-wlm-pn-rt-base-config-property"
+  annotations:
+    reloader.stakater.com/match: "true"
+data:
+  base_config.properties: |
+    server.name=ProcNodeRT
+    application.name={{ .Values.global.baseConfigProperties.applicationName }}
+    system.default.timezone=UTC
+    system.default.language={{ .Values.global.baseConfigProperties.systemDefaultLanguage }}
+    system.default.country={{ .Values.global.baseConfigProperties.systemDefaultCountry }}
+    system.encoding=UTF8
+    system.authentication=INTERNAL
+    saml.user.groupSync=true
+    mailserver={{ .Values.global.baseConfigProperties.mail.server }}
+    frommailid={{ .Values.global.baseConfigProperties.mail.fromMailId }}
+    mailpassword={{ .Values.global.baseConfigProperties.mail.password }}
+    mailuser={{ .Values.global.baseConfigProperties.mail.user }}
+    transaction.manager.name=java:jboss/TransactionManager
+    jndi.dataSource=java:/jdbc/ApplicationBaseDS
+    jdbc.driver=org.hsqldb.jdbc.JDBCDriver
+    jdbc.url=jdbc:hsqldb:file:/opt/netreveal/uiHome/hsqldb/data/mydb;shutdown=true;sql.syntax_ora=true
+    hibernate.dialect=org.hibernate.dialect.HSQLDialect
+    jdbc.userid=
+    jdbc.passwd=
+    jdbc.schema=
+    hibernate.show_sql=false
+    hibernate.cache.use_query_cache=true
+    hibernate.cache.use_second_level_cache=true
+    max.threads.batch.processing=5
+    max.threads.batch.transformation=1
+    max.threads.list.import=1
+    dbloader.home=/opt/netreveal/uiHome/conf/monitoring/dbloader
+    dbloader.data=/opt/netreveal/uiHome/data/dbloader
+    notification.email.jndi=java:jboss/mail/Default
+    notification.email.from={{ .Values.global.baseConfigProperties.mail.notificationEmailFrom }}
+    notification.email.subject=Notification
+    scenariomanager.gui.validation=false
+    scenariomanager.gui.debugger=true
+    scenariomanager.gui.debugger.maxrecords=100
+    scenariomanager.gui.background.gradient.begin.color=237,237,237
+    scenariomanager.gui.background.gradient.end.color=237,237,237
+    scenariomanager.gui.control.highlight.color=255,255,255
+    scenariomanager.gui.control.shadow.color=128,128,128
+    scenariomanager.gui.in.focus.color=247,0,74
+    scenariomanager.gui.out.of.focus.color=288,244,0
+    scenariomanager.gui.panel.background.color=237,237,237
+    scenariomanager.gui.panel.text.color=0,28,63
+    scenariomanager.gui.errorpanel.text.color=0,28,63
+    scenariomanager.gui.titlepanel.background.gradient.begin.color=70,103,144
+    scenariomanager.gui.titlepanel.background.gradient.end.color=70,103,144
+    scenariomanager.gui.titlepanel.text.color=255,255,255
+    scenariomanager.gui.row.sortable.header.color=237,237,237
+    scenariomanager.gui.row.sortable.header.text.color=70,103,144
+    scenariomanager.gui.selected.button.color=239,239,239
+    scenariomanager.gui.selected.row.color=240,173,69
+    scenariomanager.gui.table.row.color=209,229,251
+    scenariomanager.gui.toolbar.location=top
+    scenariomanager.gui.graph.logicaloperator.color=220,145,145
+    scenariomanager.gui.graph.numericaloperator.color=220,145,145
+    scenariomanager.gui.graph.identifier.color=145,145,220
+    scenariomanager.gui.graph.literal.color=145,220,145
+    scenariomanager.gui.graph.function.color=220,220,145
+    scenariomanager.gui.graph.listcontains.color=220,145,220
+    scenariomanager.gui.graph.layout=hierarchical
+    scenariomanager.gui.graph.orientation=left_to_right
+    scenariomanager.gui.graph.checkDefinition.layout=hvtree
+    scenariomanager.gui.graph.checkDefinition.orientation=top_to_bottom
+    scenariomanager.gui.graph.checkOverview.layout=hvtree
+    scenariomanager.gui.graph.checkOverview.orientation=top_to_bottom
+    scenariomanager.gui.graph.scenarioChain.layout=hvtree
+    scenariomanager.gui.graph.scenarioChain.orientation=top_to_bottom
+    scenariomanager.gui.graph.configurationVersion.layout=hierarchical
+    scenariomanager.gui.graph.configurationVersion.orientation=left_to_right
+    scenariomanager.gui.graph.layout.animate=false
+    kafka.topic.name.prefix={{ .Values.global.baseConfigProperties.kafka.topicNamePrefix }}
+    filtering.editable={{ .Values.baseConfigProperties.filteringEditable }}
+    filtering.editablelists={{ .Values.baseConfigProperties.filteringEditableLists }}
+    filtering.root.dir=/opt/netreveal/uiHome/conf/wlm
+    filtering.24x7.node.type=PROC
+    filtering.initialise.used.indexes=false
+    filtering.staging.dir=/opt/WLM/staging
+    filtering.24x7.staging.sublocation.indexes.dir=indexes
+    filtering.24x7.staging.sublocation.model.dir=model
+    filtering.24x7.wlm.local.repo.basedir=${filtering.root.dir}/localRepo
+    filtering.24x7.ags.fault.recovery.dir=${filtering.root.dir}/agsrecovery
+    filtering.24x7.ags.nonalert.fault.recovery.dir=${filtering.root.dir}/agsnonalertrecovery
+    filtering.24x7.ags.backup.recovery.interval={{ .Values.baseConfigProperties.filtering24x7AgsBackupRecorveryInterval }}
+    filter.serializedMessages.dir=${filtering.root.dir}/serializedMessages
+    filtering.build.used.mem.indexes=true
+    filtering.build.indexes.onstartup={{ .Values.baseConfigProperties.filteringBuildIndexesOnStartup }}
+    filtering.db.statement.batch.size={{ .Values.baseConfigProperties.filteringDbStatementBatchSize }}
+    filtering.settings.dir=${filtering.root.dir}/settings
+    filtering.alert.saver.extension.dir=${filtering.root.dir}/alertsaver
+    filtering.alert.saver.extension.config.group=
+    filtering.archive.root.dir=${filtering.root.dir}/archive
+    filtering.archive.lists.dir=${filtering.archive.root.dir}/lists
+    filtering.archive.lists=true
+    filtering.archive.batches.dir=${filtering.archive.root.dir}/batches
+    filtering.archive.batches=true
+    filtering.archive.wlmconfig.dir=${filtering.archive.root.dir}/wlmconfig
+    filtering.archive.wlmconfig=true
+    baseplatform.root.dir=${filtering.root.dir}
+    baseplatform.transliteration.dir=${baseplatform.root.dir}/trans/file
+    eim.entity.archive.dir=/opt/netreveal/uiHome/archives/attachments
+    workflow.enable.rule.scheduler=true
+    filtering.ftp.folder=filterImport
+    filtering.worldcheck.automatic.import.dir=${filtering.root.dir}/worldcheck
+    filtering.batch.watch.import.root.dir=${filtering.root.dir}/batchwatch
+    filtering.custom.list.import.root.dir=${filtering.root.dir}/listImport
+    filtering.shared.dir=${filtering.root.dir}/shared
+    filtering.reports.dir=${filtering.root.dir}/reports
+    filtering.templates.dir=${filtering.root.dir}/templates
+    filtering.number.fraction.separator.is.point=true
+    filtering.controller.closesession.rollback=false
+    org.quartz.scheduler.instanceName=FilteringScheduler
+    org.quartz.scheduler.instanceId=one
+    org.quartz.threadPool.class=org.quartz.simpl.SimpleThreadPool
+    org.quartz.threadPool.threadCount=5
+    org.quartz.threadPool.threadPriority=1
+    org.quartz.jobStore.misfireThreshold=5000
+    org.quartz.jobStore.class=org.quartz.simpl.RAMJobStore
+    filtering.statistics.watchlist.matching.skip.scoring=false
+    filtering.wc.list.automatic.build.on.import=true
+    filtering.adapter.name=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.logic.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeLogicImpl
+    filtering.realtime.classname.adapter.TrxAcqQueue=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.jmsservice.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeJMSService
+    filtering.default.encoding=UTF-8
+    filtering.xsl.dir=${filtering.root.dir}/config
+    filtering.gsv.transformation.encoding=default
+    filtering.eim.ags.alertSaver.sequenceName.ultimate_default=WLM-Alert-Seq
+    filtering.eim.ags.nonAlertSaver.sequenceName.ultimate_default=WLM-NonAlert-Seq
+    filtering.singlelookup.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.singlelookup.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.realtime.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.realtime.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.batch.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.batch.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.interactive.alert.saver.classname=com.norkom.wlm.business.alert.plugin.InteractiveSearchResultSaver
+    acquisition.jms.fallback.response.queue.adapter.name=
+    acquisition.jms.fallback.response.message.transformer.name=
+    acquisition.jms.fallback.response.queue.jndi.name=
+    acquisition.jms.fallback.response.connection.factory.jndi.name=
+    acquisition.jms.fallback.response.connection.factory.user.name=
+    acquisition.jms.fallback.response.connection.factory.password=
+    filtering.fpfa.list.automatic.build.on.import=true
+    filtering.fpfa.automatic.import.dir=${filtering.root.dir}/fpfa
+    filtering.gwl.automatic.import.dir=${filtering.root.dir}/gwl
+    filtering.gwl.list.automatic.build.on.import=true
+    norkom.reports.templates.dir=conf/templates/notifications
+    norkom.velocity.templates.dir=/conf/templates
+    services.errorhandling.enabled=true
+    services.errorhandling.primaryauditor.name=er_database
+    services.errorhandling.er_database.class=com.norkom.acquisition.business.errorauditors.DbAuditor
+    filtering.batch.recovery.location=${filtering.root.dir}/shared/batch-recovery
+    filtering.batch.dbrecovery.location=${filtering.root.dir}/batch/dbrecovery
+    velocity.runtime.log.logsystem.class=org.apache.velocity.runtime.log.NullLogSystem
+    database.type=HSQLDB
+    jndi.jms.connectionfactory=java:/ConnectionFactory
+    jndi.queue.ScheduleQueue=java:/jms/queue/Norkom/ScheduleQueue
+    jndi.queue.RealTimeQueue=java:/jms/queue/Norkom/RealTimeQueue
+    jndi.queue.RealTimeProcessingAckQueue=java:/jms/queue/Norkom/RealTimeProcessingAckQueue
+    jndi.queue.RealTimeProcessingQueue=java:/jms/queue/Norkom/RealTimeProcessingQueue
+    jndi.queue.NetworkQueue=java:/jms/queue/Norkom/NetworkQueue
+    jndi.queue.ProcessingQueue=java:/jms/queue/Norkom/ProcessingQueue
+    jndi.queue.BatchProcessingQueue=java:/jms/queue/Norkom/BatchProcessingQueue
+    jndi.queue.TrxTimeOutQueue=java:/jms/queue/Norkom/TrxTimeOutQueue
+    jndi.queue.TrxAcqQueue=java:/jms/queue/Norkom/TrxAcqQueue
+    jndi.queue.ListImportQueue=java:/jms/queue/Norkom/ListImportQueue
+    jndi.queue.BatchTransformationQueue=java:/jms/queue/Norkom/BatchTransformationQueue
+    jndi.queue.TrxAcqAckQueue=java:/jms/queue/Norkom/TrxAcqAckQueue
+    jndi.queue.TrxSuspectAckQueue=java:/jms/queue/Norkom/TrxSuspectAckQueue
+    rest.common.service.name=eim-services
+    rest.common.service.version=v1.0.0
+    rest.common.service.rest.url=https://${pod.name}:8443/netreveal/rest
+    rest.common.service.rest.oauth.url=https://${pod.name}:8443/netreveal/rest/oauth/token
+    rest.remote.service.rest.url=https://${pod.name}:8443/netreveal/rest
+    rest.remote.service.rest.oauth.url=https://${pod.name}:8443/netreveal/rest/oauth/token
+    filtering.kafka.consumer.group.name=wlm-batch-consumer-group-proc
+    filtering.kafka.consumer.max.poll.interval.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollIntervalMs }}
+    filtering.kafka.consumer.max.poll.records={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollRecords }}
+    filtering.kafka.consumer.session.timeout.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerSessionTimeoutMs }}
+    filtering.batch.processing.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-process
+    filtering.batch.processing.kafka.node.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaNodeCount }}
+    filtering.batch.processing.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaConsumerCount }}
+    filtering.batch.processing.kafka.consumer.startup=false
+    filtering.batch.transformation.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-transform-dummy
+    filtering.batch.transformation.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaConsumerCount }}
+    filtering.batch.transformation.kafka.retries={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaRetries }}
+    filtering.batch.transformation.kafka.consumer.startup=false
+    filtering.list.import.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-list-import-dummy
+    filtering.list.import.kafka.consumer.count={{ .Values.baseConfigProperties.filteringListImportKafkaConsumerCount }}
+    filtering.list.import.kafka.consumer.startup=true
+    filtering.24x7.igs.reply.producer=IGS_REPLY_PRODUCER
+    filtering.24x7.igs.reply.consumer=MASTER_IGS_RESPONSE
+    filtering.24x7.wlm.igs.write.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcWriteSleepTime }}
+    filtering.24x7.wlm.proc.read.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcReadSleepTime }}
+    filtering.indexes.dir=${filtering.root.dir}/indexes
+    filtering.24x7.processing.group.name={{ .Values.baseConfigProperties.filtering24x7ProcessingGroupName }}
+    filtering.24x7.processing.node.name=${pod.name}
+    filtering.24x7.processing.node.registration.sequence.name=RegisterNodeSequence
+    filtering.24x7.processing.node.registration.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationStartDelay }}
+    filtering.24x7.processing.node.registration.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRetryInterval }}
+    filtering.24x7.processing.node.registration.correlation.sequence=CorrelationSequence
+    filtering.24x7.processing.node.registration.request.timeout={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRequestTimeout }}
+    filtering.24x7.processing.node.swift.mt.linking.job.enable={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobEnable }}
+    filtering.24x7.processing.node.swift.mt.linking.job.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval }}
+    filtering.24x7.processing.node.swift.mt.linking.job.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay }}
+    filtering.24x7.processing.node.swift.mt.linking.consumer.poll.timeout={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingConsumerPollTimeout }}
+    filtering.24x7.processing.node.swift.mt.linking.records.processing.limit={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingRecordsProcessingLimit }}
+    filtering.24x7.processing.node.swift.info.interim.sequence.name=WLM_ConsumerPN_Read24x7_SWIFT_INFO_INTERIM_Sequence
+    filtering.24x7.processing.node.swift.mt.linking.consumer.group.id=SwiftMTLinkingJob-KafkaConsumer
+    filtering.24x7.processing.node.swift.info.topic.name=${kafka.topic.name.prefix}nr-wlm-swift-info
+    filtering.24x7.processing.node.swift.info.interim.topic.name=${kafka.topic.name.prefix}nr-wlm-swift-info-interim
+    mailprotocol={{ .Values.global.baseConfigProperties.mail.protocol }}
+    services.errorhandling.secondaryauditor.name=er_file
+    services.errorhandling.er_file.class=com.norkom.acquisition.business.errorauditors.FileAuditor
+    services.errorhandling.er_file.path=/opt/netreveal/uiHome/logs/services/services-errors.txt
+    http.router.naming.provider.url.1=https://${pod.name}:8443/netreveal/services/process
+    router.dhc.myNode=0
+    apps.performance.monitoring.class.list=
+    jndi.queue.RealTimeFLTSQueue=java:/jms/queue/Norkom/RealTimeFLTSQueue
+    jndi.queue.RealTimeBatchBridgeQueue=java:/jms/queue/Norkom/RealTimeBatchBridgeQueue
+    process.inbound.emails=false
+    installed.apps.vertical.wlmags=Y
+    jndi.queue.SwiftMxAckQueue=java:/jms/queue/Norkom/SwiftMxAckQueue
+    jndi.queue.SwiftMxSuspectAckQueue=java:/jms/queue/Norkom/SwiftMxSuspectAckQueue
+    jndi.queue.GenericTransactionAckQueue=java:/jms/queue/Norkom/GenericTransactionAckQueue
+    jndi.queue.GenericTransactionSuspectQueue=java:/jms/queue/Norkom/GenericTransactionSuspectQueue
+    jndi.queue.SwiftAckQueue=java:/jms/queue/Norkom/SwiftAckQueue
+    jndi.queue.SwiftSuspectQueue=java:/jms/queue/Norkom/SwiftSuspectQueue
+    jndi.queue.SubjectAckQueue=java:/jms/queue/Norkom/SubjectAckQueue
+    jndi.queue.SubjectSuspectQueue=java:/jms/queue/Norkom/SubjectSuspectQueue
+    kafka.producer.EIM-Default-Producer.bootstrap.servers={{ include "kafka.bootstrap.servers.service.name" . }}
+    {{- include "kafka.default.producer.security" (list $ . "/opt/netreveal/uiHome") }}
+    kafka.producer.EIM-Default-Producer.metrics.interval={{ .Values.baseConfigProperties.kafka.producer.EIMDefaultProducer.metricsInterval }}
+    kafka.producer.EIM-Default-Producer.interceptor.enabled={{ .Values.baseConfigProperties.kafka.producer.EIMDefaultProducer.interceptorEnabled }}
+    {{- if ne .Values.baseConfigProperties.kafka.consumers.bypass.node.registration.list "" }}
+    {{/* https://netreveal.atlassian.net/wiki/spaces/Eng/pages/266469706/WLMX-1514+-+Services+Manager+in+WLM+RT-PROC+Node+is+initialized+before+WLM+Core+is+ready+causing+loss+of+processing */}}
+    kafka.consumers.bypass.node.registration.list={{ .Values.baseConfigProperties.kafka.consumers.bypass.node.registration.list }}
+    {{- end }}
+    kafka.consumers.list=WLM_CounsumerPN_GetRegisterAck,WLM_CounsumerPN_ReadMsg,WLM_CounsumerPN_ReadSL,WLM_CounsumerPN_Read-swift-info-interim,WLM_Batch_Kafka_Processing,WLM_Batch_Kafka_Failure,WLMAGS_Prospect_Subject_In
+    kafka.bootstrap.servers={{ include "kafka.bootstrap.servers.service.name" . }}
+    {{- include "kafka.defult.consumer.security" (list $ . "/opt/netreveal/uiHome") }}
+    kafka.consumer.config.DEFAULT.max.poll.records=1
+    filtering.24x7.processing.node.swift.mt.linking.bootstrap.servers={{ include "kafka.bootstrap.servers.service.name" . }}
+    {{- include "kafka.filtering.24x7.processing.node.swift.mt.linking.security.protocol" (list $ . "/opt/netreveal/uiHome") }}
+    {{- include "kafka.filtering.security" (list $ . "/opt/netreveal/uiHome") }}
+    base.normalization.cache=true
+    datasource.dataSource.dbType=HSQLDB
+    oauth2.external.accessTokenValiditySeconds=0
+    {{- include "base.config.properties.custom.parameters" . | nindent 4 }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-wlm-pn-rt-import-base-config-property"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-wlm-pn-rt-base-config-property"
+data:
+  base_config.properties: |
+    server.name=ProcNode1
+    application.name={{ .Values.global.baseConfigProperties.applicationName }}
+    system.default.timezone=UTC
+    system.default.language={{ .Values.global.baseConfigProperties.systemDefaultLanguage }}
+    system.default.country={{ .Values.global.baseConfigProperties.systemDefaultCountry }}
+    system.encoding=UTF8
+    system.authentication=INTERNAL
+    saml.user.groupSync=true
+    mailserver={{ .Values.global.baseConfigProperties.mail.server }}
+    frommailid={{ .Values.global.baseConfigProperties.mail.fromMailId }}
+    mailpassword={{ .Values.global.baseConfigProperties.mail.password }}
+    mailuser={{ .Values.global.baseConfigProperties.mail.user }}
+    transaction.manager.name=java:jboss/TransactionManager
+    jndi.dataSource=java:/jdbc/ApplicationBaseDS
+    jdbc.driver=org.hsqldb.jdbc.JDBCDriver
+    jdbc.url=jdbc:hsqldb:file:/opt/netreveal/uiHome/hsqldb/data/mydb;shutdown=true;sql.syntax_ora=true
+    hibernate.dialect=org.hibernate.dialect.HSQLDialect
+    jdbc.userid=
+    jdbc.passwd=
+    jdbc.schema=
+    hibernate.show_sql=false
+    hibernate.cache.use_query_cache=true
+    hibernate.cache.use_second_level_cache=true
+    max.threads.batch.processing=5
+    max.threads.batch.transformation=1
+    max.threads.list.import=1
+    dbloader.home=/opt/netreveal/uiHome/conf/monitoring/dbloader
+    dbloader.data=/opt/netreveal/uiHome/data/dbloader
+    notification.email.jndi=java:jboss/mail/Default
+    notification.email.from={{ .Values.global.baseConfigProperties.mail.notificationEmailFrom }}
+    notification.email.subject=Notification
+    scenariomanager.gui.validation=false
+    scenariomanager.gui.debugger=true
+    scenariomanager.gui.debugger.maxrecords=100
+    scenariomanager.gui.background.gradient.begin.color=237,237,237
+    scenariomanager.gui.background.gradient.end.color=237,237,237
+    scenariomanager.gui.control.highlight.color=255,255,255
+    scenariomanager.gui.control.shadow.color=128,128,128
+    scenariomanager.gui.in.focus.color=247,0,74
+    scenariomanager.gui.out.of.focus.color=288,244,0
+    scenariomanager.gui.panel.background.color=237,237,237
+    scenariomanager.gui.panel.text.color=0,28,63
+    scenariomanager.gui.errorpanel.text.color=0,28,63
+    scenariomanager.gui.titlepanel.background.gradient.begin.color=70,103,144
+    scenariomanager.gui.titlepanel.background.gradient.end.color=70,103,144
+    scenariomanager.gui.titlepanel.text.color=255,255,255
+    scenariomanager.gui.row.sortable.header.color=237,237,237
+    scenariomanager.gui.row.sortable.header.text.color=70,103,144
+    scenariomanager.gui.selected.button.color=239,239,239
+    scenariomanager.gui.selected.row.color=240,173,69
+    scenariomanager.gui.table.row.color=209,229,251
+    scenariomanager.gui.toolbar.location=top
+    scenariomanager.gui.graph.logicaloperator.color=220,145,145
+    scenariomanager.gui.graph.numericaloperator.color=220,145,145
+    scenariomanager.gui.graph.identifier.color=145,145,220
+    scenariomanager.gui.graph.literal.color=145,220,145
+    scenariomanager.gui.graph.function.color=220,220,145
+    scenariomanager.gui.graph.listcontains.color=220,145,220
+    scenariomanager.gui.graph.layout=hierarchical
+    scenariomanager.gui.graph.orientation=left_to_right
+    scenariomanager.gui.graph.checkDefinition.layout=hvtree
+    scenariomanager.gui.graph.checkDefinition.orientation=top_to_bottom
+    scenariomanager.gui.graph.checkOverview.layout=hvtree
+    scenariomanager.gui.graph.checkOverview.orientation=top_to_bottom
+    scenariomanager.gui.graph.scenarioChain.layout=hvtree
+    scenariomanager.gui.graph.scenarioChain.orientation=top_to_bottom
+    scenariomanager.gui.graph.configurationVersion.layout=hierarchical
+    scenariomanager.gui.graph.configurationVersion.orientation=left_to_right
+    scenariomanager.gui.graph.layout.animate=false
+    kafka.topic.name.prefix={{ .Values.global.baseConfigProperties.kafka.topicNamePrefix }}
+    filtering.editable={{ .Values.baseConfigProperties.filteringEditable }}
+    filtering.editablelists={{ .Values.baseConfigProperties.filteringEditableLists }}
+    filtering.root.dir=/opt/netreveal/uiHome/conf/wlm
+    filtering.24x7.node.type=PROC
+    filtering.initialise.used.indexes=false
+    filtering.staging.dir=/opt/WLM/staging
+    filtering.24x7.staging.sublocation.indexes.dir=indexes
+    filtering.24x7.staging.sublocation.model.dir=model
+    filtering.24x7.wlm.local.repo.basedir=${filtering.root.dir}/localRepo
+    filtering.24x7.ags.fault.recovery.dir=${filtering.root.dir}/agsrecovery
+    filtering.24x7.ags.nonalert.fault.recovery.dir=${filtering.root.dir}/agsnonalertrecovery
+    filtering.24x7.ags.backup.recovery.interval={{ .Values.baseConfigProperties.filtering24x7AgsBackupRecorveryInterval }}
+    filter.serializedMessages.dir=${filtering.root.dir}/serializedMessages
+    filtering.build.used.mem.indexes=true
+    filtering.build.indexes.onstartup=false
+    filtering.db.statement.batch.size={{ .Values.baseConfigProperties.filteringDbStatementBatchSize }}
+    filtering.settings.dir=${filtering.root.dir}/settings
+    filtering.alert.saver.extension.dir=${filtering.root.dir}/alertsaver
+    filtering.alert.saver.extension.config.group=
+    filtering.archive.root.dir=${filtering.root.dir}/archive
+    filtering.archive.lists.dir=${filtering.archive.root.dir}/lists
+    filtering.archive.lists=true
+    filtering.archive.batches.dir=${filtering.archive.root.dir}/batches
+    filtering.archive.batches=true
+    filtering.archive.wlmconfig.dir=${filtering.archive.root.dir}/wlmconfig
+    filtering.archive.wlmconfig=true
+    baseplatform.root.dir=${filtering.root.dir}
+    baseplatform.transliteration.dir=${baseplatform.root.dir}/trans/file
+    eim.entity.archive.dir=/opt/netreveal/uiHome/archives/attachments
+    workflow.enable.rule.scheduler=true
+    filtering.ftp.folder=filterImport
+    filtering.worldcheck.automatic.import.dir=${filtering.root.dir}/worldcheck
+    filtering.batch.watch.import.root.dir=${filtering.root.dir}/batchwatch
+    filtering.custom.list.import.root.dir=${filtering.root.dir}/listImport
+    filtering.shared.dir=${filtering.root.dir}/shared
+    filtering.reports.dir=${filtering.root.dir}/reports
+    filtering.templates.dir=${filtering.root.dir}/templates
+    filtering.number.fraction.separator.is.point=true
+    filtering.controller.closesession.rollback=false
+    org.quartz.scheduler.instanceName=FilteringScheduler
+    org.quartz.scheduler.instanceId=one
+    org.quartz.threadPool.class=org.quartz.simpl.SimpleThreadPool
+    org.quartz.threadPool.threadCount=5
+    org.quartz.threadPool.threadPriority=1
+    org.quartz.jobStore.misfireThreshold=5000
+    org.quartz.jobStore.class=org.quartz.simpl.RAMJobStore
+    filtering.statistics.watchlist.matching.skip.scoring=false
+    filtering.wc.list.automatic.build.on.import=true
+    filtering.adapter.name=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.logic.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeLogicImpl
+    filtering.realtime.classname.adapter.TrxAcqQueue=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.jmsservice.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeJMSService
+    filtering.default.encoding=UTF-8
+    filtering.xsl.dir=${filtering.root.dir}/config
+    filtering.gsv.transformation.encoding=default
+    filtering.eim.ags.alertSaver.sequenceName.ultimate_default=WLM-Alert-Seq
+    filtering.eim.ags.nonAlertSaver.sequenceName.ultimate_default=WLM-NonAlert-Seq
+    filtering.singlelookup.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.singlelookup.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.realtime.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.realtime.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.batch.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.batch.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.interactive.alert.saver.classname=com.norkom.wlm.business.alert.plugin.InteractiveSearchResultSaver
+    acquisition.jms.fallback.response.queue.adapter.name=
+    acquisition.jms.fallback.response.message.transformer.name=
+    acquisition.jms.fallback.response.queue.jndi.name=
+    acquisition.jms.fallback.response.connection.factory.jndi.name=
+    acquisition.jms.fallback.response.connection.factory.user.name=
+    acquisition.jms.fallback.response.connection.factory.password=
+    filtering.fpfa.list.automatic.build.on.import=true
+    filtering.fpfa.automatic.import.dir=${filtering.root.dir}/fpfa
+    filtering.gwl.automatic.import.dir=${filtering.root.dir}/gwl
+    filtering.gwl.list.automatic.build.on.import=true
+    norkom.reports.templates.dir=conf/templates/notifications
+    norkom.velocity.templates.dir=/conf/templates
+    services.errorhandling.enabled=true
+    services.errorhandling.primaryauditor.name=er_database
+    services.errorhandling.er_database.class=com.norkom.acquisition.business.errorauditors.DbAuditor
+    filtering.batch.recovery.location=${filtering.root.dir}/shared/batch-recovery
+    filtering.batch.dbrecovery.location=${filtering.root.dir}/batch/dbrecovery
+    velocity.runtime.log.logsystem.class=org.apache.velocity.runtime.log.NullLogSystem
+    database.type=HSQLDB
+    jndi.jms.connectionfactory=java:/ConnectionFactory
+    jndi.queue.ScheduleQueue=java:/jms/queue/Norkom/ScheduleQueue
+    jndi.queue.RealTimeQueue=java:/jms/queue/Norkom/RealTimeQueue
+    jndi.queue.RealTimeProcessingAckQueue=java:/jms/queue/Norkom/RealTimeProcessingAckQueue
+    jndi.queue.RealTimeProcessingQueue=java:/jms/queue/Norkom/RealTimeProcessingQueue
+    jndi.queue.NetworkQueue=java:/jms/queue/Norkom/NetworkQueue
+    jndi.queue.ProcessingQueue=java:/jms/queue/Norkom/ProcessingQueue
+    jndi.queue.BatchProcessingQueue=java:/jms/queue/Norkom/BatchProcessingQueue
+    jndi.queue.TrxTimeOutQueue=java:/jms/queue/Norkom/TrxTimeOutQueue
+    jndi.queue.TrxAcqQueue=java:/jms/queue/Norkom/TrxAcqQueue
+    jndi.queue.ListImportQueue=java:/jms/queue/Norkom/ListImportQueue
+    jndi.queue.BatchTransformationQueue=java:/jms/queue/Norkom/BatchTransformationQueue
+    jndi.queue.TrxAcqAckQueue=java:/jms/queue/Norkom/TrxAcqAckQueue
+    jndi.queue.TrxSuspectAckQueue=java:/jms/queue/Norkom/TrxSuspectAckQueue
+    rest.common.service.name=eim-services
+    rest.common.service.version=v1.0.0
+    rest.common.service.rest.url=https://${pod.name}:8443/netreveal/rest
+    rest.common.service.rest.oauth.url=https://${pod.name}:8443/netreveal/rest/oauth/token
+    rest.remote.service.rest.url=https://${pod.name}:8443/netreveal/rest
+    rest.remote.service.rest.oauth.url=https://${pod.name}:8443/netreveal/rest/oauth/token
+    filtering.kafka.consumer.group.name=wlm-batch-consumer-group-proc
+    filtering.kafka.consumer.max.poll.interval.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollIntervalMs }}
+    filtering.kafka.consumer.max.poll.records={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollRecords }}
+    filtering.kafka.consumer.session.timeout.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerSessionTimeoutMs }}
+    filtering.batch.processing.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-process
+    filtering.batch.processing.kafka.node.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaNodeCount }}
+    filtering.batch.processing.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaConsumerCount }}
+    filtering.batch.processing.kafka.consumer.startup=false
+    filtering.batch.transformation.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-transform-dummy
+    filtering.batch.transformation.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaConsumerCount }}
+    filtering.batch.transformation.kafka.retries={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaRetries }}
+    filtering.batch.transformation.kafka.consumer.startup=false
+    filtering.list.import.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-list-import-dummy
+    filtering.list.import.kafka.consumer.count={{ .Values.baseConfigProperties.filteringListImportKafkaConsumerCount }}
+    filtering.list.import.kafka.consumer.startup=true
+    filtering.24x7.igs.reply.producer=IGS_REPLY_PRODUCER
+    filtering.24x7.igs.reply.consumer=MASTER_IGS_RESPONSE
+    filtering.24x7.wlm.igs.write.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcWriteSleepTime }}
+    filtering.24x7.wlm.proc.read.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcReadSleepTime }}
+    filtering.indexes.dir=${filtering.root.dir}/indexes
+    filtering.24x7.processing.group.name={{ .Values.baseConfigProperties.filtering24x7ProcessingGroupName }}
+    filtering.24x7.processing.node.name=${pod.name}
+    filtering.24x7.processing.node.registration.sequence.name=RegisterNodeSequence
+    filtering.24x7.processing.node.registration.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationStartDelay }}
+    filtering.24x7.processing.node.registration.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRetryInterval }}
+    filtering.24x7.processing.node.registration.correlation.sequence=CorrelationSequence
+    filtering.24x7.processing.node.registration.request.timeout={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRequestTimeout }}
+    filtering.24x7.processing.node.swift.mt.linking.job.enable={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobEnable }}
+    filtering.24x7.processing.node.swift.mt.linking.job.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval }}
+    filtering.24x7.processing.node.swift.mt.linking.job.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay }}
+    filtering.24x7.processing.node.swift.mt.linking.consumer.poll.timeout={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingConsumerPollTimeout }}
+    filtering.24x7.processing.node.swift.mt.linking.records.processing.limit={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingRecordsProcessingLimit }}
+    filtering.24x7.processing.node.swift.info.interim.sequence.name=WLM_ConsumerPN_Read24x7_SWIFT_INFO_INTERIM_Sequence
+    filtering.24x7.processing.node.swift.mt.linking.consumer.group.id=SwiftMTLinkingJob-KafkaConsumer
+    filtering.24x7.processing.node.swift.info.topic.name=${kafka.topic.name.prefix}nr-wlm-swift-info
+    filtering.24x7.processing.node.swift.info.interim.topic.name=${kafka.topic.name.prefix}nr-wlm-swift-info-interim
+    mailprotocol={{ .Values.global.baseConfigProperties.mail.protocol }}
+    services.errorhandling.secondaryauditor.name=er_file
+    services.errorhandling.er_file.class=com.norkom.acquisition.business.errorauditors.FileAuditor
+    services.errorhandling.er_file.path=/opt/netreveal/uiHome/logs/services/services-errors.txt
+    http.router.naming.provider.url.1=https://${pod.name}:8443/netreveal/services/process
+    router.dhc.myNode=0
+    apps.performance.monitoring.class.list=
+    jndi.queue.RealTimeFLTSQueue=java:/jms/queue/Norkom/RealTimeFLTSQueue
+    jndi.queue.RealTimeBatchBridgeQueue=java:/jms/queue/Norkom/RealTimeBatchBridgeQueue
+    process.inbound.emails=false
+    installed.apps.vertical.wlmags=Y
+    jndi.queue.SwiftMxAckQueue=java:/jms/queue/Norkom/SwiftMxAckQueue
+    jndi.queue.SwiftMxSuspectAckQueue=java:/jms/queue/Norkom/SwiftMxSuspectAckQueue
+    jndi.queue.GenericTransactionAckQueue=java:/jms/queue/Norkom/GenericTransactionAckQueue
+    jndi.queue.GenericTransactionSuspectQueue=java:/jms/queue/Norkom/GenericTransactionSuspectQueue
+    jndi.queue.SwiftAckQueue=java:/jms/queue/Norkom/SwiftAckQueue
+    jndi.queue.SwiftSuspectQueue=java:/jms/queue/Norkom/SwiftSuspectQueue
+    jndi.queue.SubjectAckQueue=java:/jms/queue/Norkom/SubjectAckQueue
+    jndi.queue.SubjectSuspectQueue=java:/jms/queue/Norkom/SubjectSuspectQueue
+    kafka.bootstrap.servers=localhost:9092
+    base.normalization.cache=true
+    datasource.dataSource.dbType=HSQLDB
+    oauth2.external.accessTokenValiditySeconds=0
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-wlm-pn-rt-log4j2"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-wlm-pn-rt-log4j2"
+data:
+  log4j2.xml: |
+{{- include "log4j2.xml" . | indent 4 }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-wlm-pn-rt-token-script"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-wlm-pn-rt-token-script"
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+data:
+  tokenGen.sh: |
+    #!/bin/bash
+
+    #set -eu -o pipefail
+
+    TOKEN_USER=""
+    TOKEN_PASS=""
+    TOKEN_AUTHENTICATION_ID=""
+    TMP_TOKEN_PASS=""
+    # "true" to enable debug mode
+    DEBUG="false"
+
+    # Wildfly
+    readonly WILDFLY_HOME=/opt/wildfly
+    readonly WILDFLY_BASE_DIR=${WILDFLY_HOME}/netreveal
+
+    readonly HSQLDB_HOME=/opt/netreveal/uiHome/hsqldb
+    readonly HSQLDB_CONFIG_FILE=${HSQLDB_HOME}/hsqldb.properties
+
+    readonly WLM_PN_RT_TOKEN_DIR=/opt/WLM/wlm-pn-rt-token
+    WLM_PN_RT_TOKEN_FILE=${WLM_PN_RT_TOKEN_DIR}/${TOKEN_USER}_wlm-pn-rt-token.properties
+
+    readonly WLM_PN_RT_IMPORT_TOKEN_BLOB_FILE=wlm-pn-rt-token.blob
+    WLM_PN_RT_EXPORT_TOKEN_BLOB_FILE=${WLM_PN_RT_TOKEN_DIR}/${WLM_PN_RT_IMPORT_TOKEN_BLOB_FILE}
+    WLM_PN_RT_TOKEN_EXPORT_SQL_FILE=${WLM_PN_RT_TOKEN_DIR}/${TOKEN_USER}_wlm-pn-rt-export-token-blob.sql
+
+    readonly WLM_PN_RT_IMPORT_AUTHENTICATION_BLOB_FILE=wlm-pn-rt-authentication.blob
+    WLM_PN_RT_EXPORT_AUTHENTICATION_BLOB_FILE=${WLM_PN_RT_TOKEN_DIR}/${WLM_PN_RT_IMPORT_AUTHENTICATION_BLOB_FILE}
+    WLM_PN_RT_AUTHENTICATION_EXPORT_SQL_FILE=${WLM_PN_RT_TOKEN_DIR}/${TOKEN_USER}_wlm-pn-rt-export-authentication-blob.sql
+
+
+    function _getCurrentTimestamp() {
+        local TIMESTAMP=`date "+%Y-%m-%d %H:%M:%S"`
+
+        echo ${TIMESTAMP}
+    }
+
+    function _log() {
+        local echoLevel=${1}
+        local echoMessage=${2}
+        local currentTime=$(_getCurrentTimestamp)
+
+        echo -e "${echoLevel}:\t${currentTime}:\t${echoMessage}"
+    }
+
+    function _runSQL() {
+      local sql=${1}
+      local _result=${2}
+
+      if [ ! -f ${HSQLDB_CONFIG_FILE} ]; then
+        _log "INFO" "Creating file: ${HSQLDB_CONFIG_FILE}"
+        echo "org.hsqldb.persist = WARNING" > ${HSQLDB_CONFIG_FILE}
+        echo "" >> ${HSQLDB_CONFIG_FILE}
+      fi
+
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Running SQL: ${sql}"
+      fi
+      local sqlOut=$(${JAVA_HOME}/bin/java -Djava.util.logging.config.file=${HSQLDB_CONFIG_FILE} -cp /opt/tools/hsqldb/sqltool.jar org.hsqldb.cmdline.SqlTool --autoCommit --inlineRC=url=jdbc:hsqldb:${HSQLDB_HOME}/data/mydb\;hsqldb.lock_file=true,user=sa,password= --sql="${sql}" | xargs)
+
+      eval $_result="'${sqlOut}'"
+    }
+
+    function _initTokenVars() {
+      _log "INFO" "Reading token user..."
+      local sql="SELECT VALUE FROM SYSTEM_PARAMETERS WHERE PARAMETER_KEY = 'services.manager.external.security.username';"
+      _runSQL "${sql}" result
+      TOKEN_USER=${result}
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Token user: ${TOKEN_USER}"
+      fi
+
+      _log "INFO" "Reading token password..."
+      sql="SELECT VALUE FROM SYSTEM_PARAMETERS WHERE PARAMETER_KEY = 'services.manager.external.security.token';"
+      _runSQL "${sql}" result
+      TOKEN_PASS=${result}
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Token password: ${TOKEN_PASS}"
+      fi
+
+      WLM_PN_RT_TOKEN_FILE=${WLM_PN_RT_TOKEN_DIR}/${TOKEN_USER}_wlm-pn-rt-token.properties
+      WLM_PN_RT_EXPORT_TOKEN_BLOB_FILE=${WLM_PN_RT_TOKEN_DIR}/${TOKEN_USER}_${WLM_PN_RT_IMPORT_TOKEN_BLOB_FILE}
+      WLM_PN_RT_TOKEN_EXPORT_SQL_FILE=${WLM_PN_RT_TOKEN_DIR}/${TOKEN_USER}_wlm-pn-rt-export-token-blob.sql
+      WLM_PN_RT_EXPORT_AUTHENTICATION_BLOB_FILE=${WLM_PN_RT_TOKEN_DIR}/${TOKEN_USER}_${WLM_PN_RT_IMPORT_AUTHENTICATION_BLOB_FILE}
+      WLM_PN_RT_AUTHENTICATION_EXPORT_SQL_FILE=${WLM_PN_RT_TOKEN_DIR}/${TOKEN_USER}_wlm-pn-rt-export-authentication-blob.sql
+    }
+
+    function _updateRestPass() {
+      local charset='A-Za-z0-9'
+      local length=10
+      local tmpRestPass=$(head /dev/urandom | tr -dc "$charset" | head -c "$length")
+      local sql="UPDATE SYSTEM_PARAMETERS SET VALUE = '${tmpRestPass}' WHERE PARAMETER_KEY = 'services.manager.external.security.token';"
+      _runSQL "${sql}" result
+
+      sql="SELECT VALUE FROM SYSTEM_PARAMETERS WHERE PARAMETER_KEY = 'services.manager.external.security.token';"
+      _runSQL "${sql}" result
+      TMP_TOKEN_PASS=${result}
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Rest pass updated: ${TMP_TOKEN_PASS}"
+      fi
+    }
+
+    function _restoreRestPass() {
+      local sql="UPDATE SYSTEM_PARAMETERS SET VALUE = '${TOKEN_PASS}' WHERE PARAMETER_KEY = 'services.manager.external.security.token';"
+      _runSQL "${sql}" result
+      if [ "${DEBUG}" == "true" ]; then
+        sql="SELECT VALUE FROM SYSTEM_PARAMETERS WHERE PARAMETER_KEY = 'services.manager.external.security.token';"
+        _runSQL "${sql}" result
+        _log "DEBUG" "Rest pass restored: ${result}"
+      fi
+    }
+
+    function _startWildfly() {
+      _log "INFO" "Starting Wildfly Server..."
+      ${WILDFLY_BASE_DIR}/startApplication.sh >>/dev/null &
+      #Wait for CLI Start up
+      local count=120
+      local initialised=N
+      while [ $count -ge 1 ];
+      do
+        if ${WILDFLY_HOME}/bin/jboss-cli.sh --controller=localhost:9990 -c --command=" :read-attribute(name=server-state) " | grep success
+        then
+          _log "INFO" "Wildfly server up..."
+          initialised=Y
+          break
+        else
+          count=`expr $count - 1`
+          _log "INFO" "Waiting for Wildfly start up. count=${count}"
+          sleep 10s
+        fi
+      done
+      if [ ! "${initialised}" == "Y" ];
+      then
+        _log "ERROR" "Wildfly has not been initialised on time... Exiting..."
+        exit 1
+      fi
+    }
+
+    function _generateToken() {
+      _log "INFO" "Generating token..."
+      local tokenResponse=$(curl -k --ciphers DEFAULT@SECLEVEL=1 --user ${TOKEN_USER}:${TMP_TOKEN_PASS} -X POST "https://localhost:8443/netreveal/rest-external/oauth/token?grant_type=client_credentials")
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Token response: ${tokenResponse}"
+      fi
+    }
+
+    function _stopWildfly() {
+      _log "INFO" "Stopping Wildfly Server..."
+      ${WILDFLY_HOME}/bin/jboss-cli.sh -c --commands=":shutdown"
+    }
+
+    function _exportToken() {
+      if [ ! -d ${WLM_PN_RT_TOKEN_DIR} ]; then
+        _log "INFO" "Creating directory: ${WLM_PN_RT_TOKEN_DIR}"
+        mkdir -p ${WLM_PN_RT_TOKEN_DIR}
+      fi
+
+      _log "INFO" "Exporting token..."
+
+      #TOKEN_ID
+      sql="SELECT CONCAT('TOKEN_ID=', TOKEN_ID, CHAR(10)) FROM OAUTH_ACCESS_TOKEN;"
+      _runSQL "${sql}" result
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Token ID: ${result}"
+      fi
+      echo "${result}" > ${WLM_PN_RT_TOKEN_FILE}
+
+      sql="SELECT CONCAT('TOKEN=', RAWTOHEX(TOKEN), CHAR(10)) FROM OAUTH_ACCESS_TOKEN;"
+      _runSQL "${sql}" result
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Token: ${result}"
+      fi
+      echo "${result}" >> ${WLM_PN_RT_TOKEN_FILE}
+
+      sql="SELECT CONCAT('AUTHENTICATION_ID=', AUTHENTICATION_ID, CHAR(10)) FROM OAUTH_ACCESS_TOKEN;"
+      _runSQL "${sql}" result
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Authentication ID: ${result}"
+      fi
+      echo "${result}" >> ${WLM_PN_RT_TOKEN_FILE}
+
+      sql="SELECT CONCAT('USER_NAME=', USER_NAME, CHAR(10)) FROM OAUTH_ACCESS_TOKEN;"
+      _runSQL "${sql}" result
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "User Name: ${result}"
+      fi
+      if [ "${result}" == "[null]" ]; then
+        echo "USER_NAME=null" >> ${WLM_PN_RT_TOKEN_FILE}
+      else
+        echo "${result}" >> ${WLM_PN_RT_TOKEN_FILE}
+      fi
+
+      sql="SELECT CONCAT('CLIENT_ID=', CLIENT_ID, CHAR(10)) FROM OAUTH_ACCESS_TOKEN;"
+      _runSQL "${sql}" result
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Client ID: ${result}"
+      fi
+      echo "${result}" >> ${WLM_PN_RT_TOKEN_FILE}
+
+      sql="select CONCAT('AUTHENTICATION=', RAWTOHEX(AUTHENTICATION), CHAR(10)) from OAUTH_ACCESS_TOKEN;"
+      _runSQL "${sql}" result
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Authentication: ${result}"
+      fi
+      echo "${result}" >> ${WLM_PN_RT_TOKEN_FILE}
+
+      sql="SELECT CONCAT('REFRESH_TOKEN=', REFRESH_TOKEN, CHAR(10)) FROM OAUTH_ACCESS_TOKEN;"
+      _runSQL "${sql}" result
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Refresh Token: ${result}"
+      fi
+      if [ "${result}" == "[null]" ]; then
+        echo "REFRESH_TOKEN=null" >> ${WLM_PN_RT_TOKEN_FILE}
+      else
+        echo "${result}" >> ${WLM_PN_RT_TOKEN_FILE}
+      fi
+
+      _log "INFO" "Export BLOB data..."
+      if [ -f ${WLM_PN_RT_EXPORT_TOKEN_BLOB_FILE} ]; then
+        rm -f ${WLM_PN_RT_EXPORT_TOKEN_BLOB_FILE}
+      fi
+      if [ ! -f ${WLM_PN_RT_TOKEN_EXPORT_SQL_FILE} ]; then
+        _log "INFO" "Create export SQL file: ${WLM_PN_RT_TOKEN_EXPORT_SQL_FILE}"
+        echo "SELECT TOKEN FROM OAUTH_ACCESS_TOKEN;" > ${WLM_PN_RT_TOKEN_EXPORT_SQL_FILE}
+        echo "\bd ${WLM_PN_RT_EXPORT_TOKEN_BLOB_FILE}" >> ${WLM_PN_RT_TOKEN_EXPORT_SQL_FILE}
+        echo "" >> ${WLM_PN_RT_TOKEN_EXPORT_SQL_FILE}
+        if [ "${DEBUG}" == "true" ]; then
+          _log "DEBUG" cat ${WLM_PN_RT_TOKEN_EXPORT_SQL_FILE}
+        fi
+      fi
+      ${JAVA_HOME}/bin/java -Djava.util.logging.config.file=${HSQLDB_CONFIG_FILE} -cp /opt/tools/hsqldb/sqltool.jar org.hsqldb.cmdline.SqlTool --autoCommit --inlineRC=url=jdbc:hsqldb:${HSQLDB_HOME}/data/mydb\;hsqldb.lock_file=true,user=sa,password= < ${WLM_PN_RT_TOKEN_EXPORT_SQL_FILE}
+
+      if [ -f ${WLM_PN_RT_EXPORT_AUTHENTICATION_BLOB_FILE} ]; then
+        rm -f ${WLM_PN_RT_EXPORT_AUTHENTICATION_BLOB_FILE}
+      fi
+      if [ ! -f ${WLM_PN_RT_AUTHENTICATION_EXPORT_SQL_FILE} ]; then
+        _log "INFO" "Create export SQL file: ${WLM_PN_RT_AUTHENTICATION_EXPORT_SQL_FILE}"
+        echo "SELECT AUTHENTICATION FROM OAUTH_ACCESS_TOKEN;" > ${WLM_PN_RT_AUTHENTICATION_EXPORT_SQL_FILE}
+        echo "\bd ${WLM_PN_RT_EXPORT_AUTHENTICATION_BLOB_FILE}" >> ${WLM_PN_RT_AUTHENTICATION_EXPORT_SQL_FILE}
+        echo "" >> ${WLM_PN_RT_AUTHENTICATION_EXPORT_SQL_FILE}
+        if [ "${DEBUG}" == "true" ]; then
+          _log "DEBUG" cat ${WLM_PN_RT_AUTHENTICATION_EXPORT_SQL_FILE}
+        fi
+      fi
+      ${JAVA_HOME}/bin/java -Djava.util.logging.config.file=${HSQLDB_CONFIG_FILE} -cp /opt/tools/hsqldb/sqltool.jar org.hsqldb.cmdline.SqlTool --autoCommit --inlineRC=url=jdbc:hsqldb:${HSQLDB_HOME}/data/mydb\;hsqldb.lock_file=true,user=sa,password= < ${WLM_PN_RT_AUTHENTICATION_EXPORT_SQL_FILE}
+    }
+
+    function _updateTokenInDB() {
+      local tokenID=${1}
+      local authenticationID=${2}
+      local userName=${3}
+      local clientID=${4}
+      local refreshToken=${5}
+
+      _log "INFO" "Update token in DB..."
+
+      local sql="INSERT INTO OAUTH_ACCESS_TOKEN (TOKEN_ID, TOKEN, AUTHENTICATION_ID, USER_NAME, CLIENT_ID, AUTHENTICATION, REFRESH_TOKEN) VALUES ("
+
+      sql="${sql}'${tokenID}',"
+
+      if [ -f ${WLM_PN_RT_EXPORT_TOKEN_BLOB_FILE} ]; then
+        cp -f ${WLM_PN_RT_EXPORT_TOKEN_BLOB_FILE} ${HSQLDB_HOME}/data/${WLM_PN_RT_IMPORT_TOKEN_BLOB_FILE}
+        sql="${sql} LOAD_FILE('${WLM_PN_RT_IMPORT_TOKEN_BLOB_FILE}'),"
+      else
+        _log "ERROR" "TOKEN BLOB file not found: ${WLM_PN_RT_EXPORT_TOKEN_BLOB_FILE}. Reverse the token update in DB."
+        exit 1
+      fi
+
+      sql="${sql} '${authenticationID}',"
+      if [ "${userName}" == "null" ]; then
+        sql="${sql} NULL,"
+      else
+        sql="${sql} '${userName}',"
+      fi
+      sql="${sql} '${clientID}',"
+
+      if [ -f ${WLM_PN_RT_EXPORT_AUTHENTICATION_BLOB_FILE} ]; then
+        cp -f ${WLM_PN_RT_EXPORT_AUTHENTICATION_BLOB_FILE} ${HSQLDB_HOME}/data/${WLM_PN_RT_IMPORT_AUTHENTICATION_BLOB_FILE}
+        sql="${sql} LOAD_FILE('${WLM_PN_RT_IMPORT_AUTHENTICATION_BLOB_FILE}'),"
+      else
+        _log "ERROR" "AUTHENTICATION BLOB file not found: ${WLM_PN_RT_EXPORT_AUTHENTICATION_BLOB_FILE}. Reverse the token update in DB."
+        exit 1
+      fi
+
+      if [ "${refreshToken}" == "null" ]; then
+        sql="${sql} NULL);"
+      else
+        sql="${sql} '${refreshToken}');"
+      fi
+
+      _runSQL "${sql}" result
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Token updated in DB: ${result}"
+      fi
+      echo ""
+
+      rm ${HSQLDB_HOME}/data/${WLM_PN_RT_IMPORT_TOKEN_BLOB_FILE} ${HSQLDB_HOME}/data/${WLM_PN_RT_IMPORT_AUTHENTICATION_BLOB_FILE}
+    }
+
+    function _createTokenFromFile() {
+      _log "INFO" "Read token file..."
+      while IFS= read -r line
+      do
+        if [ "${DEBUG}" == "true" ]; then
+          _log "DEBUG" "Line: ${line}"
+        fi
+        if [[ ${line} == TOKEN_ID=* ]]; then
+          local TOKEN_ID=${line#TOKEN_ID=}
+          if [ "${DEBUG}" == "true" ]; then
+            _log "DEBUG" "TOKEN_ID: ${TOKEN_ID}"
+          fi
+        elif [[ ${line} == AUTHENTICATION_ID=* ]]; then
+          local AUTHENTICATION_ID=${line#AUTHENTICATION_ID=}
+          if [ "${DEBUG}" == "true" ]; then
+            _log "DEBUG" "AUTHENTICATION_ID: ${AUTHENTICATION_ID}"
+          fi
+        elif [[ ${line} == USER_NAME=* ]]; then
+          local USER_NAME=${line#USER_NAME=}
+          if [ "${DEBUG}" == "true" ]; then
+            _log "DEBUG" "USER_NAME: ${USER_NAME}"
+          fi
+        elif [[ ${line} == CLIENT_ID=* ]]; then
+          local CLIENT_ID=${line#CLIENT_ID=}
+          if [ "${DEBUG}" == "true" ]; then
+            _log "DEBUG" "CLIENT_ID: ${CLIENT_ID}"
+          fi
+        elif [[ ${line} == REFRESH_TOKEN=* ]]; then
+          local REFRESH_TOKEN=${line#REFRESH_TOKEN=}
+          if [ "${DEBUG}" == "true" ]; then
+            _log "DEBUG" "REFRESH_TOKEN: ${REFRESH_TOKEN}"
+          fi
+        fi
+      done < ${WLM_PN_RT_TOKEN_FILE}
+
+      _updateTokenInDB "${TOKEN_ID}" "${AUTHENTICATION_ID}" "${USER_NAME}" "${CLIENT_ID}" "${REFRESH_TOKEN}"
+    }
+
+    function _validateToken() {
+      _log "INFO" "Validating token..."
+
+      sql="SELECT AUTHENTICATION_ID FROM OAUTH_ACCESS_TOKEN WHERE CLIENT_ID = '${TOKEN_USER}';"
+      _runSQL "${sql}" result
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Authentication ID: ${result}"
+      fi
+
+      tokenAuthenticationID=$(grep AUTHENTICATION_ID ${WLM_PN_RT_TOKEN_FILE} | cut -d'=' -f2)
+      if [ "${DEBUG}" == "true" ]; then
+        _log "DEBUG" "Token Authentication ID: ${tokenAuthenticationID}"
+      fi
+
+      if [ "${result}" == "${tokenAuthenticationID}" ]; then
+        _log "INFO" "Token is valid."
+      else
+        _log "INFO" "Token is invalid. Updating token..."
+        sql="DELETE FROM OAUTH_ACCESS_TOKEN WHERE CLIENT_ID = '${TOKEN_USER}';"
+        _runSQL "${sql}" result
+        if [ "${DEBUG}" == "true" ]; then
+          _log "DEBUG" "Token deleted: ${result}"
+        fi
+        _createTokenFromFile
+      fi
+    }
+
+    #####################################################################################
+    # Main
+    #####################################################################################
+    _log "INFO" "Initializing token generation."
+    _initTokenVars
+
+    _log "INFO" "Get number of token records."
+    sql="SELECT COUNT(*) FROM OAUTH_ACCESS_TOKEN WHERE CLIENT_ID = '${TOKEN_USER}';"
+    _runSQL "${sql}" result
+    tokenCount=${result}
+    if [ "${DEBUG}" == "true" ]; then
+      _log "DEBUG" "Token count: ${tokenCount}"
+    fi
+
+    if [ "x${TOKEN_USER}" == "x" ]; then
+      _log "WARN" "Rest user not found. Skipping token creation."
+    else
+      if [ "${tokenCount}" == "0" ]; then
+        _log "INFO" "Rest user found. Generating token."
+        if [ -f ${WLM_PN_RT_TOKEN_FILE} ]; then
+          _log "INFO" "Token file found. Use file to set up the token."
+          _createTokenFromFile
+        else
+          _log "INFO" "Token file not found. Generating token."
+          _updateRestPass
+          _startWildfly
+          _generateToken
+          _stopWildfly
+          _restoreRestPass
+          _exportToken
+        fi
+      else
+        _log "INFO" "Token records found."
+        _validateToken
+      fi
+    fi
+
+    _log "INFO" "Token generation completed."

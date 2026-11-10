@@ -1,0 +1,41 @@
+{{- if .Values.global.kubePrometheusStackPresent }}
+{{- if .Values.monitoring }}
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    {{- include "smbd.labels" . | nindent 4 }}
+    app: {{ include "smbd.fullname" . }}
+    release: "{{ include "smbd.fullname" . }}-prometheus-exporter"
+  name: "{{ include "smbd.fullname" . }}-monitor"
+  namespace: {{ .Values.global.namespace }}
+spec:
+  endpoints:
+    - interval: 5s
+      port: metrics
+  selector:
+    matchLabels:
+      "servicemonitor": "true"
+
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ include "smbd.fullname" . }}-metrics"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "smbd.labels" . | nindent 4 }}
+    "servicemonitor": "true"
+spec:
+  ports:
+    - port: 8090
+      name: metrics
+  clusterIP: None
+  selector:
+     app.kubernetes.io/name: "{{ include "smbd.name" . }}"
+
+{{- end }}
+{{- end }}

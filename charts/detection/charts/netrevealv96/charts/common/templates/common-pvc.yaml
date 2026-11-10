@@ -1,0 +1,55 @@
+{{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Release.Name }}-wlm-indexes
+  labels:
+    type: local
+  {{- if .Values.global.database.testBackupMode }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+spec:
+  storageClassName: {{ include "storage.storageClassName" . }}
+  capacity:
+    storage: {{ include "common.pvcWlmIndexStorage" . }}
+  accessModes:
+  - ReadWriteMany
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    name: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+  {{- if eq .Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ .Values.pv.hostPathWlmIndexesMinikube }}/{{ .Release.Name }}-{{ .Values.global.namespace }}/WLM
+  {{- else }}
+  nfs:
+    server: {{ .Values.global.pv.host }}
+    path:  {{ .Values.pv.hostPathWlmIndexes }}/{{ .Release.Name }}-{{ .Values.global.namespace }}/WLM
+  {{- end }}
+{{- end }}
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+  namespace: {{ .Values.global.namespace }}
+  {{- if .Values.global.database.testBackupMode }}
+  annotations:
+    helm.sh/resource-policy: keep
+    {{- include "storage.pvc.annotations" (list $ . "without-annotation-label" (include "storage.class.name.selectRwmStorageClassName" .)) | indent 4 }}
+  {{- else }}
+    {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectRwmStorageClassName" .)) | indent 2 }}
+  {{- end }}
+spec:
+  {{ include "storage.selectRwmStorageClassName" . | indent 2 }}
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ include "common.pvcWlmIndexStorage" . }}
+{{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+  volumeName: {{ .Release.Name }}-wlm-indexes
+{{- end }}

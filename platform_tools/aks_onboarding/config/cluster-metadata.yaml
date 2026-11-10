@@ -1,0 +1,42 @@
+# Cluster Metadata Template
+#
+# Fill this out per cluster during onboarding.
+# Committed to source control as an audit record.
+#
+# This file is the source of truth for cost automation configuration.
+# Do NOT store secrets here — use Azure Key Vault.
+
+cluster:
+  # Azure resource details
+  name: '' # e.g. aks-cloudhub-dev-itn-freetier-visaedb-app
+  resourceGroup: '' # Azure resource group name
+  subscriptionId: '' # Azure subscription ID
+  region: '' # e.g. italynorth
+
+  # Environment classification
+  environment: '' # dev | qa  (prod is blocked)
+
+  # Node pools (filled automatically by onboarding validation)
+  nodePools:
+    system:
+      name: '' # usually "systempool" or "system"
+      vmSize: '' # e.g. Standard_D2s_v3
+    user:
+      name: '' # usually "userpool" or "app"
+      vmSize: '' # e.g. Standard_D4s_v3
+      currentNodeCount: 0
+
+  # AKS auth mode
+  # "local" = local accounts enabled (supported)
+  # "azureRBAC" = Azure AD RBAC only (requires different binding approach)
+  authMode: ''
+
+# Onboarding record
+onboarding:
+  status: '' # ONBOARDED | PENDING | FAILED
+  onboardedAt: '' # ISO-8601 timestamp
+  onboardedBy: '' # Backstage user / SPN
+  capabilities: # Capabilities unlocked by this onboarding
+    - start
+    - stop
+    - downsize

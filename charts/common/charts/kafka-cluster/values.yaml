@@ -1,0 +1,43 @@
+# P10: this chart was a detectionhub SUBCHART; it now renders from `common`.
+# detectionhub's values.yaml supplied a big `kafka-cluster:` block of defaults that the
+# chart's own values did not carry (ingressAllowList, launch-template config,
+# ...). Those defaults are FOLDED IN here so the chart is self-contained in
+# its new home. Regenerate by deep-merging detectionhub's `kafka-cluster:` block over
+# the upstream chart values if either is ever updated.
+replicas: 1
+# Passthrough into the KafkaNodePool's spec.template.pod. Empty on purpose —
+# with replicas: 1 there is nothing to spread, and a hard rule would break the
+# single-node standalone install this chart's defaults exist to serve. See the
+# note in templates/cluster.yaml.
+pod:
+  topologySpreadConstraints: []
+  affinity: {}
+kafka:
+  version: 3.8.0
+  listeners:
+  - name: plain
+    port: 9092
+    type: internal
+    tls: false
+    networkPolicyPeers: []
+  - name: tls
+    port: 9093
+    type: internal
+    tls: true
+    networkPolicyPeers: []
+  config:
+    offsets.topic.replication.factor: 1
+    transaction.state.log.replication.factor: 1
+    transaction.state.log.min.isr: 1
+    default.replication.factor: 1
+    min.insync.replicas: 1
+    max.incremental.fetch.session.cache.slots: 10000
+    max.message.bytes: 10485880
+    message.max.bytes: 10485880
+    replica.fetch.max.bytes: 10485880
+    producer.compression.type: producer
+  storage:
+    size: 10Gi
+    deleteClaim: true
+labels:
+  SRIsolutions: SensaDetection

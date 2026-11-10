@@ -1,0 +1,57 @@
+
+Counterparty Resolution POC — release {{ .Release.Name }} installed.
+
+Components:
+  • spark-operator — Kubeflow Spark Operator (installs the SparkApplication CRDs + controller)
+{{- if not .Values.postgres.existingSecret.name }}
+  • postgres  (CloudNativePG Cluster {{ include "cpr.pg.clusterName" . }}, {{ .Values.postgres.cnpg.instances }} instance(s))  — serving store
+{{- else }}
+  • postgres  (external, via secret {{ .Values.postgres.existingSecret.name }})  — serving store
+{{- end }}
+{{- if .Values.backfill.enabled }}
+  • backfill  (SparkApplication {{ include "cpr.fullname" . }}-backfill-r{{ .Release.Revision }})
+                seedMode={{ .Values.backfill.seedMode }}{{ if eq .Values.backfill.seedMode "demo" }} (n_bg={{ .Values.backfill.demo.nBackgroundEntities }}){{ end }}, {{ .Values.backfill.executor.instances }} executor(s)
+{{- else }}
+  • backfill  DISABLED (serving-only) — the store starts EMPTY; trigger builds from the Builds page
+{{- end }}
+  • api       ({{ include "cpr.api.fullname" . }})  — FastAPI serving layer (/docs)
+  • web       ({{ include "cpr.web.fullname" . }})  — React UI (nginx, /api proxied to the api)
+
+{{ if .Values.backfill.enabled -}}
+1) Watch the DISTRIBUTED Day-0 backfill (driver + executors — trains Splink + resolves + loads Postgres):
+
+     kubectl get sparkapplication {{ include "cpr.fullname" . }}-backfill-r{{ .Release.Revision }}
+     kubectl get pods -l app.kubernetes.io/component=backfill-executor    # the executors
+     kubectl logs {{ include "cpr.fullname" . }}-backfill-r{{ .Release.Revision }}-driver
+
+   The UI comes up immediately; data appears once the SparkApplication reaches COMPLETED.
+{{- else -}}
+1) No build runs at install time. The UI comes up on an EMPTY store ({{ if .Values.api.builds.enabled }}/api/entities → [], /api/metrics → 404 "metrics not available" — both correct{{ else }}nothing will populate it: api.builds.enabled is false too{{ end }}). Trigger a build from the Builds page, or:
+
+     curl -sX POST http://{{ if .Values.ingress.enabled }}{{ .Values.ingress.host }}{{ else }}localhost:8000{{ end }}/api/builds -H 'content-type: application/json' \
+          -d '{"kind":"backfill","input_location":"{{ .Values.api.builds.messages.hostPath }}/smoke","reset_store":true,"note":"smoke"}'
+
+   Datasets available to the dropdown = the immediate subdirs of {{ .Values.api.builds.messages.hostPath }} on the node (GET /api/builds/datasets).
+{{- end }}
+
+2) Open the UI:
+{{- if .Values.ingress.enabled }}
+     • Ingress host: http://{{ .Values.ingress.host }}/
+       minikube:  `minikube addons enable ingress`, then:
+       echo "$(minikube ip)  {{ .Values.ingress.host }}" | sudo tee -a /etc/hosts
+{{- else }}
+     • kubectl port-forward svc/{{ include "cpr.web.fullname" . }} 8080:{{ .Values.web.service.port }}
+       → http://localhost:8080/
+{{- end }}
+     • API:      kubectl port-forward svc/{{ include "cpr.api.fullname" . }} 8000:{{ .Values.api.service.port }}  → /docs
+{{- if and (not .Values.postgres.existingSecret.name) .Values.postgres.nodePort.enabled }}
+     • Postgres: $(minikube ip):{{ .Values.postgres.nodePort.port }}  (db/user {{ .Values.postgres.cnpg.database }})
+       password:  kubectl get secret {{ include "cpr.pg.clusterName" . }}-app -o jsonpath='{.data.password}' | base64 -d
+{{- end }}
+
+{{ if .Values.backfill.enabled -}}
+Re-run the backfill: `helm upgrade {{ .Release.Name }} deploy/helm/cpr --wait`.
+{{- else -}}
+Builds are on-demand ({{ if .Values.api.builds.enabled }}POST /api/builds{{ else }}api.builds.enabled=false — enable it to trigger any{{ end }}); `helm upgrade` submits nothing while backfill.enabled=false.
+{{- end }}
+See deploy/README.md for the AKS overlay, the webhook/finalizer caveats, and the R38 (Argo) seam.

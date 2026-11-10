@@ -1,0 +1,118 @@
+{{- if .Values.configSvc.enabled }}
+# Names/labels/selector mirror the kubectl-applied original exactly —
+# selectors are immutable and Helm adopted these live objects.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-config-svc
+  labels:
+    app: pipeline-config-svc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pipeline-config-svc
+  template:
+    metadata:
+      labels:
+        app: pipeline-config-svc
+      {{- include "finPipeline.podAnnotations" . | nindent 6 }}
+    spec:
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      containers:
+        - name: api
+          image: {{ include "finPipeline.image" (dict "root" . "name" .Values.configSvc.imageName) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default (default dict .Values.global).imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: {{ .Values.configSvc.port }}
+          env:
+            - name: POSTGRES_HOST
+              value: {{ .Values.postgres.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            - name: KAFKA_TOPIC_PLAN
+              value: {{ .Values.kafka.topicPlan | quote }}
+            # Bundled Valkey by default; environments on the external
+            # instance (sri-cdd-valkey) override valkey.host to its FQDN.
+            - name: VALKEY_HOST
+              value: {{ .Values.valkey.host | default (printf "%s-valkey" (include "finPipeline.prefix" .)) | quote }}
+            - name: VALKEY_PORT
+              value: {{ .Values.valkey.port | quote }}
+            {{- with .Values.configSvc.dataSvcUrl }}
+            # Data-plane bake target. REQUIRED for any pipeline containing a DataMapping node:
+            # publish POSTs each node's compile_payload to {{ "{{ url }}" }}/v1/plans:compile and
+            # freezes the returned script into the plan. Left unset, publish still succeeds but
+            # bakes script-less "stub" steps, and every run of those steps fails at claim with
+            # "no frozen script in the plan".
+            - name: DATA_SVC_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.configSvc.craSvcUrl }}
+            # The CRA/KYC backend: strategy lowering fetches the scoped Risk Event
+            # Library from {{ "{{ url }}" }}/event-library to resolve the wizard's factors into
+            # widget configs. Lives in its own namespace, so this must be an FQDN.
+            # Unset → /strategies/lower 502s and published strategies produce
+            # unmanaged widgets with template defaults.
+            - name: CRA_SVC_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.minio.enabled }}
+            # Node-package registry (CRA plugin artifacts, bucket
+            # node-packages by default). Without these the service quietly
+            # fail-softs to in-tree plugins and never fetches packs.
+            - name: MINIO_ENDPOINT
+              value: {{ .Values.minio.endpoint | quote }}
+            - name: MINIO_SECURE
+              value: {{ .Values.minio.secure | quote }}
+            - name: MINIO_BUCKET
+              value: {{ .Values.minio.nodepackBucket | quote }}
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.existingSecret }}
+                  key: access_key
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.existingSecret }}
+                  key: secret_key
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.postgres.existingSecret }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.configSvc.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+          {{- if .Values.configSvc.datamappingOverride.enabled }}
+          volumeMounts:
+            - name: datamapping-contract
+              mountPath: /svc/app/planner/contracts/DataMapping.yaml
+              subPath: DataMapping.yaml
+          {{- end }}
+      {{- if .Values.configSvc.datamappingOverride.enabled }}
+      volumes:
+        - name: datamapping-contract
+          configMap:
+            name: {{ .Values.configSvc.datamappingOverride.configMap }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-config-svc
+  labels:
+    app: pipeline-config-svc
+spec:
+  selector:
+    app: pipeline-config-svc
+  ports:
+    - port: {{ .Values.configSvc.port }}
+      targetPort: {{ .Values.configSvc.port }}
+{{- end }}

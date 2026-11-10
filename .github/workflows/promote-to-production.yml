@@ -1,0 +1,79 @@
+name: Promote Staging Release to Production
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloudhub-production-promotion
+  cancel-in-progress: false
+
+env:
+  RESOURCE_GROUP: rg-cfe-apps-mj
+  FRONTEND_WEBAPP_NAME: cloudhub-frontend
+  BACKEND_WEBAPP_NAME: cloudhub-backend
+  SLOT_NAME: staging
+
+jobs:
+  validate-staging:
+    name: Validate staging release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+      - name: Authenticate to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Resolve staging URLs
+        id: urls
+        run: |
+          set -euo pipefail
+          for app in "$BACKEND_WEBAPP_NAME" "$FRONTEND_WEBAPP_NAME"; do
+            az webapp show -g "$RESOURCE_GROUP" -n "$app" --slot "$SLOT_NAME" -o none || { echo "::error::Missing ${app}/${SLOT_NAME} slot"; exit 1; }
+          done
+          echo "backend=https://$(az webapp show -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" --query defaultHostName -o tsv)" >> "$GITHUB_OUTPUT"
+          echo "frontend=https://$(az webapp show -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" --query defaultHostName -o tsv)" >> "$GITHUB_OUTPUT"
+      - name: Smoke test backend staging
+        run: bash scripts/release/backend-smoke-test.sh "${{ steps.urls.outputs.backend }}"
+      - name: Smoke test frontend staging
+        run: bash scripts/release/frontend-smoke-test.sh "${{ steps.urls.outputs.frontend }}"
+      - name: Publish validation summary
+        run: |
+          echo "## Staging Validation" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backend: healthy" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Frontend: healthy" >> "$GITHUB_STEP_SUMMARY"
+
+  promote:
+    name: Swap staging into production
+    needs: validate-staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Authenticate to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Swap backend staging slot first
+        run: az webapp deployment slot swap -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --slot "$SLOT_NAME" --target-slot production
+      - name: Swap frontend staging slot second
+        run: az webapp deployment slot swap -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --slot "$SLOT_NAME" --target-slot production
+      - name: Publish promotion summary
+        if: always()
+        run: |
+          {
+            echo "## Production Promotion"
+            echo "- Result: ${{ job.status }}"
+            echo "- Backend slot swapped: staging -> production"
+            echo "- Frontend slot swapped: staging -> production"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Actor: ${GITHUB_ACTOR}"
+            echo "- Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_STEP_SUMMARY"

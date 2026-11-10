@@ -1,0 +1,25 @@
+Assembly Workflows has been deployed.
+
+{{- if eq .Values.apisix.service.type "LoadBalancer" }}
+
+Access the platform at the LoadBalancer external IP:
+  kubectl get svc apisix -n {{ .Release.Namespace }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+
+{{- else }}
+
+Access the platform via port-forward:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/apisix 9080:80
+  Open http://localhost:9080
+
+{{- end }}
+
+Prerequisites (must be running before this chart):
+  - PostgreSQL (connection: secrets.databaseUrl)
+  - Redis (connection: externalInfra.redis.url)
+  - Keycloak (connection: externalInfra.keycloak.serverUrl)
+  - Temporal (connection: externalInfra.temporal.host)
+
+Sizing profiles:
+  helm upgrade {{ .Release.Name }} . -f values-small.yaml   # 3 nodes
+  helm upgrade {{ .Release.Name }} . -f values-medium.yaml  # 8 nodes
+  helm upgrade {{ .Release.Name }} . -f values-large.yaml   # 20+ nodes

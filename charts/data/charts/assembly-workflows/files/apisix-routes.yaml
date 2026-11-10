@@ -1,0 +1,864 @@
+routes:
+{{- $shim := .Values.externalInfra.keycloak.frontendRealmShim | default "" }}
+{{- $realRealm := .Values.externalInfra.keycloak.realm }}
+{{- if and $shim (ne $shim $realRealm) }}
+{{- $issuer := .Values.externalInfra.keycloak.expectedIssuer | default "" }}
+{{- if $issuer }}
+{{- $kcBase := trimSuffix (printf "/realms/%s" $realRealm) $issuer }}
+  # INTERACTIVE navigations must complete on the Keycloak host itself: the
+  # platform Keycloak PINS its hostname, so the login form's action posts to
+  # that host — a same-origin-proxied login sets its auth-session cookies on
+  # THIS host and loses them on the cross-host POST ("An error occurred,
+  # please login again through your application", verified live). Redirecting
+  # the browser up front keeps the whole form flow (and its cookies) on one
+  # origin, exactly like every other product's login. The token exchange and
+  # discovery are XHR (no cookies) and stay same-origin via the proxy below.
+  - id: keycloak-frontend-realm-shim-nav-auth
+    uris:
+      - /realms/{{ $shim }}/protocol/openid-connect/auth
+      - /auth/realms/{{ $shim }}/protocol/openid-connect/auth
+    # upstream present as a FALLBACK only: this apisix build 503s a route with
+    # no upstream even when a terminating plugin (redirect) is attached
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.keycloakUpstream" . }}": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 60
+    plugins:
+      # response-rewrite, NOT the redirect plugin: on this apisix build the
+      # redirect plugin never executes on yaml-provider routes (verified live —
+      # requests fell through to the upstream with the plugin loaded and the
+      # route accepted). response-rewrite runs reliably; the upstream response
+      # is discarded and replaced with the 302.
+      response-rewrite:
+        status_code: 302
+        headers:
+          set:
+            Location: "{{ $kcBase }}/realms/{{ $realRealm }}/protocol/openid-connect/auth?$args"
+      prometheus: {}
+  - id: keycloak-frontend-realm-shim-nav-logout
+    uris:
+      - /realms/{{ $shim }}/protocol/openid-connect/logout
+      - /auth/realms/{{ $shim }}/protocol/openid-connect/logout
+    # upstream present as a FALLBACK only: this apisix build 503s a route with
+    # no upstream even when a terminating plugin (redirect) is attached
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.keycloakUpstream" . }}": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 60
+    plugins:
+      # response-rewrite, NOT the redirect plugin: on this apisix build the
+      # redirect plugin never executes on yaml-provider routes (verified live —
+      # requests fell through to the upstream with the plugin loaded and the
+      # route accepted). response-rewrite runs reliably; the upstream response
+      # is discarded and replaced with the 302.
+      response-rewrite:
+        status_code: 302
+        headers:
+          set:
+            Location: "{{ $kcBase }}/realms/{{ $realRealm }}/protocol/openid-connect/logout?$args"
+      prometheus: {}
+{{- end }}
+  # SAME-REALM SHIM (see values externalInfra.keycloak.frontendRealmShim):
+  # the frontend's BAKED realm path is rewritten onto the real realm. Longer
+  # prefix than the generic /realms/* route, so it wins radix-tree routing.
+  - id: keycloak-frontend-realm-shim
+    uris:
+      - /realms/{{ $shim }}/*
+      - /realms/{{ $shim }}/*/*
+      - /realms/{{ $shim }}/*/*/*
+      - /realms/{{ $shim }}/*/*/*/*
+      - /realms/{{ $shim }}/*/*/*/*/*
+      - /auth/realms/{{ $shim }}/*
+      - /auth/realms/{{ $shim }}/*/*
+      - /auth/realms/{{ $shim }}/*/*/*
+      - /auth/realms/{{ $shim }}/*/*/*/*
+      - /auth/realms/{{ $shim }}/*/*/*/*/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.keycloakUpstream" . }}": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 300
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^(?:/auth)?/realms/{{ $shim }}/(.*)"
+          - "/realms/{{ $realRealm }}/$1"
+        headers:
+          set:
+            X-Forwarded-Proto: '{{ if (include "aw.apisixIngressTls" .) }}$http_x_forwarded_proto{{ else }}$scheme{{ end }}'
+            X-Forwarded-Host: "$http_host"
+            X-Forwarded-Port: "443"
+      prometheus: {}
+{{- end }}
+  - id: keycloak-auth-strip
+    uris:
+      - /auth/*
+      - /auth/*/*
+      - /auth/*/*/*
+      - /auth/*/*/*/*
+      - /auth/*/*/*/*/*
+      - /auth/*/*/*/*/*/*
+      - /auth/*/*/*/*/*/*/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.keycloakUpstream" . }}": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 300
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/auth/(.*)"
+          - "/$1"
+        headers:
+          set:
+            X-Forwarded-Proto: '{{ if (include "aw.apisixIngressTls" .) }}$http_x_forwarded_proto{{ else }}$scheme{{ end }}'
+            X-Forwarded-Host: "$http_host"
+            X-Forwarded-Port: "443"
+      prometheus: {}
+  - id: keycloak-auth
+    uris:
+      - /realms/*
+      - /realms/*/*
+      - /realms/*/*/*
+      - /realms/*/*/*/*
+      - /realms/*/*/*/*/*
+      - /realms/*/*/*/*/*/*
+      - /resources/*
+      - /resources/*/*
+      - /resources/*/*/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.keycloakUpstream" . }}": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 300
+    plugins:
+      proxy-rewrite:
+        headers:
+          set:
+            X-Forwarded-Proto: '{{ if (include "aw.apisixIngressTls" .) }}$http_x_forwarded_proto{{ else }}$scheme{{ end }}'
+            X-Forwarded-Host: "$http_host"
+            X-Forwarded-Port: "443"
+      limit-req:
+        rate: 5
+        burst: 10
+        key: remote_addr
+        key_type: var
+        rejected_code: 429
+        nodelay: true
+      prometheus: {}
+  # InvHub-compat: the hardcoded ROPC token path -> assembly-core's compat shim
+  # (app/api/v1/auth.py::eureka_auth_token_compat), which normalizes the body
+  # to urlencoded before forwarding to Keycloak. NOT a direct-to-Keycloak
+  # proxy-rewrite anymore: invhub-disc-web posts a browser FormData (serializes
+  # as multipart/form-data), which Keycloak's token endpoint cannot parse
+  # (client_id/grant_type never arrive -> 401 with no useful detail) — the old
+  # flows-eng-dev platform tolerated multipart, Keycloak does not. The shim
+  # accepts either encoding and forwards Keycloak's response byte-for-byte.
+  - id: assembly-eureka-auth-token
+    uris:
+      - /eureka-auth
+      - /eureka-auth/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-core:8000": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 60
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/eureka-auth/release/[^/]+/tenants/get-token$"
+          - "/api/v1/auth/eureka-compat/token"
+        headers:
+          set:
+            X-Forwarded-Proto: '{{ if (include "aw.apisixIngressTls" .) }}$http_x_forwarded_proto{{ else }}$scheme{{ end }}'
+            X-Forwarded-Host: "$http_host"
+            X-Forwarded-Port: "443"
+      # Route-level CORS for browser-direct InvHub calls (the get-token POST
+      # goes straight from the InvHub origin; Keycloak only CORS-allows the
+      # preflight, not the token response). Must define EVERY key: APISIX
+      # merges the GLOBAL cors defaults (expose_headers "*" +
+      # allow_credential true) into a route-level cors config, and that
+      # merged combination FAILS schema validation -- APISIX standalone then
+      # SILENTLY DROPS the route (falls through to the frontend catch-all ->
+      # 405). Production-verified on dev-assembly. allow_credential stays
+      # false (Bearer header, no cookies); origins share the same values knob
+      # as the global block.
+      cors:
+        allow_origins_by_regex:
+{{- range .Values.apisix.cors.allowOriginsRegex }}
+          - {{ . | squote }}
+{{- end }}
+        allow_methods: "GET,POST,OPTIONS"
+        allow_headers: "Authorization,Content-Type,Tenant,Deployment-Name,X-Requested-With"
+        expose_headers: "Content-Type"
+        max_age: 3600
+        allow_credential: false
+      limit-req:
+        rate: 5
+        burst: 10
+        key: remote_addr
+        key_type: var
+        rejected_code: 429
+        nodelay: true
+      prometheus: {}
+  # InvHub-compat: InvHub's FlowsHealthIndicator GETs
+  # /webhook-service/release/0.0.0/health (the releaseId is always 0.0.0,
+  # derived from EUREKA_FLOWS with no override). That path does not match the
+  # compat proxy's regex_uri below, so without this route it proxied
+  # unrewritten to sandbox-trigger and 404'd (IH health showed FLOWS: down).
+  # Exact-uri route rewriting to core's real health endpoint; priority pins it
+  # above the /webhook-service/* prefix match. NO `vars` matcher on purpose:
+  # APISIX standalone's tinyyaml crashes on the nested inline arrays vars
+  # requires.
+  - id: webhook-service-health
+    uri: /webhook-service/release/0.0.0/health
+    priority: 100
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-core:8000": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      proxy-rewrite:
+        uri: /api/v1/health
+      prometheus: {}
+  # InvHub-compat: the hardcoded webhook path -> the sandbox webhook (strips the
+  # /webhook-service/release/{id}/webhook/ prefix, preserves {id}[/aliases/{alias}]).
+  - id: webhook-service-compat-proxy
+    uris:
+      - /webhook-service
+      - /webhook-service/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-sandbox-trigger:8003": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 600
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/webhook-service/release/[^/]+/webhook/(.*)"
+          - "/api/sandbox/api/v1/webhook/$1"
+      # Route-level CORS for browser-direct InvHub agent calls. Every key
+      # defined on purpose -- see the cors note on assembly-eureka-auth-token
+      # (global-merge schema failure silently drops the route).
+      cors:
+        allow_origins_by_regex:
+{{- range .Values.apisix.cors.allowOriginsRegex }}
+          - {{ . | squote }}
+{{- end }}
+        allow_methods: "GET,POST,OPTIONS"
+        allow_headers: "Authorization,Content-Type,Tenant,Deployment-Name,X-Requested-With"
+        expose_headers: "Content-Type"
+        max_age: 3600
+        allow_credential: false
+      prometheus: {}
+  # Keycloak OIDC paths proxied under /api/v1/auth/realms/... (must stay
+  # narrower than assembly-core's /api/v1/auth/* so /api/v1/auth/me hits core).
+  - id: keycloak-auth-api
+    uris:
+      - /api/v1/auth/realms/*
+      - /api/v1/auth/realms/*/*
+      - /api/v1/auth/realms/*/*/*
+      - /api/v1/auth/realms/*/*/*/*
+      - /api/v1/auth/realms/*/*/*/*/*
+      - /api/v1/auth/realms/*/*/*/*/*/*
+      - /api/v1/auth/realms/*/*/*/*/*/*/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.keycloakUpstream" . }}": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 300
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/v1/auth/(.*)"
+          - "/$1"
+        headers:
+          set:
+            X-Forwarded-Proto: '{{ if (include "aw.apisixIngressTls" .) }}$http_x_forwarded_proto{{ else }}$scheme{{ end }}'
+            X-Forwarded-Host: "$http_host"
+            X-Forwarded-Port: "443"
+      limit-req:
+        rate: 5
+        burst: 10
+        key: remote_addr
+        key_type: var
+        rejected_code: 429
+        nodelay: true
+      prometheus: {}
+
+  - id: assembly-llm-gateway-health
+    uri: /api/llm-gateway/health
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-llm-gateway:8006": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      proxy-rewrite:
+        uri: /api/health
+      prometheus: {}
+
+  - id: assembly-llm-gateway-admin
+    uri: /api/llm-gateway/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-llm-gateway:8006": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/llm-gateway/(.*)"
+          - "/$1"
+      openid-connect:
+        client_id: assembly-platform-backend
+        discovery: {{ include "aw.keycloakServerUrl" . }}/realms/{{ .Values.externalInfra.keycloak.realm }}/.well-known/openid-configuration
+        realm: {{ .Values.externalInfra.keycloak.realm }}
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        ssl_verify: false
+        unauth_action: deny
+      prometheus: {}
+
+  - id: assembly-core-api
+    uris:
+      - /api/users/*
+      - /api/v1/users/*
+      - /api/sessions*
+      - /api/projects*
+      - /api/projects/*
+      - /api/v1/projects
+      - /api/v1/projects/*
+      - /api/v1/project-templates/*
+      - /api/v1/workflows/*
+      - /api/v1/file-search/*
+      - /api/v1/resources
+      - /api/v1/resources/*
+      - /api/v1/secrets
+      - /api/v1/secrets/*
+      - /api/v1/user-keys*
+      - /api/v1/skills/*
+      - /api/work-sessions/*
+      - /api/v1/work-sessions/*
+      - /api/v1/auth/*
+      - /api/v1/auth/*/*
+      - /api/v1/auth/*/*/*
+      - /api/v1/auth/*/*/*/*
+      - /api/v1/auth/*/*/*/*/*
+      - /api/v1/auth/*/*/*/*/*/*
+      - /api/v1/bug-reports
+      - /api/v1/bug-reports/*
+      - /api/v1/platform
+      - /api/v1/platform/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-core:8000": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      openid-connect:
+        client_id: assembly-platform-backend
+        discovery: {{ include "aw.keycloakServerUrl" . }}/realms/{{ .Values.externalInfra.keycloak.realm }}/.well-known/openid-configuration
+        realm: {{ .Values.externalInfra.keycloak.realm }}
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        ssl_verify: false
+        unauth_action: deny
+      prometheus: {}
+
+  - id: assembly-core-health
+    uri: /api/v1/health
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-core:8000": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      prometheus: {}
+
+  # Public current/upcoming notice (login page). Exact URI + higher priority so
+  # it is not denied by assembly-core-api's openid-connect unauth_action.
+  - id: assembly-core-maintenance-public
+    uri: /api/v1/platform/maintenance
+    priority: 20
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-core:8000": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 60
+    plugins:
+      prometheus: {}
+
+  - id: assembly-core-api-no-slash
+    uris:
+      - /api/users
+      - /api/v1/auth
+      - /api/v1/bug-reports
+      - /api/v1/users
+      - /api/v1/workflows
+      - /api/v1/file-search
+      - /api/v1/resources
+      - /api/v1/secrets
+      - /api/v1/skills
+      - /api/v1/projects
+      - /api/v1/work-sessions
+      - /api/work-sessions
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-core:8000": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      openid-connect:
+        client_id: assembly-platform-backend
+        discovery: {{ include "aw.keycloakServerUrl" . }}/realms/{{ .Values.externalInfra.keycloak.realm }}/.well-known/openid-configuration
+        realm: {{ .Values.externalInfra.keycloak.realm }}
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        ssl_verify: false
+        unauth_action: deny
+      prometheus: {}
+
+
+  - id: assembly-mcp-hub-health
+    uri: /api/v1/mcp-hub/health
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-mcp-hub:8011": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      proxy-rewrite:
+        uri: /api/v1/mcp/health
+      prometheus: {}
+
+  - id: assembly-mcp-hub-api
+    uris:
+      - /api/v1/mcp
+      - /api/v1/mcp/*
+      - /api/v1/mcp-hub
+      - /api/v1/mcp-hub/*
+      - /api/v1/mcps
+      - /api/v1/mcps/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-mcp-hub:8011": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      openid-connect:
+        client_id: assembly-platform-backend
+        discovery: {{ include "aw.keycloakServerUrl" . }}/realms/{{ .Values.externalInfra.keycloak.realm }}/.well-known/openid-configuration
+        realm: {{ .Values.externalInfra.keycloak.realm }}
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        ssl_verify: false
+        unauth_action: deny
+      prometheus: {}
+
+  - id: mcp-agent-studio-http
+    uri: /mcp/assembly-agent-studio/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-mcp-hub:8011": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 300
+    plugins:
+      openid-connect:
+        client_id: assembly-platform-backend
+        discovery: {{ include "aw.keycloakServerUrl" . }}/realms/{{ .Values.externalInfra.keycloak.realm }}/.well-known/openid-configuration
+        realm: {{ .Values.externalInfra.keycloak.realm }}
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        ssl_verify: false
+        unauth_action: deny
+      prometheus: {}
+
+
+  - id: agentic-workflows-api
+    uri: /api/v1/agentic-workflows/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-core:8000": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/v1/agentic-workflows/(.*)"
+          - "/api/v1/$1"
+      openid-connect:
+        client_id: assembly-platform-backend
+        discovery: {{ include "aw.keycloakServerUrl" . }}/realms/{{ .Values.externalInfra.keycloak.realm }}/.well-known/openid-configuration
+        realm: {{ .Values.externalInfra.keycloak.realm }}
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        ssl_verify: false
+        unauth_action: deny
+      prometheus: {}
+
+  - id: agents-traces-ws
+    uri: /api/agents/ws/traces/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-engine:8000": 1
+      timeout:
+        connect: 60
+        send: 60
+        # Must outlive the workflow stream (workflowStreamTimeoutSeconds);
+        # +60 lets the engine time out first with a clean error.
+        read: {{ add .Values.workflowStreamTimeoutSeconds 60 }}
+    enable_websocket: true
+    plugins:
+      openid-connect:
+        client_id: assembly-platform-backend
+        discovery: {{ include "aw.keycloakServerUrl" . }}/realms/{{ .Values.externalInfra.keycloak.realm }}/.well-known/openid-configuration
+        realm: {{ .Values.externalInfra.keycloak.realm }}
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        ssl_verify: false
+        unauth_action: deny
+      prometheus: {}
+
+  - id: standalone-agent-api
+    uri: /api/v1/standalone-agent/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-engine:8000": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 300
+    plugins:
+      openid-connect:
+        client_id: assembly-platform-backend
+        discovery: {{ include "aw.keycloakServerUrl" . }}/realms/{{ .Values.externalInfra.keycloak.realm }}/.well-known/openid-configuration
+        realm: {{ .Values.externalInfra.keycloak.realm }}
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        ssl_verify: false
+        unauth_action: deny
+      prometheus: {}
+
+  - id: agents-api
+    uri: /api/agents/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-engine:8000": 1
+      timeout:
+        connect: 60
+        send: 60
+        # Workflow execution SSE streams ride this route; see
+        # workflowStreamTimeoutSeconds in values.yaml.
+        read: {{ add .Values.workflowStreamTimeoutSeconds 60 }}
+    plugins:
+      openid-connect:
+        client_id: assembly-platform-backend
+        discovery: {{ include "aw.keycloakServerUrl" . }}/realms/{{ .Values.externalInfra.keycloak.realm }}/.well-known/openid-configuration
+        realm: {{ .Values.externalInfra.keycloak.realm }}
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        ssl_verify: false
+        unauth_action: deny
+      prometheus: {}
+
+
+  - id: deployments-proxy
+    uri: /api/deployments/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-sandbox-trigger:8003": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/api/deployments/(.*)"
+          - "/api/sandbox/api/v1/workflows/$1"
+      prometheus: {}
+  - id: webhook-compat-proxy
+    uri: /webhook/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-sandbox-trigger:8003": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 600
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/webhook/(.*)"
+          - "/api/sandbox/api/v1/webhook/$1"
+      # Route-level CORS for browser-direct InvHub agent calls. Every key
+      # defined on purpose -- see the cors note on assembly-eureka-auth-token
+      # (global-merge schema failure silently drops the route).
+      cors:
+        allow_origins_by_regex:
+{{- range .Values.apisix.cors.allowOriginsRegex }}
+          - {{ . | squote }}
+{{- end }}
+        allow_methods: "GET,POST,OPTIONS"
+        allow_headers: "Authorization,Content-Type,Tenant,Deployment-Name,X-Requested-With"
+        expose_headers: "Content-Type"
+        max_age: 3600
+        allow_credential: false
+      prometheus: {}
+  - id: sandbox-api
+    uri: /api/sandbox/*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-sandbox-trigger:8003": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      prometheus: {}
+
+
+
+  - id: preview-proxy
+    uri: /preview/*
+    vars:
+      - - http_host
+        - "~="
+        - "^[^.]+\\.preview\\..+(?::\\d+)?$"
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-sandbox-execute:8003": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    enable_websocket: true
+    plugins:
+      proxy-rewrite:
+        regex_uri:
+          - "^/preview/(.*)"
+          - "/api/sandbox/api/v1/preview/$1"
+      openid-connect:
+        client_id: assembly-platform-backend
+        discovery: {{ include "aw.keycloakServerUrl" . }}/realms/{{ .Values.externalInfra.keycloak.realm }}/.well-known/openid-configuration
+        realm: {{ .Values.externalInfra.keycloak.realm }}
+        bearer_only: true
+        use_jwks: true
+        token_signing_alg_values_expected: RS256
+        ssl_verify: false
+        unauth_action: deny
+      prometheus: {}
+
+
+  # Fast 404 for genuinely-unmatched /api/* paths (#1588). Without this, an /api/*
+  # request that doesn't match any more-specific route above falls through to the
+  # frontend catch-all below and gets forwarded to {{ include "aw.prefix" . }}-frontend:3000, whose own
+  # nginx.conf has an /api proxy_pass to a docker-compose-only upstream name
+  # (apisix-gateway:9080) that doesn't exist in this chart's topology -- nginx
+  # then hangs (DNS/connect against a nonexistent host) until its own generous
+  # proxy_read_timeout (300s), so the client just sees a slow hang instead of a
+  # clean 404. This route is MORE specific than the /* catch-all (radix-tree
+  # routing prefers longer prefixes, same reason /api/v1/health etc. above
+  # already take priority over /*) but LESS specific than every real /api/...
+  # route, so it only catches paths that don't match anything real.
+  - id: api-not-found
+    uri: /api/*
+    # APISIX requires a valid upstream on every route even when a plugin (echo, below)
+    # short-circuits the request in the access phase before ever proxying -- omitting
+    # it produces "missing upstream configuration" and a 503 instead of echo's intended
+    # response. assembly-core is just a formality target here; echo intercepts first.
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-core:8000": 1
+    plugins:
+      echo:
+        status_code: 404
+        body: '{"error":"not_found","message":"No matching API route"}'
+        headers:
+          Content-Type: application/json
+
+  # Frontend catch-all — MUST be last
+  - id: frontend
+    uri: /*
+    upstream:
+      type: roundrobin
+      nodes:
+        "{{ include "aw.prefix" . }}-frontend:3000": 1
+      timeout:
+        connect: 60
+        send: 60
+        read: 180
+    plugins:
+      prometheus: {}
+
+plugins:
+  - name: proxy-rewrite
+    enable: true
+  - name: cors
+    enable: true
+    config:
+      # Origins come from values (apisix.cors.allowOriginsRegex) so overlays
+      # can add per-environment origins without patching this file. Emitted
+      # with squote: the regexes carry `\.`, which is valid in single-quoted
+      # YAML but an invalid escape in double-quoted YAML.
+      allow_origins_by_regex:
+{{- range .Values.apisix.cors.allowOriginsRegex }}
+        - {{ . | squote }}
+{{- end }}
+      allow_methods: "*"
+      allow_headers: "*"
+      expose_headers: "*"
+      max_age: 3600
+      allow_credential: true
+  - name: prometheus
+    enable: true
+  - name: response-rewrite
+    enable: true
+  - name: real-ip
+    enable: true
+  - name: echo
+    enable: true
+
+global_rules:
+  - id: forwarded-proto-rule
+    plugins:
+      proxy-rewrite:
+        headers:
+          set:
+            X-Forwarded-Proto: '{{ if (include "aw.apisixIngressTls" .) }}$http_x_forwarded_proto{{ else }}$scheme{{ end }}'
+            X-Forwarded-Host: "$http_host"
+            X-Real-IP: "$remote_addr"
+          # #118: strip the internal-service trust headers from every inbound
+          # request. X-Internal-Service-Key/X-Service-Name gate a service's
+          # no-bearer-JWT auth fallback meant ONLY for genuine
+          # service-to-service calls, which never traverse this gateway (they
+          # hit the callee's k8s Service DNS name directly). An external
+          # client supplying the well-known default INTERNAL_SERVICE_API_KEY
+          # + an arbitrary X-User-ID over this public gateway was accepted as
+          # a trusted internal caller -- full cross-user impersonation, no
+          # bearer token required. Deliberately merged into THIS existing
+          # proxy-rewrite rule rather than added as a second global rule: two
+          # global_rules both configuring proxy-rewrite do NOT compose --
+          # confirmed live (only the first-listed rule's plugin config takes
+          # effect, silently dropping the second) -- the exact same
+          # single-vars-condition-per-plugin-instance composition bug that
+          # broke response-rewrite here before (#1547, see the sanitize note
+          # below). A second proxy-rewrite global rule would have looked
+          # correct in the YAML while doing nothing at runtime.
+          remove:
+            - X-Internal-Service-Key
+            - X-Service-Name
+            - X-User-ID
+  - id: sanitize-upstream-5xx
+    plugins:
+      response-rewrite:
+        vars:
+          - - status
+            - ">="
+            - 500
+        headers:
+          set:
+            Content-Type: application/json
+        body: '{"error":"internal_server_error","message":"Internal server error"}'
+  # NOTE (#1547): PR #1534's "security-headers" global rule (also using
+  # response-rewrite) is REVERTED here. APISIX's response-rewrite plugin gates
+  # its ENTIRE behavior -- headers included -- on a single `vars` condition
+  # (confirmed by reading apisix/plugins/response-rewrite.lua's vars_matched()/
+  # header_filter()/body_filter(): if vars don't match, header_filter returns
+  # before setting any headers at all). Two global rules both configuring
+  # response-rewrite do not compose the way the original PR assumed -- the
+  # 5xx-only body substitution above started firing on EVERY response
+  # (including 2xx), while Content-Length stayed at the real pre-rewrite
+  # length, hanging every client indefinitely. This was live on `main` and
+  # would have broken any real deployment. Re-adding the baseline security
+  # headers (#1532) needs a mechanism that doesn't share the response-rewrite
+  # global rule with the 5xx sanitizer above -- e.g. a raw nginx `add_header`
+  # snippet (this file's `nginx_config.http` block already carries one custom
+  # directive, `client_max_body_size`) rather than a second response-rewrite
+  # instance. Needs live curl-based validation (not just config-text
+  # assertions, which is how #1534 shipped without catching this) before
+  # merging. Tracked as a re-implementation follow-up, not fixed here.
+
+upstreams: []
+
+ssls: []
+
+#END

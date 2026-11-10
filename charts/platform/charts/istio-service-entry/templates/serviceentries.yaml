@@ -1,0 +1,24 @@
+{{- range .Values.serviceEntries }}
+---
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: {{ .name }}
+  namespace: {{ .namespace }}
+spec:
+  hosts:
+{{- range .hosts }}
+    - "{{ . }}"
+{{- end }}
+
+  location: {{ .location }}
+  resolution: {{ .resolution }}
+
+  ports:
+{{- range .ports }}
+    - number: {{ .number }}
+      name: {{ .name }}
+      protocol: {{ .protocol }}
+{{- end }}
+{{- end }}
+

@@ -1,0 +1,15 @@
+{{- range $i, $tn := .Values.tailnets }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $tn.url | replace "." "-" | lower | quote }}
+  annotations:
+    tailscale.com/tags: "{{ (index $.Values.tags 0) | default "tag:k8s-scp" }}"
+    tailscale.com/tailnet-ip: "{{ $tn.ip }}"
+  labels:
+    tailscale.com/proxy-class: "{{ $.Values.proxyClassName }}"
+spec:
+  type: ExternalName
+  externalName: unused
+{{- end }}

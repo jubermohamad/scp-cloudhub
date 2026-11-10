@@ -1,0 +1,60 @@
+{{- $root := . -}}
+{{- $ingClass := coalesce .Values.ingress.className .Values.global.ingress.className "nginx-inc" -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-ingress
+  annotations:
+    {{- if .Values.ingress.annotations }}
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.org/redirect-to-https: "true"
+    ## WebSocket support - required for MinIO Console UI (bucket browsing, uploads, real-time updates)    
+    nginx.org/websocket-services: "minio-console"    
+    ## Proxy timeouts - MinIO Console uses long-polling; default 60s causes UI to hang    
+    nginx.org/proxy-connect-timeout: "300s"    
+    nginx.org/proxy-read-timeout: "300s"    
+    nginx.org/proxy-send-timeout: "300s"    
+    ## Allow large file uploads through MinIO UI (0 = unlimited)    
+    nginx.org/client-max-body-size: "0"
+    {{- $customerIPs := .Values.ingress.ingressAllowList.customerIPs }}
+    {{- $platformIPs := .Values.ingress.ingressAllowList.platformIPs }}
+    {{- $allIPs := concat $customerIPs $platformIPs | uniq | compact }}
+    {{- if and $allIPs (gt (len $allIPs) 0) }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ join ", " $allIPs | quote }}
+    nginx.org/ip-allow-list: {{ join ", " $allIPs | quote }}
+    {{- end }}
+    {{- if not (semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion) }}
+    kubernetes.io/ingress.class: {{ $ingClass | quote }}
+    {{- end }}
+spec:
+  {{- if semverCompare ">=1.18-0" .Capabilities.KubeVersion.GitVersion }} 
+  ingressClassName: {{ $ingClass | quote }} 
+  {{- end }}
+  tls:
+  - hosts:
+    - {{ tpl .Values.global.MINIO_INGRESS_HOST . }}
+    - {{ tpl .Values.global.MINIOUI_INGRESS_HOST . }}
+    secretName: {{ .Values.global.SSL_SECRETS }}
+  rules:
+  - host: {{ tpl .Values.global.MINIO_INGRESS_HOST . }}
+    http:
+      paths:
+      - pathType: Prefix
+        path: "/"
+        backend:
+          service:
+            name: minio
+            port:
+              number: 9000
+  - host: {{ tpl .Values.global.MINIOUI_INGRESS_HOST . }}
+    http:
+      paths:
+      - pathType: Prefix
+        path: "/"
+        backend:
+          service:
+            name: minio-console
+            port:
+              number: 9001

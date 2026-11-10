@@ -1,0 +1,536 @@
+name: Build FE/BE Production (BASIC)
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Shared container image tag for frontend and backend (optional when auto beta semver is enabled)'
+        required: false
+        default: ''
+        type: string
+      frontend_tag:
+        description: 'Optional frontend-specific tag (overrides image_tag)'
+        required: false
+        default: ''
+        type: string
+      backend_tag:
+        description: 'Optional backend-specific tag (overrides image_tag)'
+        required: false
+        default: ''
+        type: string
+      push_latest:
+        description: 'Also push latest tag'
+        required: true
+        default: false
+        type: boolean
+      versioning_mode:
+        description: 'manual uses provided tags; auto_beta_semver computes the next 0.9.0-beta.N tag'
+        required: true
+        default: manual
+        type: choice
+        options:
+          - manual
+          - auto_beta_semver
+      run_quality_gates:
+        description: 'Run lint, typecheck, unit/integration tests, and platform tests'
+        required: true
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      image_tag:
+        required: false
+        default: ''
+        type: string
+      frontend_tag:
+        required: false
+        default: ''
+        type: string
+      backend_tag:
+        required: false
+        default: ''
+        type: string
+      push_latest:
+        required: false
+        default: false
+        type: boolean
+      versioning_mode:
+        required: false
+        default: manual
+        type: string
+      run_quality_gates:
+        required: false
+        default: true
+        type: boolean
+    outputs:
+      image_version:
+        description: Resolved image version (shared tag when frontend and backend match)
+        value: ${{ jobs.build-and-push.outputs.image_version }}
+      frontend_tag:
+        description: Frontend image tag pushed to ACR
+        value: ${{ jobs.build-and-push.outputs.frontend_tag }}
+      backend_tag:
+        description: Backend image tag pushed to ACR
+        value: ${{ jobs.build-and-push.outputs.backend_tag }}
+      frontend_image:
+        description: Fully-qualified frontend image reference
+        value: ${{ jobs.build-and-push.outputs.frontend_image }}
+      backend_image:
+        description: Fully-qualified backend image reference
+        value: ${{ jobs.build-and-push.outputs.backend_image }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudhub-build-fe-be-prod-basic
+  cancel-in-progress: false
+
+env:
+  WORKFLOW_BUILD_REV: 2026-08-02-split-build-v1
+  REGISTRY: symphonyfs.azurecr.io
+  ACR_NAME: symphonyfs
+  FRONTEND_REPOSITORY: cloudhub-platform/frontend
+  BACKEND_REPOSITORY: cloudhub-platform/backend
+  CANONICAL_PUBLIC_URL: https://cloudhub.symphonyai.cloud
+  # App Service names are retained for deployment metadata; production URL
+  # defaults are intentionally pinned to cloudhub.symphonyai.cloud.
+  FRONTEND_WEBAPP_NAME: cloudhub-frontend
+  BACKEND_WEBAPP_NAME: cloudhub-backend
+
+jobs:
+  resolve-image-tags:
+    name: Resolve Frontend and Backend Tags
+    runs-on: ubuntu-latest
+    outputs:
+      frontend_tag: ${{ steps.tags.outputs.frontend_tag }}
+      backend_tag: ${{ steps.tags.outputs.backend_tag }}
+      frontend_image: ${{ steps.tags.outputs.frontend_image }}
+      backend_image: ${{ steps.tags.outputs.backend_image }}
+
+    steps:
+      - name: Authenticate to Azure (SPN)
+        env:
+          SPN_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          SPN_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SPN_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          SPN_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          if [ "${SPN_CLIENT_ID,,}" != "73b2043b-6230-480a-8a9a-fd37f68af1b2" ] || [ "${SPN_TENANT_ID,,}" != "d0fec9dd-9219-4514-a1d8-1a872244bf6e" ] || [ -z "${SPN_CLIENT_SECRET:-}" ]; then
+            echo "::error::Azure operations require the CloudHub platform service principal and tenant."
+            exit 1
+          fi
+          az login --service-principal \
+            --username "$SPN_CLIENT_ID" \
+            --password "$SPN_CLIENT_SECRET" \
+            --tenant "$SPN_TENANT_ID" \
+            --output none
+          if [ -n "${SPN_SUBSCRIPTION_ID:-}" ]; then
+            az account set --subscription "$SPN_SUBSCRIPTION_ID"
+          fi
+
+      - name: Resolve tag values for build
+        id: tags
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          FRONTEND_TAG: ${{ inputs.frontend_tag }}
+          BACKEND_TAG: ${{ inputs.backend_tag }}
+          VERSIONING_MODE: ${{ inputs.versioning_mode }}
+        run: |
+          set -euo pipefail
+
+          trim() {
+            printf '%s' "$1" | xargs
+          }
+
+          image_tag="$(trim "${IMAGE_TAG:-}")"
+          frontend_tag="$(trim "${FRONTEND_TAG:-}")"
+          backend_tag="$(trim "${BACKEND_TAG:-}")"
+
+          if [ -z "$frontend_tag" ] && [ -n "$image_tag" ]; then
+            frontend_tag="$image_tag"
+          fi
+          if [ -z "$backend_tag" ] && [ -n "$image_tag" ]; then
+            backend_tag="$image_tag"
+          fi
+
+          if [ -z "$frontend_tag" ] && [ -z "$backend_tag" ]; then
+            if [ "$VERSIONING_MODE" != "auto_beta_semver" ]; then
+              echo "::error::No tags were provided and versioning_mode is manual."
+              exit 1
+            fi
+
+            max_patch=12
+            for repo in "$FRONTEND_REPOSITORY" "$BACKEND_REPOSITORY"; do
+              tags="$(az acr repository show-tags --name "$ACR_NAME" --repository "$repo" -o tsv 2>/dev/null || true)"
+              while IFS= read -r tag; do
+                if echo "$tag" | grep -Eq '^0\.9\.0-beta\.[0-9]+$'; then
+                  patch="${tag##0.9.0-beta.}"
+                  if [ "$patch" -gt "$max_patch" ]; then
+                    max_patch="$patch"
+                  fi
+                fi
+              done <<< "$tags"
+            done
+
+            next_patch=$((max_patch + 1))
+            auto_tag="0.9.0-beta.${next_patch}"
+            frontend_tag="$auto_tag"
+            backend_tag="$auto_tag"
+            echo "Auto beta semver selected tag: ${auto_tag}"
+          fi
+
+          if [ -z "$frontend_tag" ] || [ -z "$backend_tag" ]; then
+            echo "::error::Both frontend_tag and backend_tag must resolve to non-empty values."
+            exit 1
+          fi
+
+          {
+            echo "frontend_tag=$frontend_tag"
+            echo "backend_tag=$backend_tag"
+            echo "frontend_image=${REGISTRY}/${FRONTEND_REPOSITORY}:${frontend_tag}"
+            echo "backend_image=${REGISTRY}/${BACKEND_REPOSITORY}:${backend_tag}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build mode summary
+        env:
+          VERSIONING_MODE: ${{ inputs.versioning_mode }}
+          FRONTEND_IMAGE: ${{ steps.tags.outputs.frontend_image }}
+          BACKEND_IMAGE: ${{ steps.tags.outputs.backend_image }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Build Mode"
+            echo "- Versioning mode: ${VERSIONING_MODE}"
+            echo "- Workflow build revision: ${WORKFLOW_BUILD_REV}"
+            echo "- Frontend image target: ${FRONTEND_IMAGE}"
+            echo "- Backend image target: ${BACKEND_IMAGE}"
+            echo "- Trigger branch: ${GITHUB_REF_NAME}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-and-push:
+    name: Build and Push Frontend/Backend Images
+    runs-on: ubuntu-latest
+    needs: resolve-image-tags
+    outputs:
+      image_version: ${{ steps.tags.outputs.image_version }}
+      frontend_tag: ${{ steps.tags.outputs.frontend_tag }}
+      backend_tag: ${{ steps.tags.outputs.backend_tag }}
+      frontend_image: ${{ steps.tags.outputs.frontend_image }}
+      backend_image: ${{ steps.tags.outputs.backend_image }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Validate release inputs
+        env:
+          FRONTEND_TAG: ${{ needs.resolve-image-tags.outputs.frontend_tag }}
+          BACKEND_TAG: ${{ needs.resolve-image-tags.outputs.backend_tag }}
+          REGISTRY: ${{ env.REGISTRY }}
+          ACR_NAME: ${{ env.ACR_NAME }}
+        run: |
+          set -euo pipefail
+          if [ -z "$FRONTEND_TAG" ] || [ -z "$BACKEND_TAG" ]; then
+            echo "::error::Resolved tags cannot be empty."
+            exit 1
+          fi
+          if [ -z "$REGISTRY" ] || [ -z "$ACR_NAME" ]; then
+            echo "::error::ACR_LOGIN_SERVER/ACR_NAME are required."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        if: ${{ inputs.run_quality_gates == true }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+
+      - name: Enable Corepack
+        if: ${{ inputs.run_quality_gates == true }}
+        run: corepack enable
+
+      - name: Install dependencies
+        if: ${{ inputs.run_quality_gates == true }}
+        run: yarn install --immutable
+
+      - name: Run quality gates
+        if: ${{ inputs.run_quality_gates == true }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: |
+          set -euo pipefail
+          yarn lint:all
+          yarn tsc:full
+          yarn test:all
+          ./tests/run.sh
+
+      - name: Authenticate to Azure (SPN)
+        env:
+          SPN_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          SPN_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SPN_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          SPN_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "${SPN_CLIENT_ID:-}" ]; then
+            echo "::error::Missing service principal client ID."
+            missing=1
+          fi
+          if [ -z "${SPN_CLIENT_SECRET:-}" ]; then
+            echo "::error::Missing service principal client secret."
+            missing=1
+          fi
+          if [ -z "${SPN_TENANT_ID:-}" ]; then
+            echo "::error::Missing service principal tenant ID."
+            missing=1
+          fi
+          if [ "${SPN_CLIENT_ID,,}" != "73b2043b-6230-480a-8a9a-fd37f68af1b2" ] || [ "${SPN_TENANT_ID,,}" != "d0fec9dd-9219-4514-a1d8-1a872244bf6e" ]; then
+            echo "::error::Azure operations require the CloudHub platform service principal and tenant."
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          az login --service-principal \
+            --username "$SPN_CLIENT_ID" \
+            --password "$SPN_CLIENT_SECRET" \
+            --tenant "$SPN_TENANT_ID" \
+            --output none
+
+          if [ -n "${SPN_SUBSCRIPTION_ID:-}" ]; then
+            az account set --subscription "$SPN_SUBSCRIPTION_ID"
+          fi
+
+      - name: Get ACR credentials
+        id: acr-creds
+        run: |
+          set -euo pipefail
+          token=$(az acr login --name "$ACR_NAME" --expose-token --output json | jq -r '.accessToken')
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+          echo "username=00000000-0000-0000-0000-000000000000" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ACR via Docker
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ steps.acr-creds.outputs.username }}
+          password: ${{ steps.acr-creds.outputs.token }}
+
+      - name: Prepare tags
+        id: tags
+        env:
+          FRONTEND_TAG: ${{ needs.resolve-image-tags.outputs.frontend_tag }}
+          BACKEND_TAG: ${{ needs.resolve-image-tags.outputs.backend_tag }}
+          PUSH_LATEST: ${{ inputs.push_latest }}
+        run: |
+          set -euo pipefail
+          frontend_tag="$FRONTEND_TAG"
+          backend_tag="$BACKEND_TAG"
+
+          frontend_tags="${REGISTRY}/${FRONTEND_REPOSITORY}:${frontend_tag}"
+          backend_tags="${REGISTRY}/${BACKEND_REPOSITORY}:${backend_tag}"
+
+          if [ "$PUSH_LATEST" = "true" ]; then
+            frontend_tags="${frontend_tags}"$'\n'"${REGISTRY}/${FRONTEND_REPOSITORY}:latest"
+            backend_tags="${backend_tags}"$'\n'"${REGISTRY}/${BACKEND_REPOSITORY}:latest"
+          fi
+
+          if [ "$frontend_tag" = "$backend_tag" ]; then
+            image_version="$frontend_tag"
+          else
+            image_version="frontend=${frontend_tag},backend=${backend_tag}"
+          fi
+
+          {
+            echo "image_version=$image_version"
+            echo "frontend_tag=$frontend_tag"
+            echo "backend_tag=$backend_tag"
+            echo "frontend_image=${REGISTRY}/${FRONTEND_REPOSITORY}:${frontend_tag}"
+            echo "backend_image=${REGISTRY}/${BACKEND_REPOSITORY}:${backend_tag}"
+            echo "frontend_tags<<EOF"
+            printf '%s\n' "$frontend_tags"
+            echo "EOF"
+            echo "backend_tags<<EOF"
+            printf '%s\n' "$backend_tags"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Clean stale Docker Buildx builders
+        run: |
+          set -euo pipefail
+          docker buildx ls || true
+          docker buildx rm default --force || true
+          docker buildx rm cloudhub-builder --force || true
+          docker buildx prune --all --force || true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Free runner disk space before image builds
+        run: |
+          set -euo pipefail
+          docker system prune --all --force --volumes
+
+          # A pruned runner still only has ~12GB free of 72GB: the rest is
+          # preinstalled toolchains this build never uses. The backend image's
+          # build layers alone consume that, so the frontend build then dies on
+          # "ENOSPC: no space left on device" during yarn install. Reclaim the
+          # large unused toolchains up front.
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /usr/share/swift \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL \
+            || true
+          df -h /
+
+      - name: Verify backend Dockerfile install strategy
+        run: |
+          set -euo pipefail
+          if grep -q 'yarn install --immutable --mode=skip-build' docker/Dockerfile.backend; then
+            echo '::error::Deprecated backend install command detected in docker/Dockerfile.backend. Use yarn workspaces focus --all --production in runtime stage.'
+            exit 1
+          fi
+          if ! grep -q 'yarn workspaces focus --all --production' docker/Dockerfile.backend; then
+            echo '::error::Expected production-focused yarn install strategy not found in docker/Dockerfile.backend.'
+            exit 1
+          fi
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          push: true
+          tags: ${{ steps.tags.outputs.backend_tags }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.tags.outputs.backend_tag }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The backend image and its build cache are already pushed to ACR by this
+      # point, so reclaiming their local layers costs nothing and gives the
+      # frontend build the headroom it needs.
+      - name: Reclaim disk space between image builds
+        run: |
+          set -euo pipefail
+          docker image prune --all --force
+          docker builder prune --all --force
+          df -h /
+
+      - name: Resolve and validate frontend build URLs
+        env:
+          BUILD_APP_BASE_URL: ${{ env.CANONICAL_PUBLIC_URL }}
+        run: |
+          set -euo pipefail
+          # app.baseUrl is baked into the frontend bundle's static-asset publicPath
+          # at build time. A scheme-less or loopback value ships a broken bundle
+          # whose /static/* assets 404, so normalize and validate before building.
+          normalize_and_validate() {
+            local name="$1" value="$2" lower host
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            value="${value%/}"
+            if [ -z "$value" ]; then
+              echo "::error::${name} is empty. Set APP_BASE_URL (or PLATFORM_APP_BASE_URL) to the public https URL of the frontend App Service."
+              exit 1
+            fi
+            case "$value" in
+              http://*|https://*) ;;
+              *) value="https://$value" ;;
+            esac
+            lower="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+            case "$lower" in
+              http://*|https://*) ;;
+              *) echo "::error::${name} must be an absolute http(s) URL (got: ${value})."; exit 1 ;;
+            esac
+            case "$lower" in
+              *localhost*|*127.0.0.1*|*'[::1]'*)
+                echo "::error::${name} resolves to loopback (${value}); not valid for a production image."
+                exit 1 ;;
+            esac
+            case "$lower" in
+              *.azurewebsites.net*)
+                echo "::error::${name} cannot use an azurewebsites.net hostname for production image builds (${value}). Use https://cloudhub.symphonyai.cloud."
+                exit 1 ;;
+            esac
+            host="${value#*://}"; host="${host%%/*}"
+            if [ -z "$host" ] || [ "$host" = "." ]; then
+              echo "::error::${name} has no hostname (got: ${value})."
+              exit 1
+            fi
+            echo "${name}=${value}" >> "$GITHUB_ENV"
+            echo "Resolved ${name}=${value}"
+          }
+          normalize_and_validate APP_BASE_URL "$BUILD_APP_BASE_URL"
+          # The frontend bundle must call the backend through its OWN origin,
+          # because nginx proxies /api/ to BACKEND_ORIGIN. Baking the backend's
+          # public hostname here splits the Microsoft OAuth popup across two
+          # origins: /auth/microsoft/start sets the nonce cookie on the backend
+          # host while the registered callback lands on the frontend host, so the
+          # cookie is never sent back and sign-in silently never completes.
+          normalize_and_validate BACKEND_BASE_URL "$BUILD_APP_BASE_URL"
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: true
+          tags: ${{ steps.tags.outputs.frontend_tags }}
+          build-args: |
+            APP_BASE_URL=${{ env.CANONICAL_PUBLIC_URL }}
+            BACKEND_BASE_URL=${{ env.CANONICAL_PUBLIC_URL }}
+            AUTH_ENVIRONMENT=production
+            CLOUDHUB_VERSION=${{ steps.tags.outputs.frontend_tag }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.tags.outputs.frontend_tag }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify tags in ACR
+        env:
+          FRONTEND_TAG: ${{ steps.tags.outputs.frontend_tag }}
+          BACKEND_TAG: ${{ steps.tags.outputs.backend_tag }}
+          PUSH_LATEST: ${{ inputs.push_latest }}
+        run: |
+          set -euo pipefail
+          verify_tag() {
+            repo="$1"
+            tag="$2"
+            found="$(az acr repository show-tags --name "$ACR_NAME" --repository "$repo" --query "[?@=='$tag'] | length(@)" -o tsv)"
+            if [ "$found" != "1" ]; then
+              echo "::error::Missing tag '$tag' in ACR repo '$repo'"
+              exit 1
+            fi
+          }
+
+          verify_tag "$BACKEND_REPOSITORY" "$BACKEND_TAG"
+          verify_tag "$FRONTEND_REPOSITORY" "$FRONTEND_TAG"
+
+          if [ "$PUSH_LATEST" = "true" ]; then
+            verify_tag "$BACKEND_REPOSITORY" "latest"
+            verify_tag "$FRONTEND_REPOSITORY" "latest"
+          fi
+
+      - name: Build summary
+        run: |
+          {
+            echo "## Build and Push"
+            echo "- Workflow build revision: ${WORKFLOW_BUILD_REV}"
+            echo "- Registry: ${REGISTRY}"
+            echo "- Frontend image: ${{ steps.tags.outputs.frontend_image }}"
+            echo "- Backend image: ${{ steps.tags.outputs.backend_image }}"
+          } >> "$GITHUB_STEP_SUMMARY"

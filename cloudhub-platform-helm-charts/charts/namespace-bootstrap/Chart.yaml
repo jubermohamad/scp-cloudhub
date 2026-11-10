@@ -1,0 +1,12 @@
+apiVersion: v2
+name: namespace-bootstrap
+description: |
+  Creates and governs an application namespace: ResourceQuota, LimitRange,
+  default-deny NetworkPolicy, namespace-scoped RBAC, and a dedicated
+  ServiceAccount.
+type: application
+version: 0.1.0
+appVersion: '1.0.0'
+maintainers:
+  - name: Platform Team
+    email: platform-team@example.com

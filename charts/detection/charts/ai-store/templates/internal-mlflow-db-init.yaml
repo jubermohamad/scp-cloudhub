@@ -1,0 +1,81 @@
+{{- $mt := index .Values "model_training_tool" | default dict }}
+{{- $mtEnabled := default false $mt.enabled }}
+{{- $mon := index .Values "monitoring_tool" | default dict }}
+{{- $monEnabled := default false $mon.enabled }}
+{{- $mlflowInternal := and (index .Values "internalServices") (index .Values "internalServices" "enabled") (index .Values "internalServices" "mlflow") (index .Values "internalServices" "mlflow" "enabled") }}
+{{- if and .Values.postgres.enabled (or $mlflowInternal $mtEnabled $monEnabled) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "model-store.fullname" . }}-mlflow-db-init
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    # post-install / post-upgrade only: pre-upgrade runs *before* upgraded manifests (including
+    # modelhub-secrets when manageSecrets=true) are applied, so a deleted secret causes
+    # CreateContainerConfigError on this Job even when the same upgrade recreates the Secret.
+    # DBs are created after the Secret exists; MLflow/Postgres also have other init paths.
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  # 7200, NOT 300: helm4's --wait watcher held this release for its full
+  # 1500s timeout waiting on a Job that had already COMPLETED — the TTL
+  # reaped it before the watcher observed the completion, and from then on
+  # the watcher saw only "status: NotFound". A TTL shorter than the helm
+  # wait fails a working release; 7200 matches the platform convention.
+  ttlSecondsAfterFinished: 7200
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app: mlflow-db-init
+        {{- include "model-store.labels" . | nindent 8 }}
+    spec:
+      {{- include "model-store.imagePullSecrets" . | nindent 6 }}
+      restartPolicy: OnFailure
+      containers:
+        - name: create-mlflow-db
+          image: "{{ (((.Values.postgres).image).repository) | default "postgres" }}:{{ (((.Values.postgres).image).tag) | default "15" }}"
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Waiting for PostgreSQL to be ready..."
+              until PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -c '\q' 2>/dev/null; do
+                echo "PostgreSQL is unavailable - sleeping"
+                sleep 2
+              done
+              echo "PostgreSQL is up - creating databases if not exist"
+              {{- if $mlflowInternal }}
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'mlflow'" | grep -q 1 || \
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE mlflow"
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'mlflow_auth'" | grep -q 1 || \
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE mlflow_auth"
+              {{- end }}
+              {{- if $mtEnabled }}
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'model_training'" | grep -q 1 || \
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE model_training"
+              {{- end }}
+              {{- if $monEnabled }}
+              PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'model_monitoring'" | grep -q 1 || \
+                PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE model_monitoring"
+              {{- end }}
+              echo "Done"
+          env:
+            - name: POSTGRES_HOST
+              value: {{ include "model-store.componentName" (list . "postgres") | quote }}
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: postgres-user
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: postgres-password
+{{- end }}

@@ -1,0 +1,202 @@
+############################################################################################################################################
+#  _____  _     ___________  ___   _
+# |  __ \| |   |  _  | ___ \/ _ \ | |
+# | |  \/| |   | | | | |_/ / /_\ \| |
+# | | __ | |   | | | | ___ \  _  || |
+# | |_\ \| |___\ \_/ / |_/ / | | || |____
+#  \____/\_____/\___/\____/\_| |_/\_____/
+#
+############################################################################################################################################
+global:
+  clusterType: "aks" #aks/aks-netapp/nfs/minikube
+  dockerRegistryName: "index.docker.io/symphonysensa"
+  ingressWildCardDns: "symphonyai.dev"
+
+  useRootAccountForInit: false
+
+  pv:
+    rwmStorageClassName: "azurefile-csi-nfs"
+    # The smallest size for this PVC/PV is 100Gi and it can be extended by 100Gi steps on Azure
+    dynamicResourcesStorageSize: 100Gi
+
+############################################################################################################################################
+# ___  ________ _   _ _____ _____
+# |  \/  |_   _| \ | |_   _|  _  |
+# | .  . | | | |  \| | | | | | | |
+# | |\/| | | | | . ` | | | | | | |
+# | |  | |_| |_| |\  |_| |_\ \_/ /
+# \_|  |_/\___/\_| \_/\___/ \___/
+#
+############################################################################################################################################
+minio:
+  securityContext:
+    enabled: false
+
+############################################################################################################################################
+#  _____ _____ _   _  _____  ___    ___  _____      _____  ___   _   _ _____ _____ _____ _____ _   _  _____      _____ _   _ ______ ___________ _____ _   _ _____  _____
+# /  ___|  ___| \ | |/  ___|/ _ \  / _ \|_   _|    /  ___|/ _ \ | \ | /  __ \_   _|_   _|  _  | \ | |/  ___|    |_   _| \ | ||  ___|  ___| ___ \  ___| \ | /  __ \|  ___|
+# \ `--.| |__ |  \| |\ `--./ /_\ \/ /_\ \ | |______\ `--./ /_\ \|  \| | /  \/ | |   | | | | | |  \| |\ `--. ______| | |  \| || |_  | |__ | |_/ / |__ |  \| | /  \/| |__
+#  `--. \  __|| . ` | `--. \  _  ||  _  | | |______|`--. \  _  || . ` | |     | |   | | | | | | . ` | `--. \______| | | . ` ||  _| |  __||    /|  __|| . ` | |    |  __|
+# /\__/ / |___| |\  |/\__/ / | | || | | |_| |_     /\__/ / | | || |\  | \__/\ | |  _| |_\ \_/ / |\  |/\__/ /     _| |_| |\  || |   | |___| |\ \| |___| |\  | \__/\| |___
+# \____/\____/\_| \_/\____/\_| |_/\_| |_/\___/     \____/\_| |_/\_| \_/\____/ \_/  \___/ \___/\_| \_/\____/      \___/\_| \_/\_|   \____/\_| \_\____/\_| \_/\____/\____/
+#
+############################################################################################################################################
+sensaai-sanctions-inference:
+
+  ################################
+  # cert-manages
+  ################################
+  certificate:
+    # Extra DNS(s) which needs to be added into certificate
+    extraDnsList: []
+
+  ################################
+  # Ingress
+  ################################
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+      # nginx.ingress.kubernetes.io/affinity: "cookie"
+      # nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+      nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+      nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+      nginx.ingress.kubernetes.io/proxy-buffering: "off"
+      nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+      # kubernetes.io/ingress.class: nginx
+      # kubernetes.io/tls-acme: "true"
+    hosts:
+      - host: sensaai-sanctions-inference.{{ .Values.global.ingressWildCardDns }}
+        paths:
+          # This path has to be defined as .serverConfig.SWAGGER_URL. When this parameter is 'None' then this path can be removed
+          # - path: /doc
+          #   pathType: ImplementationSpecific
+          # This path has to be defined as .serverConfig.REDOC_URL. When this parameter is 'None' then this path can be removed
+          # - path: /redoc
+          #   pathType: ImplementationSpecific
+          - path: /getMatchScore
+            pathType: ImplementationSpecific
+          - path: /getBatchMatchScore
+            pathType: ImplementationSpecific
+          - path: /getMetrics
+            pathType: ImplementationSpecific
+          - path: /healthz
+            pathType: ImplementationSpecific
+          - path: /token
+            pathType: ImplementationSpecific
+    tls:
+     - secretName: https-certs
+       hosts:
+         - sensaai-sanctions-inference.{{ .Values.global.ingressWildCardDns }}
+
+############################################################################################################################################
+#  _____ _____ _   _  _____  ___    ___  _____      _____  ___   _   _ _____ _____ _____ _____ _   _  _____      ___________  ___  _____ _   _ _____ _   _ _____
+# /  ___|  ___| \ | |/  ___|/ _ \  / _ \|_   _|    /  ___|/ _ \ | \ | /  __ \_   _|_   _|  _  | \ | |/  ___|    |_   _| ___ \/ _ \|_   _| \ | |_   _| \ | |  __ \
+# \ `--.| |__ |  \| |\ `--./ /_\ \/ /_\ \ | |______\ `--./ /_\ \|  \| | /  \/ | |   | | | | | |  \| |\ `--. ______| | | |_/ / /_\ \ | | |  \| | | | |  \| | |  \/
+#  `--. \  __|| . ` | `--. \  _  ||  _  | | |______|`--. \  _  || . ` | |     | |   | | | | | | . ` | `--. \______| | |    /|  _  | | | | . ` | | | | . ` | | __
+# /\__/ / |___| |\  |/\__/ / | | || | | |_| |_     /\__/ / | | || |\  | \__/\ | |  _| |_\ \_/ / |\  |/\__/ /      | | | |\ \| | | |_| |_| |\  |_| |_| |\  | |_\ \
+# \____/\____/\_| \_/\____/\_| |_/\_| |_/\___/     \____/\_| |_/\_| \_/\____/ \_/  \___/ \___/\_| \_/\____/       \_/ \_| \_\_| |_/\___/\_| \_/\___/\_| \_/\____/
+#
+############################################################################################################################################
+sensaai-sanctions-training:
+
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+      nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+      nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    hosts:
+    - host: sensaai-sanctions-training.{{ .Values.global.ingressWildCardDns }}
+      paths:
+        # This path has to be defined as .serverConfig.SWAGGER_URL. When this parameter is 'None' then this path can be removed
+        # - path: /doc
+        #   pathType: ImplementationSpecific
+        # This path has to be defined as .serverConfig.REDOC_URL. When this parameter is 'None' then this path can be removed
+        # - path: /redoc
+        #   pathType: ImplementationSpecific
+        - path: /addTrainingData
+          pathType: ImplementationSpecific
+        - path: /downloadModel
+          pathType: ImplementationSpecific
+        - path: /getCityLookupList
+          pathType: ImplementationSpecific
+        - path: /getCorporateWordsWeights
+          pathType: ImplementationSpecific
+        - path: /getCountryISOCodes
+          pathType: ImplementationSpecific
+        - path: /getDefaultValues
+          pathType: ImplementationSpecific
+        - path: /getFeatureDictionary
+          pathType: ImplementationSpecific
+        - path: /getIndCleaningRules
+          pathType: ImplementationSpecific
+        - path: /getMetrics
+          pathType: ImplementationSpecific
+        - path: /getModelMetadata
+          pathType: ImplementationSpecific
+        - path: /getModelsList
+          pathType: ImplementationSpecific
+        - path: /getOrgCleaningRules
+          pathType: ImplementationSpecific
+        - path: /getSynonyms
+          pathType: ImplementationSpecific
+        - path: /getTrainingDataFile
+          pathType: ImplementationSpecific
+        - path: /healthz
+          pathType: ImplementationSpecific
+        - path: /setDefaultValues
+          pathType: ImplementationSpecific
+        - path: /setModelToProduction
+          pathType: ImplementationSpecific
+        - path: /token
+          pathType: ImplementationSpecific
+        - path: /updateCityLookupList
+          pathType: ImplementationSpecific
+        - path: /updateCountryISOCodes
+          pathType: ImplementationSpecific
+        - path: /updateFeatureDictionary
+          pathType: ImplementationSpecific
+        - path: /updateIndCleaningRules
+          pathType: ImplementationSpecific
+        - path: /updateOrgCleaningRules
+          pathType: ImplementationSpecific
+        - path: /updateSynonyms
+          pathType: ImplementationSpecific
+        - path: /uploadModel
+          pathType: ImplementationSpecific
+        - path: /appendTrainingData
+          pathType: ImplementationSpecific
+        - path: /getTasksList
+          pathType: ImplementationSpecific
+        - path: /getTaskDetails
+          pathType: ImplementationSpecific
+        - path: /trainModel
+          pathType: ImplementationSpecific
+        - path: /getTrainingDataByGroupId
+          pathType: ImplementationSpecific
+        - path: /deleteTrainingDataByGroupId
+          pathType: ImplementationSpecific
+        - path: /deleteAllTrainingData
+          pathType: ImplementationSpecific
+        - path: /updateCorporateWordsWeights
+          pathType: ImplementationSpecific
+        - path: /getCommonNames
+          pathType: ImplementationSpecific
+        - path: /updateCommonNames
+          pathType: ImplementationSpecific
+        - path: /getGlobalCommonNames
+          pathType: ImplementationSpecific
+        - path: /updateGlobalCommonNames
+          pathType: ImplementationSpecific
+        - path: /getModelOverrideRules
+          pathType: ImplementationSpecific
+        - path: /updateModelOverrideRules
+          pathType: ImplementationSpecific
+    tls:
+    - secretName: https-certs
+      hosts:
+        - sensaai-sanctions-training.{{ .Values.global.ingressWildCardDns }}

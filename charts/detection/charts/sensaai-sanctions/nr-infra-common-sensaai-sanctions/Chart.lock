@@ -1,0 +1,12 @@
+dependencies:
+- name: cert-manager
+  repository: https://charts.jetstack.io
+  version: v1.12.17
+- name: reloader
+  repository: https://stakater.github.io/stakater-charts
+  version: 1.0.63
+- name: ingress-nginx
+  repository: https://kubernetes.github.io/ingress-nginx
+  version: 4.11.5
+digest: sha256:b8e15de9b7cf7c944d108d8e31d2b837d8d8e8673440080239e4524204f56e21
+generated: "2025-11-24T08:29:13.30494+01:00"

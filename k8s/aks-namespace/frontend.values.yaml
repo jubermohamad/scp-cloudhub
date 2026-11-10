@@ -1,0 +1,43 @@
+application: cloudhub-frontend
+namespace: ${K8S_NAMESPACE}
+owner: platform-team@symphonysensa.com
+businessUnit: cloudhub
+environment: dev
+costCenter: cloudhub-platform
+
+image:
+  repository: ${ACR_LOGIN_SERVER}/cloudhub-frontend
+  tag: ${FRONTEND_IMAGE_TAG}
+
+serviceAccountName: default
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 384Mi
+
+service:
+  enabled: true
+  type: ClusterIP
+  port: 80
+  targetPort: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  host: ${FRONTEND_HOST}
+  path: /
+  tls: false
+
+env:
+  - name: APP_BASE_URL
+    value: https://${FRONTEND_HOST}
+  - name: BACKEND_BASE_URL
+    value: https://${FRONTEND_HOST}
+  - name: BACKEND_ORIGIN
+    value: http://cloudhub-backend.${K8S_NAMESPACE}.svc.cluster.local:7007
+  - name: CLOUDHUB_VERSION
+    value: ${FRONTEND_IMAGE_TAG}

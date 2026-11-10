@@ -1,0 +1,734 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "standalone.config.map.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ include "standalone.config.map.name" . }}"
+  annotations:
+    reloader.stakater.com/match: "true"
+data:
+  base_config.properties: |
+    server.name=Standalone
+    application.name={{ .Values.global.baseConfigProperties.applicationName }}
+    system.default.timezone=UTC
+    system.default.language={{ .Values.global.baseConfigProperties.systemDefaultLanguage }}
+    system.default.country={{ .Values.global.baseConfigProperties.systemDefaultCountry }}
+    system.encoding=UTF8
+    system.authentication=INTERNAL
+    saml.user.groupSync=true
+    mailserver={{ .Values.global.baseConfigProperties.mail.server }}
+    frommailid={{ .Values.global.baseConfigProperties.mail.fromMailId }}
+    mailpassword={{ .Values.global.baseConfigProperties.mail.password }}
+    mailuser={{ .Values.global.baseConfigProperties.mail.user }}
+    transaction.manager.name=
+    jndi.dataSource=java:/datasource/ApplicationBaseDS
+    jdbc.driver=org.postgresql.Driver
+    jdbc.url={{- template "db.jdbc.url" . }}
+    hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+    jdbc.userid={{ .Values.global.baseConfigProperties.db.postgresql.userid }}
+    jdbc.passwd={{ .Values.global.baseConfigProperties.db.postgresql.password }}
+    jdbc.schema={{ .Values.global.baseConfigProperties.db.postgresql.schema }}
+    hibernate.show_sql=false
+    hibernate.cache.use_query_cache=true
+    hibernate.cache.use_second_level_cache=true
+    max.threads.batch.processing=5
+    max.threads.batch.transformation=1
+    max.threads.list.import=1
+    dbloader.home=/opt/netreveal/standaloneHome/conf/monitoring/dbloader
+    dbloader.data=/opt/netreveal/standaloneHome/data/dbloader
+    notification.email.jndi=
+    notification.email.from={{ .Values.global.baseConfigProperties.mail.notificationEmailFrom }}
+    notification.email.subject=Notification
+    hibernate.hikariCP.autoCommit={{ .Values.baseConfigProperties.hibernate.hikari.autoCommit }}
+    hibernate.hikariCP.connectionTimeout={{ .Values.baseConfigProperties.hibernate.hikari.connectionTimeout }}
+    hibernate.hikariCP.idleTimeout={{ .Values.baseConfigProperties.hibernate.hikari.idleTimeout }}
+    hibernate.hikariCP.maxLifetime={{ .Values.baseConfigProperties.hibernate.hikari.maxLifetime }}
+    hibernate.hikariCP.minimumIdle={{ .Values.baseConfigProperties.hibernate.hikari.minimumIdle }}
+    hibernate.hikariCP.maximumPoolSize={{ .Values.baseConfigProperties.hibernate.hikari.maximumPoolSize }}
+    scenariomanager.gui.validation=false
+    scenariomanager.gui.debugger=true
+    scenariomanager.gui.debugger.maxrecords=100
+    scenariomanager.gui.background.gradient.begin.color=237,237,237
+    scenariomanager.gui.background.gradient.end.color=237,237,237
+    scenariomanager.gui.control.highlight.color=255,255,255
+    scenariomanager.gui.control.shadow.color=128,128,128
+    scenariomanager.gui.in.focus.color=247,0,74
+    scenariomanager.gui.out.of.focus.color=288,244,0
+    scenariomanager.gui.panel.background.color=237,237,237
+    scenariomanager.gui.panel.text.color=0,28,63
+    scenariomanager.gui.errorpanel.text.color=0,28,63
+    scenariomanager.gui.titlepanel.background.gradient.begin.color=70,103,144
+    scenariomanager.gui.titlepanel.background.gradient.end.color=70,103,144
+    scenariomanager.gui.titlepanel.text.color=255,255,255
+    scenariomanager.gui.row.sortable.header.color=237,237,237
+    scenariomanager.gui.row.sortable.header.text.color=70,103,144
+    scenariomanager.gui.selected.button.color=239,239,239
+    scenariomanager.gui.selected.row.color=240,173,69
+    scenariomanager.gui.table.row.color=209,229,251
+    scenariomanager.gui.toolbar.location=top
+    scenariomanager.gui.graph.logicaloperator.color=220,145,145
+    scenariomanager.gui.graph.numericaloperator.color=220,145,145
+    scenariomanager.gui.graph.identifier.color=145,145,220
+    scenariomanager.gui.graph.literal.color=145,220,145
+    scenariomanager.gui.graph.function.color=220,220,145
+    scenariomanager.gui.graph.listcontains.color=220,145,220
+    scenariomanager.gui.graph.layout=hierarchical
+    scenariomanager.gui.graph.orientation=left_to_right
+    scenariomanager.gui.graph.checkDefinition.layout=hvtree
+    scenariomanager.gui.graph.checkDefinition.orientation=top_to_bottom
+    scenariomanager.gui.graph.checkOverview.layout=hvtree
+    scenariomanager.gui.graph.checkOverview.orientation=top_to_bottom
+    scenariomanager.gui.graph.scenarioChain.layout=hvtree
+    scenariomanager.gui.graph.scenarioChain.orientation=top_to_bottom
+    scenariomanager.gui.graph.configurationVersion.layout=hierarchical
+    scenariomanager.gui.graph.configurationVersion.orientation=left_to_right
+    scenariomanager.gui.graph.layout.animate=false
+    kafka.topic.name.prefix={{ .Values.global.baseConfigProperties.kafka.topicNamePrefix }}
+    filtering.batch.transformer.max_row_count={{ .Values.baseConfigProperties.filteringBatchTransformerMaxRowCount }}
+    filtering.batch.processor.max_processing_row_amount={{ .Values.baseConfigProperties.filteringBatchProcessorMaxProcessingRowAmount }}
+    filtering.editable={{ .Values.baseConfigProperties.filteringEditable }}
+    filtering.editablelists={{ .Values.baseConfigProperties.filteringEditableLists }}
+    filtering.root.dir=/opt/netreveal/standaloneHome/conf/wlm
+    filtering.24x7.node.type=BATCH
+    filtering.initialise.used.indexes=false
+    filtering.staging.dir=/opt/WLM/staging
+    filtering.24x7.staging.sublocation.indexes.dir=indexes
+    filtering.24x7.staging.sublocation.model.dir=model
+    filtering.24x7.wlm.local.repo.basedir=${filtering.root.dir}/localRepo
+    filtering.24x7.ags.fault.recovery.dir=${filtering.root.dir}/agsrecovery
+    filtering.24x7.ags.nonalert.fault.recovery.dir=${filtering.root.dir}/agsnonalertrecovery
+    filtering.24x7.ags.backup.recovery.interval={{ .Values.baseConfigProperties.filtering24x7AgsBackupRecorveryInterval }}
+    {{- if ne .Values.baseConfigProperties.filtering24x7WlmAlertDuplicationExpiryTime "" }}
+    {{/* https://netreveal.atlassian.net/wiki/spaces/Eng/pages/313393457/WLMX-1915+-+Handling+duplicate+alerts+Implementation */}}
+    filtering.24x7.wlm.alert.duplication.expiry.time={{ .Values.baseConfigProperties.filtering24x7WlmAlertDuplicationExpiryTime }}
+    {{- end }}
+    {{- if ne .Values.baseConfigProperties.filtering24x7WlmAlertDuplicationInterval "" }}
+    {{/* https://netreveal.atlassian.net/wiki/spaces/Eng/pages/313393457/WLMX-1915+-+Handling+duplicate+alerts+Implementation */}}
+    filtering.24x7.wlm.alert.duplication.interval={{ .Values.baseConfigProperties.filtering24x7WlmAlertDuplicationInterval }}
+    {{- end }}
+    filter.serializedMessages.dir=${filtering.root.dir}/serializedMessages
+    filtering.build.used.mem.indexes=true
+    filtering.build.indexes.onstartup={{ .Values.baseConfigProperties.filteringBuildIndexesOnStartup }}
+    filtering.db.statement.batch.size={{ .Values.baseConfigProperties.filteringDbStatementBatchSize }}
+    filtering.settings.dir=${filtering.root.dir}/settings
+    filtering.alert.saver.extension.dir=${filtering.root.dir}/alertsaver
+    filtering.alert.saver.extension.config.group=
+    filtering.archive.root.dir=${filtering.root.dir}/archive
+    filtering.archive.lists.dir=${filtering.archive.root.dir}/lists
+    filtering.archive.lists=true
+    filtering.archive.batches.dir=${filtering.archive.root.dir}/batches
+    filtering.archive.batches=true
+    filtering.archive.wlmconfig.dir=${filtering.archive.root.dir}/wlmconfig
+    filtering.archive.wlmconfig=true
+    baseplatform.root.dir=${filtering.root.dir}
+    baseplatform.transliteration.dir=${baseplatform.root.dir}/trans/file
+    eim.entity.archive.dir=/opt/netreveal/standaloneHome/archives/attachments
+    workflow.enable.rule.scheduler=false
+    filtering.ftp.folder=filterImport
+    filtering.worldcheck.automatic.import.dir=${filtering.root.dir}/worldcheck
+    filtering.batch.watch.import.root.dir=${filtering.root.dir}/batchwatch
+    filtering.custom.list.import.root.dir=${filtering.root.dir}/listImport
+    filtering.shared.dir=${filtering.root.dir}/shared
+    filtering.batch.shared.dir=/opt/WLM/shared
+    filtering.reports.dir=${filtering.root.dir}/reports
+    filtering.templates.dir=${filtering.root.dir}/templates
+    filtering.number.fraction.separator.is.point=true
+    filtering.controller.closesession.rollback=false
+    org.quartz.scheduler.instanceName=FilteringScheduler
+    org.quartz.scheduler.instanceId=one
+    org.quartz.threadPool.class=org.quartz.simpl.SimpleThreadPool
+    org.quartz.threadPool.threadCount=5
+    org.quartz.threadPool.threadPriority=1
+    org.quartz.jobStore.misfireThreshold=5000
+    org.quartz.jobStore.class=org.quartz.simpl.RAMJobStore
+    filtering.statistics.watchlist.matching.skip.scoring=false
+    filtering.wc.list.automatic.build.on.import=true
+    filtering.adapter.name=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.logic.TrxAcqQueue=com.norkom.wlm.business.realtime.LinkRealtimeLogicImpl
+    filtering.realtime.classname.adapter.TrxAcqQueue=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.jmsservice.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeJMSService
+    filtering.default.encoding=UTF-8
+    filtering.xsl.dir=${filtering.root.dir}/config
+    filtering.gsv.transformation.encoding=default
+    filtering.eim.ags.alertSaver.sequenceName.ultimate_default=WLM-Alert-Seq
+    filtering.eim.ags.nonAlertSaver.sequenceName.ultimate_default=WLM-NonAlert-Seq
+    filtering.singlelookup.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.singlelookup.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.realtime.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.realtime.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.batch.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.batch.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.interactive.alert.saver.classname=com.norkom.wlm.business.alert.plugin.InteractiveSearchResultSaver;EIM_WLMAlertSaverExtension.xml
+    filtering.fpfa.list.automatic.build.on.import=true
+    filtering.fpfa.automatic.import.dir=${filtering.root.dir}/fpfa
+    filtering.gwl.automatic.import.dir=${filtering.root.dir}/gwl
+    filtering.gwl.list.automatic.build.on.import=true
+    norkom.reports.templates.dir=conf/templates/notifications
+    norkom.velocity.templates.dir=/conf/templates
+    services.errorhandling.enabled=true
+    services.errorhandling.primaryauditor.name=er_database
+    services.errorhandling.er_database.class=com.norkom.acquisition.business.errorauditors.DbAuditor
+    filtering.batch.recovery.location=${filtering.root.dir}/shared/batch-recovery
+    filtering.batch.dbrecovery.location=${filtering.root.dir}/batch/dbrecovery
+    velocity.runtime.log.logsystem.class=org.apache.velocity.runtime.log.NullLogSystem
+    database.type=postgresql
+    datasource.type=webapp
+    filtering.kafka.consumer.group.name=wlm-batch-consumer-group
+    filtering.kafka.consumer.max.poll.interval.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollIntervalMs }}
+    filtering.kafka.consumer.max.poll.records={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollRecords }}
+    filtering.kafka.consumer.session.timeout.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerSessionTimeoutMs }}
+    filtering.batch.processing.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-process
+    filtering.batch.processing.kafka.node.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaNodeCount }}
+    filtering.batch.processing.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaConsumerCount }}
+    filtering.batch.processing.kafka.consumer.startup=true
+    filtering.batch.transformation.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-transform
+    filtering.batch.transformation.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaConsumerCount }}
+    filtering.batch.transformation.kafka.retries={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaRetries }}
+    filtering.batch.transformation.kafka.consumer.startup=true
+    filtering.list.import.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-list-import
+    filtering.list.import.kafka.consumer.count={{ .Values.baseConfigProperties.filteringListImportKafkaConsumerCount }}
+    filtering.list.import.kafka.consumer.startup=true
+    filtering.24x7.igs.reply.producer=IGS_REPLY_PRODUCER
+    filtering.24x7.igs.reply.consumer=MASTER_IGS_RESPONSE
+    filtering.24x7.wlm.igs.write.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcWriteSleepTime }}
+    filtering.indexes.dir=${filtering.root.dir}/indexes
+    filtering.24x7.processing.node.registration.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationStartDelay }}
+    filtering.24x7.processing.node.registration.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRetryInterval }}
+    filtering.24x7.processing.node.swift.mt.linking.job.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval }}
+    filtering.24x7.processing.node.swift.mt.linking.job.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay }}
+    mailprotocol={{ .Values.global.baseConfigProperties.mail.protocol }}
+    services.errorhandling.secondaryauditor.name=er_file
+    services.errorhandling.er_file.class=com.norkom.acquisition.business.errorauditors.FileAuditor
+    services.errorhandling.er_file.path=/opt/netreveal/standaloneHome/logs/services/services-errors.txt
+    router.dhc.myNode=0
+    apps.performance.monitoring.class.list=
+    process.inbound.emails={{ .Values.baseConfigProperties.mail.processInboundEmails }}
+    smbd.installed=true
+    RemoteTransactionStoreDS.installed=false
+    kafka.consumers.list=CDDVS_Validation,CDDXTJ_XmlToJson,CDDAAS_ApplicationAdaptation,CDDAAT_AlertsTriaged,CDDAGS_ScoredCustomers,CDDCPS_Subjects,CDDES_Enrichment,CDDNSS_NameScreening,CDDNSS_WLMResponse,CDDSPS_RiskScores,ODDODS_IndScoredCustomers,CDD_UIRequests,IETWLM_Consumer_CurrencyCutOff_Score,IETWLM_Consumer_AlertStatusEscalate_GetResult,IETWLMSP_Consumer_MatchRescore_GetResult,IETWLMSP_Consumer_AlertRescore_GetResult,WLM_Alert_Generation_Consumer,WLM_Central_Get_Swift-Link_Response,Testdata_CDD_Consumer_E2E,Testdata_CDD_Consumer_P2P,Testdata_CDD_Consumer_Perf,CTH_CDD_Consumer_E2E,CTH_CDD_Consumer_P2P,CTH_CDD_Consumer_Perf,CDDRAS_ApplicationResponseAdaptation,CDDRAS_AlertAdjudicationAdaptation,CDDRES_CustomerScoresEnrichment,CDDRAS_CustomerScoresAdaptation,CDDAUS_AlertUpdate,Testdata_CDD_StartODDProcessing,WLM-Batch-Kafka-Updates
+    {{- if .Values.global.nrSolutionsSwitches.aml.enabled }}
+    installed.apps.vertical.eimagt=Y
+    installed.apps.vertical.aml=Y
+    installed.apps.vertical.amlagt=Y
+    installed.apps.vertical.amlbpr=Y
+    installed.apps.vertical.amlorch=Y
+    {{- else }}
+    installed.apps.vertical.eimagt=N
+    installed.apps.vertical.aml=N
+    installed.apps.vertical.amlagt=N
+    installed.apps.vertical.amlbpr=N
+    installed.apps.vertical.amlorch=N
+    {{- end }}
+    {{- if or .Values.global.nrSolutionsSwitches.aml.amlcb.enabled (not (hasKey .Values.global.nrSolutionsSwitches.aml.amlcb "enabled") ) }}
+    installed.apps.vertical.amlcb=Y
+    installed.apps.vertical.amlcbdet=Y
+    {{- else }}
+    installed.apps.vertical.amlcb=N
+    installed.apps.vertical.amlcbdet=N
+    {{- end }}
+    amlcbdet.smbd.home=/opt/netreveal/amlcbsmbd
+    amlcbdet.tagging.enabled={{ .Values.baseConfigProperties.amlcbdet.tagging.enabled }}
+    installed.apps.vertical.amlorch_cluster={{ .Values.baseConfigProperties.installed.apps.vertical.amlorch_cluster }}
+    {{- if .Values.global.nrSolutionsSwitches.aml.enableAmlAlertGeneration.enabled }}
+    installed.apps.vertical.amldet=Y
+    {{- else }}
+    installed.apps.vertical.amldet=N
+    {{- end }}
+    amldet.smbd.home=/opt/netreveal/amlsmbd
+    amldet.tagging.enabled={{ .Values.baseConfigProperties.amldet.tagging.enabled }}
+    active.apps.vertical.amliet=Y
+    amlth.amlsa.updateAlertStatus=Y
+    amlth.amlsa.swichModeToActiveDate=20160120
+    {{- if .Values.global.nrSolutionsSwitches.aml.amlcust.enabled }}
+    installed.apps.vertical.amlcustdet=Y
+    {{- else }}
+    installed.apps.vertical.amlcustdet=N
+    {{- end }}
+    amlcustdet.smbd.home=/opt/netreveal/amlcustsmbd
+    amlcustdet.tagging.enabled={{ .Values.baseConfigProperties.amlcustdet.tagging.enabled }}
+    {{- if .Values.global.nrSolutionsSwitches.aml.amlOpt.enabled }}
+    installed.apps.vertical.aml_sim=Y
+    {{- else }}
+    installed.apps.vertical.aml_sim=N
+    {{- end }}
+    amlopt.smbd.home=/opt/netreveal/amloptsmbd
+    amlopt.smbd.alert.prefix={{ .Values.baseConfigProperties.amlopt.smbd.alert.prefix }}
+    {{- if .Values.global.nrSolutionsSwitches.fincen.enabled }}
+    installed.apps.vertical.dfrm=Y
+    installed.apps.vertical.disc=Y
+    {{- else }}
+    installed.apps.vertical.dfrm=N
+    installed.apps.vertical.disc=N
+    {{- end }}
+    {{- if .Values.global.nrSolutionsSwitches.cdd.enabled }}
+    installed.apps.vertical.cdd=Y
+    installed.apps.vertical.cddtpdi=Y
+    installed.apps.vertical.cddcnv=Y
+    {{- else }}
+    installed.apps.vertical.cdd=N
+    installed.apps.vertical.cddtpdi=N
+    installed.apps.vertical.cddcnv=N
+    {{- end }}
+    Fingerprint_ConnParty_Disc=DisclosureCount
+    Fingerprint_ConnParty=SourceOfFunds,CompanyForm,ComplexStructure,CountryOfOrigin,PartyTypeCode,OrgUnitCode,CountryOfResidence,NationalityCode,PostalCode,Occupation
+    Fingerprint_ConnParty_WLM=BlackListedFlag,SanctionedFlag,PepFlag,PepType,RcaFlag
+    Fingerprint_Customer_Disc=DisclosureCount
+    Fingerprint_Customer=CustomerTypeCode,CompanyForm,IncorporationDate,BusinessSegment1,CountryOfResidence,CountryOfOrigin,NationalityCode,PostalCode,Occupation,EmploymentStatus,EmployeeFlag,ResidenceFlag,FaceToFaceFlag,Channel,NearBorderFlag,BankruptFlag,SourceOfFunds,ComplexStructure,OrgUnitCode,WireInNumber,WireOutNumber,WireInVolume,WireOutVolume,CashInVolume,CashOutVolume,CheckInVolume,CheckOutVolume,OverallScoreAdjustment,IncorporationCountryCode,AdverseMediaFlag
+    Fingerprint_Customer_WLM=BlackListedFlag,SanctionedFlag,PepFlag,PepType,RcaFlag,WlmActiveAlertFlag
+    {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    installed.apps.vertical.wlm=Y
+    installed.apps.vertical.wlmags=Y
+    {{- else }}
+    installed.apps.vertical.wlm=N
+    installed.apps.vertical.wlmags=N
+    {{- end }}
+    filtering.server.id=${pod.name}
+    filtering.fpfalist.import.append.stop.on.duplicate.detection=false
+    filtering.fpfalist.import.inmemory.processing=true
+    filtering.fpfa.xmlreader.inputbuffer.size=16384
+    default.timestamp=9999/01/01 00:00:00
+    batch.default.timestamp=1970/01/01 00:00:00
+    wlm.single.pass.mode=Y
+    wlm.wait.for.latest.indexes=Y
+    wlm.batch.proc.group.name={{ .Values.baseConfigProperties.wlmBatchProcGrouName }}
+    WLM_Fingerprint_Customer=CustomerName,FirstName,LastName,Address,DateOfBirth,CustomerCategoryCode
+    WLM_Fingerprint_CustomerCustomerLink=PercentageOwnership,LinkType
+    WLM_Fingerprint_ConnParty=ConnectedPartyName,FirstName,LastName,Address,DateOfBirth
+    WLM_Fingerprint_ConnPartyCustomerLink=PercentageOwnership,LinkType
+    {{- if .Values.global.nrSolutionsSwitches.wlm.wlmTf.enabled }}
+    installed.apps.vertical.wlmtf=Y
+    {{- else }}
+    installed.apps.vertical.wlmtf=N
+    {{- end }}
+    {{- if .Values.global.nrSolutionsSwitches.wlm.wlmSp.enabled }}
+    installed.apps.vertical.wlmsp=Y
+    {{- else }}
+    installed.apps.vertical.wlmsp=N
+    {{- end }}
+    {{- if and .Values.global.nrSolutionsSwitches.cdd.enabled .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    installed.apps.vertical.cddwlm=Y
+    {{- else }}
+    installed.apps.vertical.cddwlm=N
+    {{- end }}
+    amlsa.commit.day=01/23/2016
+    amlcb.commit.day=02/05/2016
+    spark.operator.enabled={{ .Values.global.sparkOperator.enabled }}
+    spark.operator.protocol={{ .Values.global.sparkOperator.protocol }}
+    spark.operator.host={{ .Values.global.sparkOperator.host }}
+    spark.operator.port={{ .Values.global.sparkOperator.port }}
+    spark.operator.api.version={{ .Values.global.sparkOperator.apiVersion }}
+    spark.operator.spark.version=3.5.6
+    {{- if eq .Values.global.useImagePullSecrets "true" }}
+    spark.operator.regcred=\"imagePullSecrets\": [\"regcred\"],
+    {{- end }}
+    aap.protocol={{ .Values.baseConfigProperties.aap.protocol }}
+    aap.host={{- template "standalone.aap.host" . }}
+    aap.port={{ .Values.baseConfigProperties.aap.port }}
+    kafka.bootstrap.servers={{ include "kafka.bootstrap.servers.service.name" . }}
+    {{- include "kafka.defult.consumer.security" (list $ . "/opt/netreveal/standaloneHome") }}
+    kafka.consumer.config.DEFAULT.max.poll.records=1
+    kafka.consumer.CDDAAS_ApplicationAdaptation.failure.strategy={{ .Values.baseConfigProperties.kafka.consumer.CDDAAS_ApplicationAdaptation.failure.strategy }}
+    kafka.consumer.CDDAGS_ScoredCustomers.max.poll.records={{ .Values.baseConfigProperties.kafka.consumer.CDDAGS_ScoredCustomers.max.poll.records }}
+    kafka.consumer.CDDAGS_ScoredCustomers.failure.strategy={{ .Values.baseConfigProperties.kafka.consumer.CDDAGS_ScoredCustomers.failure.strategy }}
+    kafka.consumer.CDDCPS_Subjects.max.poll.records={{ .Values.baseConfigProperties.kafka.consumer.CDDCPS_Subjects.max.poll.records }}
+    kafka.consumer.CDDCPS_Subjects.failure.strategy={{ .Values.baseConfigProperties.kafka.consumer.CDDCPS_Subjects.failure.strategy }}
+    kafka.consumer.CDDSPS_RiskScores.max.poll.records={{ .Values.baseConfigProperties.kafka.consumer.CDDSPS_RiskScores.max.poll.records }}
+    kafka.consumer.CDDSPS_RiskScores.failure.strategy={{ .Values.baseConfigProperties.kafka.consumer.CDDSPS_RiskScores.failure.strategy }}
+    {{- include "kafka.filtering.security" (list $ . "/opt/netreveal/standaloneHome") }}
+    kafka.producer.EIM-Default-Producer.bootstrap.servers={{ include "kafka.bootstrap.servers.service.name" . }}
+    {{- include "kafka.default.producer.security" (list $ . "/opt/netreveal/standaloneHome") }}
+    kafka.producer.EIM-Default-Producer.metrics.interval={{ .Values.baseConfigProperties.kafka.producer.EIMDefaultProducer.metricsInterval }}
+    kafka.producer.EIM-Default-Producer.interceptor.enabled={{ .Values.baseConfigProperties.kafka.producer.EIMDefaultProducer.interceptorEnabled }}
+    filtering.batch.processing.kafka.disable=
+    base.normalization.cache=true
+    datasource.dataSource.dbType=PostgreSQL
+    {{- if and .Values.global.nrSolutionsSwitches.wlm .Values.global.nrSolutionsSwitches.wlm.sensaAiSanctions.enabled }}
+    wlmai.host={{ .Release.Name }}-sensaai-sanctions.{{ .Values.global.namespace }}.svc.cluster.local
+    wlmai.port=443
+    {{- end }}
+    {{- include "base.config.properties.custom.parameters" . | nindent 4 }}
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "standalone.schema.import.base.config.property.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ include "standalone.schema.import.base.config.property.name" . }}"
+data:
+  base_config.properties: |
+    server.name=Standalone
+    application.name={{ .Values.global.baseConfigProperties.applicationName }}
+    system.default.timezone=UTC
+    system.default.language={{ .Values.global.baseConfigProperties.systemDefaultLanguage }}
+    system.default.country={{ .Values.global.baseConfigProperties.systemDefaultCountry }}
+    system.encoding=UTF8
+    system.authentication=INTERNAL
+    saml.user.groupSync=true
+    mailserver={{ .Values.global.baseConfigProperties.mail.server }}
+    frommailid={{ .Values.global.baseConfigProperties.mail.fromMailId }}
+    mailpassword={{ .Values.global.baseConfigProperties.mail.password }}
+    mailuser={{ .Values.global.baseConfigProperties.mail.user }}
+    transaction.manager.name=
+    jndi.dataSource=java:/datasource/ApplicationBaseDS
+    jdbc.driver=org.postgresql.Driver
+    jdbc.url={{- template "db.jdbc.url" . }}
+    hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+    jdbc.userid={{ .Values.global.baseConfigProperties.db.postgresql.userid }}
+    jdbc.passwd={{ .Values.global.baseConfigProperties.db.postgresql.password }}
+    jdbc.schema={{ .Values.global.baseConfigProperties.db.postgresql.schema }}
+    hibernate.show_sql=false
+    hibernate.cache.use_query_cache=true
+    hibernate.cache.use_second_level_cache=true
+    max.threads.batch.processing=5
+    max.threads.batch.transformation=1
+    max.threads.list.import=1
+    dbloader.home=/opt/netreveal/standaloneHome/conf/monitoring/dbloader
+    dbloader.data=/opt/netreveal/standaloneHome/data/dbloader
+    notification.email.jndi=
+    notification.email.from={{ .Values.global.baseConfigProperties.mail.notificationEmailFrom }}
+    notification.email.subject=Notification
+    hibernate.hikariCP.autoCommit={{ .Values.baseConfigProperties.hibernate.hikari.autoCommit }}
+    hibernate.hikariCP.connectionTimeout={{ .Values.baseConfigProperties.hibernate.hikari.connectionTimeout }}
+    hibernate.hikariCP.idleTimeout={{ .Values.baseConfigProperties.hibernate.hikari.idleTimeout }}
+    hibernate.hikariCP.maxLifetime={{ .Values.baseConfigProperties.hibernate.hikari.maxLifetime }}
+    hibernate.hikariCP.minimumIdle={{ .Values.baseConfigProperties.hibernate.hikari.minimumIdle }}
+    hibernate.hikariCP.maximumPoolSize={{ .Values.dbInit.baseConfigProperties.hibernate.hikari.maximumPoolSize }}
+    scenariomanager.gui.validation=false
+    scenariomanager.gui.debugger=true
+    scenariomanager.gui.debugger.maxrecords=100
+    scenariomanager.gui.background.gradient.begin.color=237,237,237
+    scenariomanager.gui.background.gradient.end.color=237,237,237
+    scenariomanager.gui.control.highlight.color=255,255,255
+    scenariomanager.gui.control.shadow.color=128,128,128
+    scenariomanager.gui.in.focus.color=247,0,74
+    scenariomanager.gui.out.of.focus.color=288,244,0
+    scenariomanager.gui.panel.background.color=237,237,237
+    scenariomanager.gui.panel.text.color=0,28,63
+    scenariomanager.gui.errorpanel.text.color=0,28,63
+    scenariomanager.gui.titlepanel.background.gradient.begin.color=70,103,144
+    scenariomanager.gui.titlepanel.background.gradient.end.color=70,103,144
+    scenariomanager.gui.titlepanel.text.color=255,255,255
+    scenariomanager.gui.row.sortable.header.color=237,237,237
+    scenariomanager.gui.row.sortable.header.text.color=70,103,144
+    scenariomanager.gui.selected.button.color=239,239,239
+    scenariomanager.gui.selected.row.color=240,173,69
+    scenariomanager.gui.table.row.color=209,229,251
+    scenariomanager.gui.toolbar.location=top
+    scenariomanager.gui.graph.logicaloperator.color=220,145,145
+    scenariomanager.gui.graph.numericaloperator.color=220,145,145
+    scenariomanager.gui.graph.identifier.color=145,145,220
+    scenariomanager.gui.graph.literal.color=145,220,145
+    scenariomanager.gui.graph.function.color=220,220,145
+    scenariomanager.gui.graph.listcontains.color=220,145,220
+    scenariomanager.gui.graph.layout=hierarchical
+    scenariomanager.gui.graph.orientation=left_to_right
+    scenariomanager.gui.graph.checkDefinition.layout=hvtree
+    scenariomanager.gui.graph.checkDefinition.orientation=top_to_bottom
+    scenariomanager.gui.graph.checkOverview.layout=hvtree
+    scenariomanager.gui.graph.checkOverview.orientation=top_to_bottom
+    scenariomanager.gui.graph.scenarioChain.layout=hvtree
+    scenariomanager.gui.graph.scenarioChain.orientation=top_to_bottom
+    scenariomanager.gui.graph.configurationVersion.layout=hierarchical
+    scenariomanager.gui.graph.configurationVersion.orientation=left_to_right
+    scenariomanager.gui.graph.layout.animate=false
+    kafka.topic.name.prefix={{ .Values.global.baseConfigProperties.kafka.topicNamePrefix }}
+    filtering.batch.transformer.max_row_count={{ .Values.baseConfigProperties.filteringBatchTransformerMaxRowCount }}
+    filtering.batch.processor.max_processing_row_amount={{ .Values.baseConfigProperties.filteringBatchProcessorMaxProcessingRowAmount }}
+    filtering.editable=false
+    filtering.editablelists={{ .Values.baseConfigProperties.filteringEditableLists }}
+    filtering.root.dir=/opt/netreveal/standaloneHome/conf/wlm
+    filtering.24x7.node.type=BATCH
+    filtering.initialise.used.indexes=false
+    filtering.staging.dir=/opt/WLM/staging
+    filtering.24x7.staging.sublocation.indexes.dir=indexes
+    filtering.24x7.staging.sublocation.model.dir=model
+    filtering.24x7.wlm.local.repo.basedir=${filtering.root.dir}/localRepo
+    filtering.24x7.ags.fault.recovery.dir=${filtering.root.dir}/agsrecovery
+    filtering.24x7.ags.nonalert.fault.recovery.dir=${filtering.root.dir}/agsnonalertrecovery
+    filtering.24x7.ags.backup.recovery.interval={{ .Values.baseConfigProperties.filtering24x7AgsBackupRecorveryInterval }}
+    filter.serializedMessages.dir=${filtering.root.dir}/serializedMessages
+    filtering.build.used.mem.indexes=false
+    filtering.build.indexes.onstartup=false
+    filtering.db.statement.batch.size={{ .Values.baseConfigProperties.filteringDbStatementBatchSize }}
+    filtering.settings.dir=${filtering.root.dir}/settings
+    filtering.alert.saver.extension.dir=${filtering.root.dir}/alertsaver
+    filtering.alert.saver.extension.config.group=
+    filtering.archive.root.dir=${filtering.root.dir}/archive
+    filtering.archive.lists.dir=${filtering.archive.root.dir}/lists
+    filtering.archive.lists=true
+    filtering.archive.batches.dir=${filtering.archive.root.dir}/batches
+    filtering.archive.batches=true
+    filtering.archive.wlmconfig.dir=${filtering.archive.root.dir}/wlmconfig
+    filtering.archive.wlmconfig=true
+    baseplatform.root.dir=${filtering.root.dir}
+    baseplatform.transliteration.dir=${baseplatform.root.dir}/trans/file
+    eim.entity.archive.dir=/opt/netreveal/standaloneHome/archives/attachments
+    workflow.enable.rule.scheduler=false
+    filtering.ftp.folder=filterImport
+    filtering.worldcheck.automatic.import.dir=${filtering.root.dir}/worldcheck
+    filtering.batch.watch.import.root.dir=${filtering.root.dir}/batchwatch
+    filtering.custom.list.import.root.dir=${filtering.root.dir}/listImport
+    filtering.shared.dir=${filtering.root.dir}/shared
+    filtering.batch.shared.dir=/opt/WLM/shared
+    filtering.reports.dir=${filtering.root.dir}/reports
+    filtering.templates.dir=${filtering.root.dir}/templates
+    filtering.number.fraction.separator.is.point=true
+    filtering.controller.closesession.rollback=false
+    org.quartz.scheduler.instanceName=FilteringScheduler
+    org.quartz.scheduler.instanceId=one
+    org.quartz.threadPool.class=org.quartz.simpl.SimpleThreadPool
+    org.quartz.threadPool.threadCount=5
+    org.quartz.threadPool.threadPriority=1
+    org.quartz.jobStore.misfireThreshold=5000
+    org.quartz.jobStore.class=org.quartz.simpl.RAMJobStore
+    filtering.statistics.watchlist.matching.skip.scoring=false
+    filtering.wc.list.automatic.build.on.import=true
+    filtering.adapter.name=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.logic.TrxAcqQueue=com.norkom.wlm.business.realtime.LinkRealtimeLogicImpl
+    filtering.realtime.classname.adapter.TrxAcqQueue=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.jmsservice.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeJMSService
+    filtering.default.encoding=UTF-8
+    filtering.xsl.dir=${filtering.root.dir}/config
+    filtering.gsv.transformation.encoding=default
+    filtering.eim.ags.alertSaver.sequenceName.ultimate_default=WLM-Alert-Seq
+    filtering.eim.ags.nonAlertSaver.sequenceName.ultimate_default=WLM-NonAlert-Seq
+    filtering.singlelookup.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.singlelookup.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.realtime.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.realtime.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.batch.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.batch.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.interactive.alert.saver.classname=com.norkom.wlm.business.alert.plugin.InteractiveSearchResultSaver;EIM_WLMAlertSaverExtension.xml
+    filtering.fpfa.list.automatic.build.on.import=true
+    filtering.fpfa.automatic.import.dir=${filtering.root.dir}/fpfa
+    filtering.gwl.automatic.import.dir=${filtering.root.dir}/gwl
+    filtering.gwl.list.automatic.build.on.import=true
+    norkom.reports.templates.dir=conf/templates/notifications
+    norkom.velocity.templates.dir=/conf/templates
+    services.errorhandling.enabled=true
+    services.errorhandling.primaryauditor.name=er_database
+    services.errorhandling.er_database.class=com.norkom.acquisition.business.errorauditors.DbAuditor
+    filtering.batch.recovery.location=${filtering.root.dir}/shared/batch-recovery
+    filtering.batch.dbrecovery.location=${filtering.root.dir}/batch/dbrecovery
+    velocity.runtime.log.logsystem.class=org.apache.velocity.runtime.log.NullLogSystem
+    database.type=postgresql
+    datasource.type=webapp
+    filtering.kafka.consumer.group.name=wlm-batch-consumer-group
+    filtering.kafka.consumer.max.poll.interval.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollIntervalMs }}
+    filtering.kafka.consumer.max.poll.records={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollRecords }}
+    filtering.kafka.consumer.session.timeout.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerSessionTimeoutMs }}
+    filtering.batch.processing.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-process
+    filtering.batch.processing.kafka.node.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaNodeCount }}
+    filtering.batch.processing.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaConsumerCount }}
+    filtering.batch.processing.kafka.consumer.startup=true
+    filtering.batch.transformation.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-transform
+    filtering.batch.transformation.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaConsumerCount }}
+    filtering.batch.transformation.kafka.retries={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaRetries }}
+    filtering.batch.transformation.kafka.consumer.startup=true
+    filtering.list.import.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-list-import
+    filtering.list.import.kafka.consumer.count={{ .Values.baseConfigProperties.filteringListImportKafkaConsumerCount }}
+    filtering.list.import.kafka.consumer.startup=true
+    filtering.24x7.igs.reply.producer=IGS_REPLY_PRODUCER
+    filtering.24x7.igs.reply.consumer=MASTER_IGS_RESPONSE
+    filtering.24x7.wlm.igs.write.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcWriteSleepTime }}
+    filtering.indexes.dir=${filtering.root.dir}/indexes
+    filtering.24x7.processing.node.registration.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationStartDelay }}
+    filtering.24x7.processing.node.registration.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRetryInterval }}
+    filtering.24x7.processing.node.swift.mt.linking.job.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval }}
+    filtering.24x7.processing.node.swift.mt.linking.job.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay }}
+    filtering.24x7.processing.node.swift.mt.linking.bootstrap.servers=localhost:9093
+    mailprotocol={{ .Values.global.baseConfigProperties.mail.protocol }}
+    services.errorhandling.secondaryauditor.name=er_file
+    services.errorhandling.er_file.class=com.norkom.acquisition.business.errorauditors.FileAuditor
+    services.errorhandling.er_file.path=/opt/netreveal/standaloneHome/logs/services/services-errors.txt
+    router.dhc.myNode=0
+    apps.performance.monitoring.class.list=
+    process.inbound.emails=false
+    smbd.installed=true
+    RemoteTransactionStoreDS.installed=false
+    installed.apps.vertical.eimagt=Y
+    installed.apps.vertical.aml=Y
+    installed.apps.vertical.amlagt=Y
+    installed.apps.vertical.amlcb=Y
+    installed.apps.vertical.amlcbdet=Y
+    amlcbdet.smbd.home=/opt/netreveal/amlcbsmbd
+    amlcbdet.tagging.enabled={{ .Values.baseConfigProperties.amlcbdet.tagging.enabled }}
+    installed.apps.vertical.amlorch=Y
+    installed.apps.vertical.amlorch_cluster={{ .Values.baseConfigProperties.installed.apps.vertical.amlorch_cluster }}
+    installed.apps.vertical.amldet=Y
+    amldet.smbd.home=/opt/netreveal/amlsmbd
+    amldet.tagging.enabled={{ .Values.baseConfigProperties.amldet.tagging.enabled }}
+    active.apps.vertical.amliet=Y
+    installed.apps.vertical.amlcustdet=Y
+    amlcustdet.smbd.home=/opt/netreveal/amlcustsmbd
+    amlcustdet.tagging.enabled={{ .Values.baseConfigProperties.amlcustdet.tagging.enabled }}
+    installed.apps.vertical.aml_sim=Y
+    amlopt.smbd.home=/opt/netreveal/amloptsmbd
+    amlopt.smbd.alert.prefix={{ .Values.baseConfigProperties.amlopt.smbd.alert.prefix }}
+    installed.apps.vertical.dfrm=Y
+    installed.apps.vertical.disc=Y
+    installed.apps.vertical.cdd=Y
+    Fingerprint_ConnParty_Disc=DisclosureCount
+    Fingerprint_ConnParty=SourceOfFunds,CompanyForm,ComplexStructure,CountryOfOrigin,PartyTypeCode,OrgUnitCode,CountryOfResidence,NationalityCode,PostalCode,Occupation
+    Fingerprint_ConnParty_WLM=BlackListedFlag,SanctionedFlag,PepFlag,PepType,RcaFlag
+    Fingerprint_Customer_Disc=DisclosureCount
+    Fingerprint_Customer=CustomerTypeCode,CompanyForm,IncorporationDate,BusinessSegment1,CountryOfResidence,CountryOfOrigin,NationalityCode,PostalCode,Occupation,EmploymentStatus,EmployeeFlag,ResidenceFlag,FaceToFaceFlag,Channel,NearBorderFlag,BankruptFlag,SourceOfFunds,ComplexStructure,OrgUnitCode,WireInNumber,WireOutNumber,WireInVolume,WireOutVolume,CashInVolume,CashOutVolume,CheckInVolume,CheckOutVolume,OverallScoreAdjustment,IncorporationCountryCode,AdverseMediaFlag
+    Fingerprint_Customer_WLM=BlackListedFlag,SanctionedFlag,PepFlag,PepType,RcaFlag,WlmActiveAlertFlag
+    installed.apps.vertical.cddtpdi=Y
+    installed.apps.vertical.cddcnv=Y
+    installed.apps.vertical.wlm=Y
+    filtering.server.id=${pod.name}
+    filtering.fpfalist.import.append.stop.on.duplicate.detection=false
+    filtering.fpfalist.import.inmemory.processing=true
+    filtering.fpfa.xmlreader.inputbuffer.size=16384
+    default.timestamp=9999/01/01 00:00:00
+    batch.default.timestamp=1970/01/01 00:00:00
+    wlm.single.pass.mode=Y
+    wlm.wait.for.latest.indexes=Y
+    wlm.batch.proc.group.name={{ .Values.baseConfigProperties.wlmBatchProcGrouName }}
+    WLM_Fingerprint_Customer=CustomerName,FirstName,LastName,Address,DateOfBirth,CustomerCategoryCode
+    WLM_Fingerprint_CustomerCustomerLink=PercentageOwnership,LinkType
+    WLM_Fingerprint_ConnParty=ConnectedPartyName,FirstName,LastName,Address,DateOfBirth
+    WLM_Fingerprint_ConnPartyCustomerLink=PercentageOwnership,LinkType
+    installed.apps.vertical.wlmtf=Y
+    installed.apps.vertical.wlmsp=Y
+    installed.apps.vertical.wlmags=Y
+    installed.apps.vertical.cddwlm=Y
+    amlsa.commit.day=01/23/2016
+    amlcb.commit.day=02/05/2016
+    spark.operator.enabled={{ .Values.global.sparkOperator.enabled }}
+    spark.operator.protocol={{ .Values.global.sparkOperator.protocol }}
+    spark.operator.host={{ .Values.global.sparkOperator.host }}
+    spark.operator.port={{ .Values.global.sparkOperator.port }}
+    spark.operator.api.version={{ .Values.global.sparkOperator.apiVersion }}
+    aap.protocol={{ .Values.baseConfigProperties.aap.protocol }}
+    aap.host={{- template "standalone.aap.host" . }}
+    aap.port={{ .Values.baseConfigProperties.aap.port }}
+    kafka.bootstrap.servers=localhost:9093
+    kafka.consumer.config.DEFAULT.security.protocol=PLAINTEXT
+    kafka.consumer.config.DEFAULT.max.poll.records=1
+    kafka.consumer.CDDAAS_ApplicationAdaptation.failure.strategy={{ .Values.baseConfigProperties.kafka.consumer.CDDAAS_ApplicationAdaptation.failure.strategy }}
+    kafka.consumer.CDDAGS_ScoredCustomers.max.poll.records={{ .Values.baseConfigProperties.kafka.consumer.CDDAGS_ScoredCustomers.max.poll.records }}
+    kafka.consumer.CDDAGS_ScoredCustomers.failure.strategy={{ .Values.baseConfigProperties.kafka.consumer.CDDAGS_ScoredCustomers.failure.strategy }}
+    kafka.consumer.CDDCPS_Subjects.max.poll.records={{ .Values.baseConfigProperties.kafka.consumer.CDDCPS_Subjects.max.poll.records }}
+    kafka.consumer.CDDCPS_Subjects.failure.strategy={{ .Values.baseConfigProperties.kafka.consumer.CDDCPS_Subjects.failure.strategy }}
+    kafka.consumer.CDDSPS_RiskScores.max.poll.records={{ .Values.baseConfigProperties.kafka.consumer.CDDSPS_RiskScores.max.poll.records }}
+    kafka.consumer.CDDSPS_RiskScores.failure.strategy={{ .Values.baseConfigProperties.kafka.consumer.CDDSPS_RiskScores.failure.strategy }}
+    filtering.kafka.security.protocol=PLAINTEXT
+    kafka.producer.EIM-Default-Producer.bootstrap.servers=localhost:9093
+    kafka.producer.EIM-Default-Producer.security.protocol=PLAINTEXT
+    kafka.producer.EIM-Default-Producer.metrics.interval={{ .Values.baseConfigProperties.kafka.producer.EIMDefaultProducer.metricsInterval }}
+    kafka.producer.EIM-Default-Producer.interceptor.enabled={{ .Values.baseConfigProperties.kafka.producer.EIMDefaultProducer.interceptorEnabled }}
+    filtering.batch.processing.kafka.disable=
+    base.normalization.cache=true
+    datasource.dataSource.dbType=PostgreSQL
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "config.map.saml.script.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{include "config.map.saml.script.name" . }}"
+data:
+  SAML_Enable.sql: |
+    UPDATE SECURITY_PLUGINS SET PLUGIN_CLASS_NAME = 'com.norkom.base.business.interfaces.impl.SAMLAuthenticationPlugin' WHERE PLUGIN_TYPE = 'authentication';
+
+    DELETE FROM SECURITY_PLUGIN_PROPERTIES WHERE ID IN (SELECT ID FROM SECURITY_PLUGINS where PLUGIN_TYPE = 'loginValve');
+    DELETE FROM SECURITY_PLUGINS WHERE PLUGIN_TYPE = 'loginValve';
+
+    DELETE FROM SECURITY_PLUGIN_PROPERTIES WHERE ID IN (SELECT ID FROM SECURITY_PLUGINS where PLUGIN_TYPE = 'passwordValve');
+    DELETE FROM SECURITY_PLUGINS WHERE PLUGIN_TYPE = 'passwordValve';
+
+    DELETE FROM SECURITY_PLUGIN_PROPERTIES WHERE ID IN (SELECT ID FROM SECURITY_PLUGINS where PLUGIN_TYPE = 'newUserPasswordValve');
+    DELETE FROM SECURITY_PLUGINS WHERE PLUGIN_TYPE = 'newUserPasswordValve';
+
+    COMMIT;
+
+  00_override_enable_saml.lst: |
+    SAML_Enable.sql
+
+  SAML_Disable.sql: |
+    UPDATE SECURITY_PLUGINS SET PLUGIN_CLASS_NAME = 'com.norkom.base.business.interfaces.impl.DatabaseAuthenticationPlugin' WHERE PLUGIN_TYPE = 'authentication';
+
+    -- SECURITY_PLUGINS
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 1 AS ID, 'loginValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.PasswordRenewalLoginValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 1 AND PLUGIN_TYPE = 'loginValve');
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 2 AS ID, 'loginValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.ConcurrentUsersLoginValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 2 AND PLUGIN_TYPE = 'loginValve');
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 3 AS ID, 'loginValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.DisableUserIfIdleTooLongValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 3 AND PLUGIN_TYPE = 'loginValve');
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 4 AS ID, 'loginValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.DeleteUserIfIdleTooLongValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 4 AND PLUGIN_TYPE = 'loginValve');
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 5 AS ID, 'loginValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.MaxLoginAttemptsBlocker' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 5 AND PLUGIN_TYPE = 'loginValve');
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 14 AS ID, 'loginValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.LoginTemporaryLockoutBlocker' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 14 AND PLUGIN_TYPE = 'loginValve');
+
+    -- SECURITY_PLUGIN_PROPERTIES
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 2 AS ID, 'maxConcurrentLogins' AS PROPERTY_KEY, '50' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 2);
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 3 AS ID, 'maxInactiveDays' AS PROPERTY_KEY, '60' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 3);
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 4 AS ID, 'maxInactiveDays' AS PROPERTY_KEY, '90' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 4);
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 5 AS ID, 'maxLoginAttempts' AS PROPERTY_KEY, '3' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 5);
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 14 AS ID, 'passwordLockoutPeriod' AS PROPERTY_KEY, '-1' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 14 AND PROPERTY_KEY = 'passwordLockoutPeriod');
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 14 AS ID, 'lockoutMaxLoginAttempts' AS PROPERTY_KEY, '-1' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 14 AND PROPERTY_KEY = 'lockoutMaxLoginAttempts');
+
+    -- SECURITY_PLUGINS
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 9 AS ID, 'passwordValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.PasswordComplexityValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 9 AND PLUGIN_TYPE = 'passwordValve');
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 10 AS ID, 'passwordValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.PasswordHistoryValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 10 AND PLUGIN_TYPE = 'passwordValve');
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 11 AS ID, 'passwordValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.PasswordLoginCheckValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 11 AND PLUGIN_TYPE = 'passwordValve');
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 15 AS ID, 'passwordValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.PasswordMinLengthValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 15 AND PLUGIN_TYPE = 'passwordValve');
+
+    -- SECURITY_PLUGIN_PROPERTIES
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 9 AS ID, 'passwordRegEx' AS PROPERTY_KEY, '(^.*(?=.*\d)(?=.*[a-z])(?=.*[A-Z]).*$)|(^.*(?=.*[a-z])(?=.*[A-Z])(?=.*[@!#$%*^&]).*$)|(^.*(?=.*\d)(?=.*[A-Z])(?=.*[@!#$%*^&]).*$)|(^.*(?=.*\d)(?=.*[a-z])(?=.*[@!#$%*^&]).*$)' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 9);
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 10 AS ID, 'maxRepeatedPasswords' AS PROPERTY_KEY, '2' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 10);
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 15 AS ID, 'minPasswordLength' AS PROPERTY_KEY, '6' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 15);
+
+    -- SECURITY_PLUGINS
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 12 AS ID, 'newUserPasswordValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.PasswordComplexityValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 12 AND PLUGIN_TYPE = 'newUserPasswordValve');
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 13 AS ID, 'newUserPasswordValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.PasswordLoginCheckValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 13 AND PLUGIN_TYPE = 'newUserPasswordValve');
+    INSERT INTO SECURITY_PLUGINS ( ID, PLUGIN_TYPE, PLUGIN_CLASS_NAME ) SELECT 16 AS ID, 'newUserPasswordValve' AS PLUGIN_TYPE, 'com.norkom.base.business.interfaces.impl.PasswordMinLengthValve' AS PLUGIN_CLASS_NAME WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGINS WHERE ID = 16 AND PLUGIN_TYPE = 'newUserPasswordValve');
+
+    -- SECURITY_PLUGIN_PROPERTIES
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 12 AS ID, 'passwordRegEx' AS PROPERTY_KEY, '(^.*(?=.*\d)(?=.*[a-z])(?=.*[A-Z]).*$)|(^.*(?=.*[a-z])(?=.*[A-Z])(?=.*[@!#$%*^&]).*$)|(^.*(?=.*\d)(?=.*[A-Z])(?=.*[@!#$%*^&]).*$)|(^.*(?=.*\d)(?=.*[a-z])(?=.*[@!#$%*^&]).*$)' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 12);
+    INSERT INTO SECURITY_PLUGIN_PROPERTIES ( ID, PROPERTY_KEY, PROPERTY_VALUE ) SELECT 16 AS ID, 'minPasswordLength' AS PROPERTY_KEY, '6' AS PROPERTY_VALUE WHERE NOT EXISTS (SELECT 1 FROM SECURITY_PLUGIN_PROPERTIES WHERE ID = 16);
+
+    COMMIT;
+
+  00_override_disable_saml.lst: |
+    SAML_Disable.sql
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "config.map.standalone.sidecar.scripts.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ include "config.map.standalone.sidecar.scripts.name" . }}"
+  annotations:
+    reloader.stakater.com/match: "true"
+data:
+  acq-feedback-mover.sh: |
+    {{- tpl (.Files.Get "scripts/sidecar/acq-feedback-mover.sh") . | indent 4 }}
+  envelope-extractor-acq.sh: |
+    {{- tpl (.Files.Get "scripts/sidecar/envelope-extractor-acq.sh") . | indent 4 }}
+  envelope-extractor-amlopt.sh: |
+    {{- tpl (.Files.Get "scripts/sidecar/envelope-extractor-amlopt.sh") . | indent 4 }}
+  wlm-mover.sh: |
+    {{- tpl (.Files.Get "scripts/sidecar/wlm-mover.sh") . | indent 4 }}
+  wlm-archive-cleaner.sh: |
+    {{- tpl (.Files.Get "scripts/sidecar/wlm-archive-cleaner.sh") . | indent 4 }}
+  sidecar-scheduler.sh: |
+    {{- tpl (.Files.Get "scripts/sidecar/sidecar-scheduler.sh") . | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-std-log4j2"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-std-log4j2"
+data:
+  log4j2.xml: |
+{{- include "log4j2.xml" . | indent 4 }}

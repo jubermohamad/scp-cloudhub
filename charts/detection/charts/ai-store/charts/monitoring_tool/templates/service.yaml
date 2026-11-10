@@ -1,0 +1,21 @@
+{{- if .Values.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "monitoring-tool.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "monitoring-tool.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.httpPort }}
+      targetPort: http
+      name: http
+    - port: {{ .Values.service.mcpPort }}
+      targetPort: mcp
+      name: mcp
+  selector:
+    app.kubernetes.io/name: {{ include "monitoring-tool.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

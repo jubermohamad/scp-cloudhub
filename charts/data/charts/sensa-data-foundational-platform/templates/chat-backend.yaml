@@ -1,0 +1,112 @@
+{{- if .Values.chatBackend.enabled }}
+# The AI assistant: a claude-agent-sdk session host that answers questions by
+# running READ-ONLY Cypher against the graph through the Neo4j MCP server.
+#
+# Read-only is enforced by the CLIENT allowlist in agents/explorer.json
+# (get_neo4j_schema + read_neo4j_cypher only). The MCP server also ships
+# write_neo4j_cypher — never allowlist it, and never use a wildcard.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "prism.fullname" . }}-chat-backend
+  labels:
+    app: prism-chat-backend
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: prism-chat-backend
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.chatBackend.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "prism.fullname" . }}-chat-backend
+  labels:
+    app: prism-chat-backend
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.chatBackend.replicas }}
+  selector:
+    matchLabels:
+      app: prism-chat-backend
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: prism-chat-backend
+        {{- include "prism.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "prism.imagePullSecrets" . | nindent 6 }}
+      {{- include "prism.scheduling" . | nindent 6 }}
+      {{- with .Values.chatBackend.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: chat-backend
+          image: {{ include "prism.image" (dict "ctx" $ "name" "chat-backend" "tag" .Values.chatBackend.image.tag "registry" .Values.chatBackend.image.registry "repository" .Values.chatBackend.image.repository) }}
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.chatBackend.image.pullPolicy) }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.chatBackend.port }}
+          env:
+            - name: NEO4J_URI
+              value: {{ include "prism.neo4jUri" . | quote }}
+            # NEO4J_USERNAME here, NEO4J_USER in the API — the two apps read
+            # different variable names. Not a typo; do not "harmonise" one away.
+            - name: NEO4J_USERNAME
+              value: {{ include "prism.neo4jUser" . | quote }}
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.neo4jAuthExisting | default .Values.secrets.neo4jAuth }}
+                  key: password
+            - name: NEO4J_DATABASE
+              value: {{ include "prism.neo4jDatabase" . | quote }}
+            # agent configs and the MCP launcher are baked into the image
+            - name: CHAT_AGENT_CONFIGS_DIRS
+              value: {{ .Values.chatBackend.agentConfigsDir | quote }}
+            - name: PRISM_MCP_LAUNCHER
+              value: {{ .Values.chatBackend.mcpLauncher | quote }}
+            # image ships the pre-warmed cache owned by the non-root user
+            - name: UV_CACHE_DIR
+              value: {{ .Values.chatBackend.uvCacheDir | quote }}
+            # optional: without it the pod runs and the assistant answers
+            # "not logged in" on every message, rather than crashlooping.
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.anthropicAuthExisting | default .Values.secrets.anthropicAuth }}
+                  key: api_key
+                  optional: true
+            {{- with .Values.chatBackend.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.chatBackend.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          # INVENTED (the raw manifest has readiness only). Long period and a
+          # high threshold on purpose: a restart kills every live session's
+          # subprocess tree, so only a genuinely wedged process should trigger it.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+{{- end }}

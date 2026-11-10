@@ -1,0 +1,9 @@
+dependencies:
+- name: cn-postgres
+  repository: file://./charts/cn-postgres
+  version: 0.28.0
+- name: common
+  repository: oci://registry-1.docker.io/bitnamicharts
+  version: 2.41.0
+digest: sha256:ed4ef1f3c5a220ab3d8dabafa09d6c2902f5b173fdeec8eccf33c5874d81c625
+generated: "2026-07-09T11:29:07.686619423Z"

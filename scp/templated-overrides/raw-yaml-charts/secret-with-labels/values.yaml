@@ -1,0 +1,25 @@
+nameOverride: ""
+fullnameOverride: ""
+
+secret:
+  type: Opaque
+
+  labels: {}
+    # example:
+    # app: my-app
+    # environment: prod
+
+  annotations: {}
+    # example:
+    # helm.sh/resource-policy: keep
+
+  data: {}
+    # base64-encoded data
+    # example:
+    # password: cGFzc3dvcmQ=
+
+  stringData: {}
+    # plain-text data (recommended)
+    # example:
+    # username: admin
+    # password: supersecret

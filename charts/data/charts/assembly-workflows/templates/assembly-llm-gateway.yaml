@@ -1,0 +1,297 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-llm-gateway
+  labels:
+    app: assembly-llm-gateway
+    tier: backend
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  {{- /* NOT WHEN AN HPA OWNS IT. This chart ships an HPA for this very
+       Deployment (assembly-llm-gateway-hpa.yaml), and once it scales, the
+       scale subresource makes kube-controller-manager the field manager of
+       .spec.replicas. Helm 4 applies server-side, so a chart that also declares
+       replicas conflicts with the autoscaler it installed itself:
+
+         UPGRADE FAILED: conflict occurred while applying object
+         <ns>/assembly-llm-gateway ... conflict with "kube-controller-manager"
+         with subresource "scale" using apps/v1: .spec.replicas
+
+       and the whole release fails on the second install, not the first — because
+       the first has nothing to conflict with yet. Every other chart in this
+       platform that ships an HPA already guards its replicas this way. */}}
+  {{- if not (.Values.llmGateway.hpa).enabled }}
+  replicas: {{ .Values.llmGateway.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-llm-gateway
+  template:
+    metadata:
+      labels:
+        app: assembly-llm-gateway
+        tier: backend
+        {{- include "aw.labels" . | nindent 8 }}
+      annotations:
+        # Forces a rollout whenever platform-secrets changes -- secretKeyRef env
+        # vars are read once at container start, so without this a secret rotation
+        # never reaches already-running pods (#1325). Secrets are deterministic now
+        # (no randAlphaNum/lookup), so we hash the rendered Secret directly: it
+        # changes iff the actual content changes (incl. database-url, derived from
+        # the pg password) -- no spurious rollout on values-structure changes, and
+        # no need to fold in infra.postgres/externalInfra.
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+    spec:
+      # This workload does not call the Kubernetes API.
+      automountServiceAccountToken: false
+      # Explicit (was the implicit k8s 30s default) so the preStop-sleep-vs-grace-period
+      # safety margin this pod's preStop hook depends on (below, issue #1526) stays visible
+      # in the chart rather than silently depending on a default that could change (#1537).
+      terminationGracePeriodSeconds: 30
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.scheduling" . | nindent 6 }}
+      {{/*
+        Startup-race fix: this pod's lifespan handler seeds gateway_config (the
+        Azure Foundry url/key/model-list row the UI reads) from env vars exactly
+        ONCE, on boot, treating a DB-connect failure as non-fatal and moving on
+        without retrying. On a fresh multi-service install this container can
+        start before the postgres pod is accepting connections, so the seed
+        silently never happens and the UI shows no provider/models forever --
+        caught live on a cold SCP pentest install. Scoped to in-cluster postgres
+        (infra.enabled), same convention as assembly-core's wait-migrate:
+        external-infra installs skip the wait (their DB is assumed already up).
+      */}}
+      {{- if .Values.infra.enabled }}
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgres.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ include "aw.pgHost" . | quote }}
+            - name: PGUSER
+              value: assembly
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+            - name: PGDATABASE
+              value: {{ include "aw.pgDatabase" . | quote }}
+          command: ['/bin/sh', '-c', 'until psql -Atqc "select 1" >/dev/null 2>&1; do echo "Waiting for postgres..."; sleep 3; done']
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 64Mi, cpu: 100m }
+      {{- end }}
+      # Spread replicas across nodes (#1584) -- every other scale-out Deployment in this chart
+      # has this or podAntiAffinity; llm-gateway was missing it, so its replicas weren't
+      # guaranteed to avoid co-locating on one node (compounding a single node-loss with the
+      # PDB gap this same finding also closed).
+      topologySpreadConstraints:
+        # Soft: this tier has not been measured as placement-sensitive the way
+        # sandbox-execute was (#2123), so the spread stays a preference rather
+        # than a scheduling gate.
+        #
+        # matchLabelKeys still matters even while soft. Without it the scheduler
+        # scores a new pod against the OUTGOING revision's placement too, so
+        # during a rollout it can "prefer" a node that is only empty of new pods
+        # while already crowded with old ones. Per-revision scoring is what makes
+        # the preference actually spread the new ReplicaSet.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app: assembly-llm-gateway
+      containers:
+        - name: {{ include "aw.prefix" . }}-llm-gateway
+          image: {{ include "aw.image" (dict "registry" .Values.image.registry "repo" .Values.llmGateway.image.repository "default" "assembly-workflows-llm-gateway" "tag" .Values.llmGateway.image.tag "globalTag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 8006
+          env:
+            - name: DATABASE_PATH
+              value: "/app/data/llm_usage.db"
+            - name: POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: database-url
+            - name: POSTGRES_POOL_SIZE
+              value: {{ .Values.llmGateway.postgres.poolSize | quote }}
+            - name: POSTGRES_MAX_OVERFLOW
+              value: {{ .Values.llmGateway.postgres.maxOverflow | quote }}
+            - name: POSTGRES_POOL_RECYCLE_SECONDS
+              value: "1800"
+            - name: USER_PROVIDER_KEY_CACHE_TTL_SECONDS
+              value: "45"
+            {{- if .Values.llmGateway.targetApiBaseUrl }}
+            - name: TARGET_API_BASE_URL
+              value: {{ .Values.llmGateway.targetApiBaseUrl | quote }}
+            {{- end }}
+            {{- with .Values.llmGateway.availableModels }}
+            - name: LLM_GATEWAY_AVAILABLE_MODELS
+              value: {{ . | quote }}
+            {{- end }}
+            - name: AZURE_FOUNDRY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: azure-foundry-url
+                  optional: true
+            - name: AZURE_FOUNDRY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: azure-foundry-api-key
+                  optional: true
+            - name: AZURE_FOUNDRY_ANTHROPIC_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: azure-foundry-anthropic-endpoint
+                  optional: true
+            - name: LLM_GATEWAY_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: assembly-llm-gateway-admin-key
+                  optional: true
+            - name: JWT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: jwt-secret
+            - name: AUTH_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: auth-mode
+            - name: KEYCLOAK_SERVER_URL
+              value: {{ include "aw.keycloakServerUrl" . | quote }}
+            {{- /*
+              llm-gateway validates Keycloak JWTs (shared keycloak_auth reads
+              KEYCLOAK_EXPECTED_ISSUER), so it needs the SAME expected issuer as
+              core/mcp-hub/sandbox. Without it, on a public-hostname deployment
+              the user's token `iss` (the public issuer) is checked against the
+              internal realm_url fallback and 401s — breaking the Settings → API
+              Keys panel and standalone-agent chat while core works. (#809, #810)
+            */}}
+            {{- with (include "aw.keycloakExpectedIssuer" .) }}
+            - name: KEYCLOAK_EXPECTED_ISSUER
+              value: {{ . | quote }}
+            {{- end }}
+            - name: KEYCLOAK_REALM
+              value: {{ .Values.externalInfra.keycloak.realm | quote }}
+            - name: KEYCLOAK_CLIENT_ID
+              value: {{ .Values.externalInfra.keycloak.clientId | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.llmGateway.logLevel | default "INFO" | quote }}
+            - name: FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: fernet-key
+            - name: INTERNAL_SERVICE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: internal-service-api-key
+            - name: LLM_GATEWAY_USER_KEYS_INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: assembly-llm-gateway-user-keys-internal-api-key
+            - name: LLM_GATEWAY_USER_KEYS_INTERNAL_API_KEY_AGENTS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: assembly-llm-gateway-user-keys-internal-api-key-agents
+            - name: LLM_GATEWAY_USER_KEYS_INTERNAL_API_KEY_USER_PROJECT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: assembly-llm-gateway-user-keys-internal-api-key-assembly-core
+            - name: LLM_GATEWAY_USER_KEYS_INTERNAL_API_KEY_WORKSPACE_RUNTIME_API
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: assembly-llm-gateway-user-keys-internal-api-key-workspace-runtime-api
+            - name: ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: environment
+            {{- if (include "aw.urlValidationAllowHosts" .) }}
+            {{- include "aw.urlValidationEnv" . | trim | nindent 12 }}
+            {{- end }}
+            {{- with .Values.llmGateway.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: llm-data
+              mountPath: /app/data
+            - name: llm-logs
+              mountPath: /app/logs
+          resources:
+            {{- toYaml .Values.llmGateway.resources | nindent 12 }}
+          lifecycle:
+            preStop:
+              exec:
+                # Give kube-proxy/the Service endpoint controller a moment to remove this pod
+                # before SIGTERM fires -- without this, a HPA scale-down killing several replicas
+                # at once has a ~1s race window where an in-flight request can still be routed to
+                # a pod that's already terminating, producing a connection-refused error (measured
+                # live 2026-07-04: 2/2710 requests failed in that exact 1s window during an 8->2
+                # scale-down). This does not affect normal rolling updates, which already wait on
+                # readiness before cycling pods -- it specifically covers the scale-down case where
+                # multiple ready pods are killed simultaneously.
+                command: ["sh", "-c", "sleep 5"]
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: 8006
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8006
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8006
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+      volumes:
+        - name: llm-data
+          emptyDir: {}
+        - name: llm-logs
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-llm-gateway
+  labels:
+    app: assembly-llm-gateway
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8006
+      targetPort: 8006
+  selector:
+    app: assembly-llm-gateway

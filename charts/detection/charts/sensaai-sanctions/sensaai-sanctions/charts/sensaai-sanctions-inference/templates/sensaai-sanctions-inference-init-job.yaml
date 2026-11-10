@@ -1,0 +1,259 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ .Release.Name }}-sai-init-job-{{ randAlphaNum 4 | lower }}"
+  labels:
+    app.kubernetes.io/managed-by: {{.Release.Service | quote }}
+    app.kubernetes.io/instance: {{.Release.Name | quote }}
+    helm.sh/chart: "{{.Chart.Name}}-{{.Chart.Version}}"
+  annotations:
+    # This is what defines this resource as a hook. Without this line, the
+    # job is considered part of the release.
+    "helm.sh/hook": post-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": post-install,pre-upgrade
+spec:
+  template:
+    metadata:
+      name: "{{.Release.Name}}-sai-init-job"
+      labels:
+        app.kubernetes.io/managed-by: {{.Release.Service | quote }}
+        app.kubernetes.io/instance: {{.Release.Name | quote }}
+        helm.sh/chart: "{{.Chart.Name}}-{{.Chart.Version}}"
+    spec:
+      restartPolicy: Never
+
+      ################################################
+      # SAI Init Job
+      ################################################
+      initContainers:
+      - name: wait-for-minio
+        image: "{{ tpl .Values.global.dockerRegistryName . }}/{{ .Values.global.toolsDockerImage }}"
+        imagePullPolicy: IfNotPresent
+
+        securityContext:
+          runAsUser: 200
+          runAsGroup: 200
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x;
+            set -eu -o pipefail
+
+            echo "Wait for MINIO to be ready..."
+            timeout 300 bash -c '
+              until mc --quiet --no-color alias set minio {{ include "minio.url" . }} ${MINIO_USER} ${MINIO_PASSWORD} > /dev/null 2>&1
+              do
+                echo "Trying to connect to {{ include "minio.url" . }} server..."
+                sleep 10
+              done
+            '
+            if [ $? -ne 0 ]; then
+              echo "Failed to connect to MINIO server"
+              exit 1
+            else
+              echo "MINIO is ready"
+            fi
+
+            timeout 100 bash -c '
+              until mc stat minio/private-bucket/sys_bucket/s3_mount_status.txt > /dev/null 2>&1
+              do
+                echo "Trying to get minio/private-bucket/sys_bucket/s3_mount_status.txt to validate Minio readiness"
+                sleep 10
+              done
+            '
+            if [ $? -ne 0 ]; then
+              echo "Failed to get minio/private-bucket/sys_bucket/s3_mount_status.txt"
+              exit 1
+            else
+              echo "minio/private-bucket/sys_bucket/s3_mount_status.txt is present"
+            fi
+
+            if mc stat minio/private-bucket/landing/s4s_dynamic_resources/dynamic/init.flag > /dev/null 2>&1; then
+              echo "MINIO Dynamic resources initialized"
+              touch /tmp/resources/dynamic/init.flag
+            fi
+        envFrom:
+          - secretRef:
+              name: "{{ .Values.minioPasswordSecret }}"
+
+        volumeMounts:
+        - name: {{ .Release.Namespace }}-sai-home-dir
+          mountPath: /home/netreveal
+        - name: {{ .Release.Name }}-sai-dynamic-resources
+          mountPath: /tmp/resources/dynamic
+
+      - name: sai-init
+        image: "{{ tpl .Values.pod.dockerRegistryName . }}/{{ .Values.pod.imageRepository }}:{{ .Values.pod.imageTag }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          {{- if .Values.global.useRootAccountForInit }}
+          runAsUser: 0
+          {{- else }}
+          runAsUser: 200
+          runAsGroup: 200
+          {{- end }}
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -eu -o pipefail
+
+            echo "Initializing temporary dynamic resources..."
+            cp -r /server/resources/dynamic/. /tmp/resources/dynamic
+            cp -r /server/resources/static/. /tmp/resources/static
+            echo "Update config.properties..."
+            sed -r -i -e "s/^(.+LOG_TO_FILE.+)(=)(.+)(True|False)/\1\2\3False/" /tmp/resources/static/config.properties
+            sed -r -i -e 's|^(.+PROMETHEUS_MULTIPROC_DIR.+)(=)(.+)|\1\2 resources/prometheus/tmp|' /tmp/resources/static/config.properties
+            {{- if .Values.global.useRootAccountForInit }}
+            chown -R 200:200 /tmp/resources/dynamic
+            chown -R 200:200 /tmp/resources/static
+            {{- end }}
+
+        volumeMounts:
+        - name: {{ .Release.Name }}-sai-dynamic-resources
+          mountPath: /tmp/resources/dynamic
+        - name: {{ .Release.Name }}-tmp-static-resources
+          mountPath: /tmp/resources/static
+
+      - name: sai-init-model
+        image: "{{ tpl .Values.pod.dockerRegistryName . }}/{{ .Values.pod.imageRepository }}:{{ .Values.pod.imageTag }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          {{- if .Values.global.useRootAccountForInit }}
+          runAsUser: 0
+          {{- else }}
+          runAsUser: 200
+          runAsGroup: 200
+          {{- end }}
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+
+            if [ ! -f /server/resources/dynamic/init.flag ]; then
+              echo "Initializing temporary model resources..."
+              {{ .Values.python }} server.py > /tmp/app.log 2>&1 &
+              echo "Waiting for application startup..."
+              initFinished="false"
+              timeout 300 bash -c '
+                tail -f /tmp/app.log | grep -q "Application startup complete" && echo "Application startup complete."
+                echo "Application startup complete."
+              '
+              cat /tmp/app.log
+            else
+              echo "Model resources already initialized. Skipping..."
+              if [ ! -f /server/resources/dynamic/copod.pkl ]; then
+                echo "Copying model resources..."
+                cp /server/resources/static/model/copod.pkl /server/resources/dynamic/copod.pkl
+              fi
+            fi
+
+        env:
+          - name: MPLCONFIGDIR
+            value: "/tmp"
+
+        volumeMounts:
+        - name: {{ .Release.Name }}-tmp
+          mountPath: /tmp
+        - name: {{ .Release.Name }}-tmp-static-resources
+          mountPath: /server/resources/static
+        - name: {{ .Release.Name }}-sai-dynamic-resources
+          mountPath: /server/resources/dynamic
+        - name: {{ .Release.Name }}-tmp-application-cache
+          mountPath: /home/netreveal/.cache
+        - name: {{ .Release.Name }}-tmp-application-cache
+          mountPath: /home/netreveal/.config
+        - name: {{ .Release.Name }}-prometheus
+          mountPath: /server/resources/prometheus
+
+      containers:
+      - name: minio-init
+        image: "{{ tpl .Values.global.dockerRegistryName . }}/{{ .Values.global.toolsDockerImage }}"
+        imagePullPolicy: IfNotPresent
+
+        securityContext:
+          runAsUser: 200
+          runAsGroup: 200
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x;
+
+            echo "Connect to MINIO console."
+            mc --quiet --no-color alias set minio {{ include "minio.url" . }} ${MINIO_USER} ${MINIO_PASSWORD}
+
+            if mc stat minio/private-bucket/landing/s4s_dynamic_resources/dynamic/init.flag > /dev/null 2>&1; then
+              echo "MINIO Dynamic resources initialized"
+              echo "Verifying that all dynamic resources are present..."
+              resources=$(mc ls minio/private-bucket/landing/s4s_dynamic_resources/dynamic | awk '{print $6}')
+              for file in $(find /server/resources/dynamic/ -maxdepth 1 -type f -exec basename {} \;); do
+                if mc stat minio/private-bucket/landing/s4s_dynamic_resources/dynamic/${file} > /dev/null 2>&1; then
+                  continue
+                else
+                  echo "File ${file} is missing in MINIO Dynamic resources. Pushing it..."
+                  mc cp /server/resources/dynamic/${file} minio/private-bucket/landing/s4s_dynamic_resources/dynamic/${file}
+                fi
+              done
+              if mc stat minio/private-bucket/landing/s4s_dynamic_resources/dynamic/copod.pkl > /dev/null 2>&1; then
+                echo "The copod.pkl file is present in MINIO Dynamic resources."
+              else
+                echo "The copod.pkl file is missing in MINIO Dynamic resources. Pushing it..."
+                mc cp /server/resources/static/model/copod.pkl minio/private-bucket/landing/s4s_dynamic_resources/dynamic/copod.pkl
+              fi
+            else
+              echo "Initialising MINIO Dynamic resources..."
+              ls /server/resources/dynamic/
+              mc cp --recursive /server/resources/dynamic/ minio/private-bucket/landing/s4s_dynamic_resources/dynamic
+              touch /server/resources/dynamic/init.flag
+              mc cp /server/resources/dynamic/init.flag minio/private-bucket/landing/s4s_dynamic_resources/dynamic/init.flag
+            fi
+
+        envFrom:
+          - secretRef:
+              name: "{{ .Values.minioPasswordSecret }}"
+
+        volumeMounts:
+        - name: {{ .Release.Name }}-sai-dynamic-resources
+          mountPath: /server/resources/dynamic
+        - name: {{ .Release.Namespace }}-sai-home-dir
+          mountPath: /home/netreveal
+
+      {{- if eq .Values.global.useImagePullSecrets "true" }}
+      imagePullSecrets:
+      - name: regcred
+      {{- end }}
+      volumes:
+        - name: {{ .Release.Name }}-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-tmp-static-resources
+          emptyDir: {}
+        - name: {{ .Release.Name }}-tmp-application-cache
+          emptyDir: {}
+        - name: {{ .Release.Name }}-prometheus
+          emptyDir: {}
+        - name: {{ .Release.Name }}-sai-dynamic-resources
+          emptyDir: {}
+        - name: {{ .Release.Namespace }}-sai-home-dir
+          emptyDir: {}
+
+      restartPolicy: Never
+  backoffLimit: 5
+  ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}

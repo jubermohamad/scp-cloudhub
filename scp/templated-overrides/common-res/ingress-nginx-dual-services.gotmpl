@@ -1,0 +1,15 @@
+# SCP-5832: expose the existing ingress-nginx controller through external, internal, or both Services.
+ingress-nginx:
+  controller:
+    service:
+      external:
+        enabled: {{ ne .Values.internal_NLB_flag "true" }}
+      internal:
+        enabled: {{ ne .Values.internal_NLB_flag "false" }}
+        externalTrafficPolicy: Local
+        annotations:
+          service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "{{ .Values.internal_NLB_subnet }}"
+          service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+          service.beta.kubernetes.io/azure-load-balancer-name: sensa-internal-load-balancer
+          service.beta.kubernetes.io/azure-load-balancer-scheme: internal
+          service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: "/healthz"

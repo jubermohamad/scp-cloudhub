@@ -1,0 +1,57 @@
+# LOCAL CHARTS ONLY - No external dependencies
+# All charts stored in: ../../../../../../charts/
+#
+# This follows the pattern of sri-provisional repo:
+# - Self-contained single repository
+# - All Helm charts included locally
+# - No external Helm repo dependencies
+
+releases:
+  - name: sri-investigation-acme-corp-overlay
+    namespace: sri-dev-centralindia  # Same namespace as base component
+    createNamespace: false
+    chart: ../../../../../../charts/investigation
+    
+    values:
+      - values.generated.yaml
+    
+    hooks:
+      - events: ["presync"]
+        showlogs: true
+        command: sh
+        args:
+          - -c
+          - |
+            echo "🔍 Pre-overlay validation..."
+            # Verify component namespace exists
+            kubectl get namespace sri-dev-centralindia || {
+              echo "❌ Component namespace not found!"
+              echo "Please deploy Stage 2 component first"
+              exit 1
+            }
+            
+            # Verify component is deployed
+            helm status sri-investigation -n sri-dev-centralindia || {
+              echo "⚠️  Component not found, proceeding anyway..."
+            }
+      
+      - events: ["postsync"]
+        showlogs: true
+        command: sh
+        args:
+          - -c
+          - |
+            echo "✅ Post-overlay deployment..."
+            kubectl get deployment -n sri-dev-centralindia \
+              -l customer=acme-corp
+    
+    # Atomic deployment settings
+    atomic: true
+    wait: true
+    waitForJobs: true
+    timeout: 10m
+    
+    # Customer-specific settings
+    set:
+      customerId: acme-corp
+      customer: acme-corp

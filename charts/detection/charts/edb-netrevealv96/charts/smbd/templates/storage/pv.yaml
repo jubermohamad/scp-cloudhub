@@ -1,0 +1,43 @@
+{{- if (or (eq $.Values.global.clusterType "nfs") (eq $.Values.global.clusterType "minikube")) }}
+{{- $rootContext := . -}}
+{{- range $solution := .Values.global.nrSparkSolutionSwitches.smbd }}
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-{{ $solution }}-smbd-data-pv
+  labels:
+    {{- include "smbd.labels"  $rootContext  | nindent 4 }}
+    storage:  {{ $.Release.Name }}-{{ $solution }}-smbd-data-pv
+spec:
+  {{- with $rootContext }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $rootContext }}
+    storage: {{ .Values.storage.storage  }}
+    {{- end }}
+  accessModes:
+    - ReadWriteMany
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $rootContext }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s" $solution "smbd-data-pvc")) | quote }}
+    {{- end }}
+  persistentVolumeReclaimPolicy: Retain
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.storage.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/{{ $solution }}
+    type: DirectoryOrCreate
+  {{- else }}
+  mountOptions:
+  - hard
+  - nfsvers=4.2
+  - sync
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.storage.nfs_server_dir }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/{{ $solution }}
+  {{- end }}
+---
+{{- end }}
+{{- end }}

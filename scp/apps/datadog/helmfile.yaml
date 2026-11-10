@@ -1,0 +1,59 @@
+# username is retrieved from the environment with the format SYMPHONYFS_USERNAME
+# password is retrieved from the environment with the format SYMPHONYFS_PASSWORD
+repositories:
+  - name: k8s-as-helm
+    url: https://ameijer.github.io/k8s-as-helm/
+  - name: datadog
+    url: https://helm.datadoghq.com/
+
+helmDefaults:
+  timeout: 1500
+  wait: false  # 'true' will cause deadlock for NR with helm waiting for override-volume-claim indefinitely
+               # more: https://netreveal.atlassian.net/browse/FCENGX-3005
+  kubeContext: aks-UPDATE_ME_NC_SUFFIX
+
+---
+
+# The environments section to define the reusable variables
+environments:
+  default:
+    values:
+      - datadog:
+          logs_enabled: true  # Set to true for all client-facing clusters OR true for a specific non-client-facing cluster if app logs are required there. Set to false to disable. Note value must be all lowercase without quotes.
+          synthetics_private_location_for_vpn_clusters_boolean:
+            enabled: false  # Set to true to enable Datadog Synthetics Private Location for VPN clusters. Set to false for non-VPN clusters. Note value must be all lowercase without quotes.
+          worker_config: 'N/A'  # Set this to N/A if synthetics_private_location_for_vpn_clusters_boolean.enabled is false.
+      - clusterName: '{{ requiredEnv "INSTANCE_NAME" }}'
+      - appName: '{{ requiredEnv "APP_NAME" }}'
+
+---
+
+releases:
+
+  - name: datadog-secret
+    namespace: default
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "datadog-secret"
+      - type: "Opaque"
+      - secretData:
+          'api-key': '{{ env "CLOUDHUB_INSTALLATION" }}'
+
+  - name: datadog-agent
+    namespace: default
+    chart: datadog/datadog
+    values:
+      - ../../templated-overrides/{{ .Values.appName }}/common.gotmpl
+    needs:
+      - default/datadog-secret
+
+  - name: datadog-synthetics-private-location
+    namespace: default
+    chart: datadog/synthetics-private-location
+    condition: datadog.synthetics_private_location_for_vpn_clusters_boolean.enabled
+    values:
+      - configFile: |
+          {{ .Values.datadog.worker_config }}
+    needs:
+      - default/datadog-agent

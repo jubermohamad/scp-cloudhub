@@ -1,0 +1,98 @@
+{{- if .Values.minioWebhooks.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-webhooks-creator
+  annotations:
+    "helm.sh/hook": post-install, post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.minioWebhooks.activeDeadlineSeconds | default 900 }}
+  template:
+    spec:
+      {{- with .Values.minioWebhooks.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+      - name: create-webhooks
+        image: "{{ .Values.minioWebhooks.image.repository }}:{{ .Values.minioWebhooks.image.tag }}"
+        command:
+          - /bin/sh
+          - -c
+          - |
+            set -eu
+            set -o pipefail >/dev/null 2>&1 || true
+
+            wait_for_tcp() {
+              host="$1"
+              port="$2"
+              max_attempts="$3"
+              attempt=1
+              while ! nc -z -v -w5 "${host}" "${port}" >/dev/null 2>&1; do
+                if [ "${attempt}" -ge "${max_attempts}" ]; then
+                  echo "Timed out waiting for ${host}:${port}"
+                  return 1
+                fi
+                echo "Waiting for ${host}:${port} (${attempt}/${max_attempts})..."
+                attempt=$((attempt+1))
+                sleep 5
+              done
+            }
+
+            wait_for_tcp "minio" "443" "${MINIO_WEBHOOKS_WAIT_ATTEMPTS:-120}"
+            echo "MinIO service is reachable."
+
+            mc alias set minio https://minio:443 ${ACCESS_KEY} ${SECRET_KEY}
+
+            # Ensure bucket exists
+            if ! mc ls minio/subject-attachment-staging > /dev/null 2>&1; then
+              mc mb minio/subject-attachment-staging
+              echo "Bucket 'subject-attachment-staging' created"
+            else
+              echo "Bucket 'subject-attachment-staging' already exists"
+            fi
+
+            # Remove webhook configuration (cleanup mode)
+            echo "Removing webhook configuration..."
+            
+            # Remove bucket event subscription
+            if mc event ls minio/subject-attachment-staging arn:minio:sqs::attachment:webhook 2>/dev/null | grep -q webhook; then
+              mc event remove minio/subject-attachment-staging arn:minio:sqs::attachment:webhook --event put
+              echo "Bucket event subscription removed"
+            else
+              echo "No bucket event subscription found"
+            fi
+            
+            # Remove webhook configuration
+            if mc admin config get minio notify_webhook:attachment 2>/dev/null | grep -q notify_webhook; then
+              mc admin config reset minio notify_webhook:attachment
+              mc admin service restart minio
+              sleep 5
+              echo "Webhook configuration removed"
+            else
+              echo "No webhook configuration found (already clean)"
+            fi
+
+            echo "MinIO configuration complete"
+        env:
+        - name: ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-creds
+              key: root-user
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-creds
+              key: root-password
+        - name: SENSA_API_URL
+          value: "{{ include "global.internalApiBaseUrl" . }}/"
+        {{- with .Values.minioWebhooks.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      restartPolicy: Never
+{{- end }}

@@ -1,0 +1,186 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# aks-plan.yaml — portal-triggered AKS plan
+#
+# Dispatched by CloudHub's InfrastructureProvisioningService during the AKS
+# creation flow (Review step, and again best-effort when the PR is opened).
+#
+# Inputs match the service's createWorkflowDispatch call exactly:
+#   cluster_name   — e.g. aks-acme-prod-eus
+#   tfvars_path    — e.g. infra/aks/values/aks-acme-prod-eus.tfvars
+#   tfvars_base64  — base64 tfvars content (empty on PR-time dispatch, where
+#                    the file is read from the feature branch instead)
+#
+# Output contract: writes plan-runs/<run_id>.json to the `plan-output` branch;
+# the portal polls that file (readPlanSummary) to render resource counts and
+# cost in the Review UI. JSON shape = PlanSummary:
+#   { resourcesToCreate, resourcesToModify, resourcesToDestroy,
+#     monthlyCost, errors[], warnings[] }
+#
+# NOTE: this currently produces a validated estimate (no real `terraform plan`)
+# — wire in ARM_* / TF_TOKEN secrets and a terraform init/plan step to upgrade,
+# keeping the same JSON output contract.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: AKS Plan (portal-triggered)
+
+on:
+  workflow_dispatch:
+    inputs:
+      cluster_name:
+        description: 'Cluster identifier, e.g. aks-acme-prod-eus'
+        required: true
+        type: string
+      tfvars_path:
+        description: 'Repo path of the cluster tfvars file'
+        required: true
+        type: string
+      tfvars_base64:
+        description: 'Base64-encoded tfvars content (may be empty)'
+        required: false
+        type: string
+
+# Needs write access to publish the plan summary to the plan-output branch.
+permissions:
+  contents: write
+
+env:
+  PLAN_OUTPUT_BRANCH: plan-output
+
+jobs:
+  plan:
+    name: plan — ${{ inputs.cluster_name }}
+    runs-on: ubuntu-latest
+    # Inputs are exposed to shell steps ONLY via env and always quoted, never
+    # interpolated with ${{ }} inside run: blocks (script injection).
+    env:
+      CLUSTER_NAME: ${{ inputs.cluster_name }}
+      TFVARS_PATH: ${{ inputs.tfvars_path }}
+      TFVARS_BASE64: ${{ inputs.tfvars_base64 }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          [[ "$CLUSTER_NAME" =~ ^[a-z0-9][a-z0-9-]{1,62}$ ]] \
+            || { echo "❌ invalid cluster_name"; exit 1; }
+          [[ "$TFVARS_PATH" =~ ^[A-Za-z0-9._/-]+\.tfvars$ && "$TFVARS_PATH" != *..* ]] \
+            || { echo "❌ invalid tfvars_path"; exit 1; }
+          [[ "$TFVARS_BASE64" =~ ^[A-Za-z0-9+/=]*$ ]] \
+            || { echo "❌ tfvars_base64 is not base64"; exit 1; }
+
+      - name: Resolve tfvars content
+        id: tfvars
+        run: |
+          set -e
+          mkdir -p /tmp/aks-plan
+
+          if [ -n "$TFVARS_BASE64" ]; then
+            printf '%s' "$TFVARS_BASE64" | base64 -d > /tmp/aks-plan/cluster.tfvars
+            echo "source=dispatch-payload" >> "$GITHUB_OUTPUT"
+          elif [ -f "$TFVARS_PATH" ]; then
+            cp "$TFVARS_PATH" /tmp/aks-plan/cluster.tfvars
+            echo "source=repo-file" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ No tfvars payload and $TFVARS_PATH not found on this ref"
+            exit 1
+          fi
+
+          echo "📄 tfvars for $CLUSTER_NAME:"
+          cat /tmp/aks-plan/cluster.tfvars
+
+      - name: Validate tfvars
+        id: validate
+        run: |
+          set -e
+          TFVARS=/tmp/aks-plan/cluster.tfvars
+          ERRORS=()
+          WARNINGS=()
+
+          grep -q '^kubernetes_version' "$TFVARS" || ERRORS+=("kubernetes_version missing")
+          grep -q '^env' "$TFVARS"                || ERRORS+=("env missing")
+          grep -q '^location' "$TFVARS"           || ERRORS+=("location missing")
+          grep -q 'vm_size' "$TFVARS"             || ERRORS+=("vm_size missing")
+          grep -q '"owner"' "$TFVARS"             || WARNINGS+=("owner tag missing")
+          grep -q '"costCentre"' "$TFVARS"        || WARNINGS+=("costCentre tag missing")
+
+          printf '%s\n' "${ERRORS[@]:-}"   | sed '/^$/d' > /tmp/aks-plan/errors.txt
+          printf '%s\n' "${WARNINGS[@]:-}" | sed '/^$/d' > /tmp/aks-plan/warnings.txt
+
+          if [ -s /tmp/aks-plan/errors.txt ]; then
+            echo "❌ Validation errors:"; cat /tmp/aks-plan/errors.txt
+          else
+            echo "✅ tfvars validation passed"
+          fi
+
+      # Placeholder for a real plan. Replace with terraform init/plan once
+      # ARM_CLIENT_ID / ARM_CLIENT_SECRET / ARM_TENANT_ID / ARM_SUBSCRIPTION_ID
+      # (and TF_TOKEN_app_terraform_io if TFC-backed) secrets are configured.
+      - name: Build plan summary
+        run: |
+          set -e
+          TFVARS=/tmp/aks-plan/cluster.tfvars
+
+          # Node-count-driven cost estimate mirroring the portal's estimator.
+          MIN_COUNT=$(grep -m1 'min_count' "$TFVARS" | grep -o '[0-9]\+' | head -1)
+          MIN_COUNT=${MIN_COUNT:-1}
+          MONTHLY=$(( (300 * MIN_COUNT + 250 + 25) / 50 * 50 ))
+
+          ERRORS_JSON=$(jq -R -s 'split("\n") | map(select(length > 0))' /tmp/aks-plan/errors.txt)
+          WARNINGS_JSON=$(jq -R -s 'split("\n") | map(select(length > 0))' /tmp/aks-plan/warnings.txt)
+          CREATE=28
+          if [ -s /tmp/aks-plan/errors.txt ]; then CREATE=0; fi
+
+          jq -n \
+            --argjson create "$CREATE" \
+            --argjson cost "$MONTHLY" \
+            --argjson errors "$ERRORS_JSON" \
+            --argjson warnings "$WARNINGS_JSON" \
+            '{resourcesToCreate: $create, resourcesToModify: 0, resourcesToDestroy: 0,
+              monthlyCost: $cost, errors: $errors, warnings: $warnings}' \
+            | tee /tmp/aks-plan/summary.json
+
+      - name: Publish summary to plan-output branch
+        run: |
+          set -e
+          git config user.name  "cloudhub-aks-plan[bot]"
+          git config user.email "cloudhub-aks-plan@symphony.ai"
+
+          # Reuse the branch if it exists, otherwise start it as an orphan so
+          # plan results never mix with source history.
+          if git ls-remote --exit-code origin "$PLAN_OUTPUT_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$PLAN_OUTPUT_BRANCH"
+            git checkout "$PLAN_OUTPUT_BRANCH"
+          else
+            git checkout --orphan "$PLAN_OUTPUT_BRANCH"
+            git rm -rf --quiet . || true
+          fi
+
+          mkdir -p plan-runs
+          cp /tmp/aks-plan/summary.json "plan-runs/${{ github.run_id }}.json"
+          git add "plan-runs/${{ github.run_id }}.json"
+          git commit -m "plan: $CLUSTER_NAME (run ${{ github.run_id }})"
+          git push origin "$PLAN_OUTPUT_BRANCH"
+
+          echo "✅ Published plan-runs/${{ github.run_id }}.json to $PLAN_OUTPUT_BRANCH"
+
+      - name: Post plan summary
+        if: always()
+        run: |
+          {
+            echo "## 🗺️ AKS Plan — $CLUSTER_NAME"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| tfvars | \`$TFVARS_PATH\` |"
+            echo "| Run | ${{ github.run_id }} |"
+            echo "| Output | \`plan-runs/${{ github.run_id }}.json\` on \`plan-output\` |"
+            echo ""
+            echo '```json'
+            cat /tmp/aks-plan/summary.json 2>/dev/null || echo "{}"
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY

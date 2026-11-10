@@ -1,0 +1,464 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+# platform-services — shared infrastructure for the whole SRI release.
+#
+# PostgreSQL: one CloudNativePG cluster (default name sri-postgres) with a
+# database-per-product. Consumers connect to <clusterName>-rw (namespace-
+# qualify the host in deploy values — see global.platform.postgresHost there).
+
+postgres:
+  enabled: true
+  clusterName: sri-postgres
+  # STOCK CloudNativePG image — and it already BUNDLES pgvector (0.8.1 in 17.6).
+  # That matters because invhub's copilot embeddings need the `vector` extension:
+  # no custom/mirrored pgvector build is required, so image provenance stays with
+  # the upstream CNPG project rather than becoming ours to track. Verify after any
+  # bump with:
+  #   kubectl exec -n sri sri-postgres-1 -- psql -U postgres \
+  #     -c "select * from pg_available_extensions where name='vector'"
+  image: ghcr.io/cloudnative-pg/postgresql:17.6
+  instances: 1
+  primaryUpdateStrategy: unsupervised
+  # Superuser secret <clusterName>-superuser is required by the per-database
+  # ensure jobs below.
+  enableSuperuserAccess: true
+  storage:
+    size: 20Gi
+    # storageClass: ""        # empty = cluster default
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+  parameters:
+    shared_buffers: 512MB
+    max_connections: "400"
+
+# One ensure-db-<name> Job is rendered PER entry (post-install/post-upgrade
+# hooks, all at the same weight so they run in parallel once the cluster is
+# up). Each is idempotent (CREATE ROLE if missing else ALTER PASSWORD;
+# CREATE DATABASE if missing) and independently re-runnable — a failure
+# provisioning one product never blocks or masks the others.
+#
+# map key = database name; owner defaults to the key. Role passwords come
+# from rolePasswords (secrets layer). Optional `extensions` are created as
+# SUPERUSER (pgvector et al are not "trusted" extensions, so a product migration
+# running as the owner role cannot create them).
+databases: {}
+#  dethub: {}
+#  mlflow: { owner: modelhub }
+#  invhub: { owner: invhub, extensions: [vector] }
+
+# role -> password. SECRET MATERIAL — set only in the deploy secrets layer
+# (secrets.gen.yaml), never here.
+rolePasswords: {}
+
+ensureJobs:
+  image: ghcr.io/cloudnative-pg/postgresql:17.6
+  backoffLimit: 6
+  # outlives the helm WAIT, not the Job: this release's timeout is 1500-1800s and
+  # helm --wait-for-jobs re-reads every Job until the whole release is ready. A
+  # Job deleted by its TTL in the meantime reads as NotFound → "not ready" → the
+  # release fails with everything installed and every Job successful. Same trap
+  # as detectionhub's defaultJobTTL; same value.
+  ttlSecondsAfterFinished: 7200
+
+# Credential Secrets rendered for consumers, named exactly what they already
+# reference. Three shapes:
+#
+# appSecrets — CNPG "-app"-style secrets (host/port/dbname/user/username/
+#   password/uri/jdbc-uri/pgpass keys), e.g. what detectionhub's
+#   global.database and superset wiring expect.
+# basicAuthSecrets — kubernetes.io/basic-auth (username/password), e.g.
+#   common-keycloak's externalDatabase.existingSecret.
+# envSecrets — POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB envFrom-style,
+#   e.g. fin-pipeline's postgres-secret.
+#
+# Each entry: name (secret name) + database (must exist in databases above;
+# role/password resolved through it). host defaults to
+# <clusterName>-rw.<namespace>.svc.cluster.local; override per-entry with
+# host: if needed.
+appSecrets: []
+#  - name: sri-cn-postgres-app
+#    database: dethub
+basicAuthSecrets: []
+#  - name: common-keycloak-cnpg-db
+#    database: keycloak
+envSecrets: []
+#  - name: postgres-secret
+#    database: finpipeline
+
+# ── Shared Redis (P3) ───────────────────────────────────────────────────────
+# ONE Redis for the platform: bitnami chart (same tgz invhub vendors),
+# standalone, no auth (in-cluster consumers only — ai-store, dxv/nrodsftp,
+# fin-pipeline, superset). Services: sri-redis-master + sri-redis-headless.
+# invhub keeps its own invhub-redis (invhub exception).
+redis:
+  enabled: true
+  # distinct fullname AND name: several charts in this release render a
+  # "redis" chart — pod-selector labels must diverge too (see root README
+  # collision rules)
+  fullnameOverride: sri-redis
+  nameOverride: sri-redis
+  # 3 nodes = 1 master + 2 replicas. Bitnami's `standalone` architecture renders
+  # exactly ONE pod and ignores replica.replicaCount entirely, so going to 3
+  # requires switching to `replication`, not raising a count.
+  #
+  # Safe as an in-place change: the master keeps its existing PVC and the two new
+  # replicas sync FROM it, so nothing is lost. Consumers keep using the
+  # `sri-redis-master` Service and are unaffected — reads do not automatically
+  # spread, since only the new `sri-redis-replicas` Service routes to replicas.
+  # Note auth stays disabled (in-cluster consumers only), and replication with
+  # auth off needs no primary/replica credential wiring.
+  architecture: replication
+  # docker.io/bitnami purged the old chart-default tags — use the symphonyfs
+  # mirror (same image invhub-redis runs)
+  global:
+    imageRegistry: symphonyfs.azurecr.io
+    imagePullSecrets:
+      - regcred
+    security:
+      allowInsecureImages: true
+  image:
+    tag: 7.2.11-patched-debian-12-r9
+  auth:
+    enabled: false
+  master:
+    persistence:
+      size: 8Gi
+  replica:
+    # 2 replicas + the master = the 3 nodes asked for. Each gets its own 8Gi PVC.
+    replicaCount: 2
+  metrics:
+    enabled: false
+
+# ── Shared MinIO (P5) ───────────────────────────────────────────────────────
+# The platform object store is **sri-minio**, rendered by detectionhub's minio
+# chart (detection.detectionhub.minio, fullnameOverride sri-minio). This chart
+# does NOT render MinIO — it only PROVISIONS on it: one ensure-minio-<product>
+# Job per consuming product (same per-product-Job rule as ensure-db-<name>).
+#
+# Exceptions that keep their own object store, by design:
+#   * dxv's minio — an SFTP ingestion appliance (mounts nrodsftp-ssh-key,
+#     namespace sri-dxv), not a general S3 endpoint.
+#   * invhub's minio-operator Tenant — invhub exception, same as its postgres
+#     and redis.
+minio:
+  enabled: true
+  # in-cluster S3 endpoint; namespace-qualify it in deploy values
+  # (global.platform.minioEndpoint)
+  endpoint: http://sri-minio.sri.svc.cluster.local:9000
+  # Root credentials. Prefer the in-namespace Secret (rootSecret); set
+  # rootUser/rootPassword instead when the object store is in ANOTHER namespace,
+  # because a secretKeyRef cannot cross namespaces (multi-namespace mode — see
+  # deploy/multi-namespace.md). SECRET MATERIAL: rootPassword belongs in the
+  # deploy secrets layer, never here.
+  rootUser: ""
+  rootPassword: ""
+  # root credentials — the Secret detectionhub's minio chart renders
+  rootSecret:
+    name: sri-minio
+    userKey: rootUser
+    passwordKey: rootPassword
+  provisionJobs:
+    image: quay.io/minio/mc:RELEASE.2025-05-21T01-59-54Z
+    imagePullSecrets: []
+    backoffLimit: 6
+    # see ensureJobs above — must outlive the helm wait, not the Job
+    ttlSecondsAfterFinished: 7200
+
+# map key = product name. Each entry renders ONE ensure-minio-<product> Job
+# plus a Secret minio-tenant-<product> (aws-access-key-id /
+# aws-secret-access-key / endpoint) that consumers may envFrom.
+#   accessKey: login/access key for the tenant user (default: the map key)
+#   buckets:   buckets to create; the generated policy sri-<product> grants
+#              s3:* on exactly these (plus ListAllMyBuckets)
+minioTenants: {}
+#  aistore:
+#    buckets: [mlflow-model-store, zot-oci, datasets, landing-zone]
+
+# product -> tenant secret key. SECRET MATERIAL — set only in the deploy
+# secrets layer (secrets.gen.yaml), never here.
+minioTenantSecretKeys: {}
+
+# ── Spark webhook enforcer opt-out (P9) ─────────────────────────────────────
+# Moved here with the spark-operator itself: the Job deletes CLUSTER-SCOPED
+# webhook configurations, so it belongs with the release that now owns them
+# (common), not with the detection-namespace chart that owns the Spark job
+# ServiceAccount. See templates/spark-webhook-enforcer-optout.yaml.
+webhookEnforcerOptOut:
+  enabled: true
+  # only needs curl + a service account token
+  image: docker.io/curlimages/curl:8.11.1
+  imagePullSecrets: []
+  # spark-operator names both configs after the webhook component, i.e. after
+  # its fullname — so this key moves with any rename of the operator. A miss
+  # here does NOT fail loudly: the Job simply finds nothing to delete and the
+  # AKS admissionsenforcer conflict comes back silently.
+  # EMPTY ON PURPOSE, and it must stay empty while spark-operator ships from the
+  # common-res layer. This Job deletes the named cluster-scoped webhook configs in
+  # PRE-UPGRADE so that helm's following apply CREATEs them (a create cannot hit
+  # the SSA 409 that AKS's admissionsenforcer causes on an update). That trade
+  # only works when the SAME release then recreates them.
+  #
+  # spark-operator now belongs to the OPERATORS release, so this Job — which runs
+  # in the umbrella — would delete objects this release does not manage, and
+  # helm's apply would not bring them back. The webhooks would simply be gone
+  # until someone upgraded the operators release: spark admission silently off,
+  # SparkApplications accepted unmutated.
+  #
+  # Consequence to own: an operators-release upgrade CAN still hit the 409 on
+  # these two objects, with no Job there to clear the way (platform-services is
+  # disabled in that release). Remedy is the documented manual one — delete both
+  # configs, then upgrade. The durable fix is to move this opt-out into
+  # common-res so it sits in the same release as the webhooks it clears.
+  webhookNames: []
+
+# ── Operator preflight (P6b) ────────────────────────────────────────────────
+# Render-time `lookup` checks for the cluster-wide operators common-res
+# installs. See templates/operator-preflight.yaml for the exact decision table.
+# `enabled` MIRRORS the matching common-res switch — keep the two in sync; the
+# failure messages quote enabledPath, which is the REAL switch to flip.
+# expectedVersion is the operator's own version (image tag, "v" stripped), NOT
+# the Helm chart version — they differ for minio-operator, ingress-nginx,
+# cloudnative-pg and reloader.
+#
+# `deployments` is an ordered candidate list, first hit wins: the
+# release-derived name (from releaseSuffix) first, then these, then the
+# upstream chart's default name in its own namespace. `namespace` defaults to
+# the release namespace.
+# ⚠️ NAMING (Tier 3): the four renameable operators now carry
+# `fullnameOverride: sri-operator-<name>` (charts/common/values.yaml), which is
+# deliberately NOT release-derived — so the releaseSuffix candidate no longer
+# finds them and the `sri-operator-*` entry below is what does. It is listed
+# FIRST, ahead of the older release-prefixed literals, which are kept because
+# an environment installed before the rename still answers to them.
+# ⚠️ the `sri-*` literals assume the release is called `sri`. In
+# multi-namespace mode (deploy/multi-namespace.md) the common release is
+# `sri-common`; the releaseSuffix candidate covers that case automatically.
+preflight:
+  # escape hatch: turn off every check
+  enabled: true
+  operators:
+    cert-manager:
+      enabled: true
+      # the release-derived candidate, tried FIRST: <release>-cert-manager
+      releaseSuffix: cert-manager
+      enabledPath: common.common-res.cert-manager.enabled
+      # chart 1.19.4
+      expectedVersion: "1.19.4"
+      crd: certificates.cert-manager.io
+      container: cert-manager-controller
+      deployments:
+        - name: sri-operator-cert-manager
+          # the SHARED operators namespace: the operators release is no longer
+          # env-tokened or prefix-scoped, so a product release rendering in its
+          # own namespace must look here or it reports the operator MISSING —
+          # and 'missing' is the branch that PASSES, so the check would evaporate.
+        - name: sri-operator-cert-manager
+          namespace: sri-operators
+        - name: sri-cert-manager
+        - name: cert-manager
+          namespace: cert-manager
+    cloudnative-pg:
+      enabled: true
+      # the release-derived candidate, tried FIRST: <release>-cloudnative-pg
+      releaseSuffix: cloudnative-pg
+      enabledPath: common.common-res.cloudnative-pg.enabled
+      # chart 0.27.1
+      expectedVersion: "1.28.1"
+      crd: clusters.postgresql.cnpg.io
+      container: manager
+      deployments:
+        - name: sri-operator-cloudnative-pg
+          # the SHARED operators namespace: the operators release is no longer
+          # env-tokened or prefix-scoped, so a product release rendering in its
+          # own namespace must look here or it reports the operator MISSING —
+          # and 'missing' is the branch that PASSES, so the check would evaporate.
+        - name: sri-operator-cloudnative-pg
+          namespace: sri-operators
+        - name: sri-cloudnative-pg
+        - name: cnpg-controller-manager
+          namespace: cnpg-system
+    strimzi-kafka-operator:
+      enabled: true
+      enabledPath: common.common-res.strimzi-kafka-operator.enabled
+      # chart 0.50.1
+      expectedVersion: "0.50.1"
+      crd: kafkas.kafka.strimzi.io
+      container: strimzi-cluster-operator
+      deployments:
+        - name: strimzi-cluster-operator
+        - name: strimzi-cluster-operator
+          namespace: kafka
+    minio-operator:
+      enabled: true
+      enabledPath: common.common-res.minio-operator.enabled
+      # chart 5.0.18 ships operator v5.0.17
+      expectedVersion: "5.0.17"
+      crd: tenants.minio.min.io
+      container: minio-operator
+      deployments:
+        - name: minio-operator
+        - name: minio-operator
+          namespace: minio-operator
+    ingress-nginx:
+      enabled: true
+      # the release-derived candidate, tried FIRST: <release>-ingress-nginx-controller
+      releaseSuffix: ingress-nginx-controller
+      enabledPath: common.common-res.ingress-nginx.enabled
+      # chart 4.14.3; ships no CRDs, so detection is Deployment-only
+      expectedVersion: "1.14.3"
+      crd: ""
+      container: controller
+      deployments:
+        - name: sri-operator-ingress-nginx-controller
+          # the SHARED operators namespace: the operators release is no longer
+          # env-tokened or prefix-scoped, so a product release rendering in its
+          # own namespace must look here or it reports the operator MISSING —
+          # and 'missing' is the branch that PASSES, so the check would evaporate.
+        - name: sri-operator-ingress-nginx-controller
+          namespace: sri-operators
+        - name: sri-ingress-nginx-controller
+        - name: ingress-nginx-controller
+          namespace: ingress-nginx
+    reloader:
+      enabled: true
+      # the release-derived candidate, tried FIRST: <release>-reloader
+      releaseSuffix: reloader
+      enabledPath: common.common-res.reloader.enabled
+      # chart 2.2.8 ships reloader v1.4.13; ships no CRDs
+      expectedVersion: "1.4.13"
+      crd: ""
+      # reloader names its container after its own fullname, so this follows
+      # the fullnameOverride too
+      container: sri-operator-reloader
+      deployments:
+        - name: sri-operator-reloader
+          # the SHARED operators namespace: the operators release is no longer
+          # env-tokened or prefix-scoped, so a product release rendering in its
+          # own namespace must look here or it reports the operator MISSING —
+          # and 'missing' is the branch that PASSES, so the check would evaporate.
+        - name: sri-operator-reloader
+          namespace: sri-operators
+        - name: sri-reloader
+        - name: reloader-reloader
+          namespace: reloader
+    spark-operator:
+      # P9: not a common-res chart — it is a direct dependency of `common`
+      # (charts/common/Chart.yaml). Listed here because it is a cluster-wide
+      # operator like the rest, and because its webhook configurations are
+      # CLUSTER-SCOPED: platform-services' spark-webhook-enforcer-optout Job
+      # deletes them at pre-upgrade, so those grants are a COMMON-namespace
+      # concern now, not detectionhub's.
+      enabled: true
+      enabledPath: common.spark-operator.enabled
+      # chart 2.3.0
+      expectedVersion: "2.3.0"
+      crd: sparkapplications.sparkoperator.k8s.io
+      container: spark-operator-controller
+      deployments:
+        - name: sri-operator-spark-controller
+          # the SHARED operators namespace: the operators release is no longer
+          # env-tokened or prefix-scoped, so a product release rendering in its
+          # own namespace must look here or it reports the operator MISSING —
+          # and 'missing' is the branch that PASSES, so the check would evaporate.
+        - name: sri-operator-spark-controller
+          namespace: sri-operators
+        # pre-rename name, kept so an environment installed before the Tier-3
+        # rename is still recognised rather than reported as missing
+        - name: dethub-spark-operator-controller
+
+# ── THE GENERIC OPS GATE (templates/ops-auth-proxy.yaml) ────────────────────
+# One oauth2-proxy bound to the platform Keycloak, for ingresses whose app has
+# no native OIDC — and as defence in depth for the ones that do (an
+# ingress-level gate fails CLOSED if an app's own auth is misconfigured).
+#
+# DEFAULT OFF, and enabling it is deliberately two steps: switch it on here,
+# then add the auth_request annotations to the ingresses you want gated:
+#   nginx.ingress.kubernetes.io/auth-url:    "http://<release>-ops-auth-proxy.<ns>.svc.cluster.local/oauth2/auth"
+#   nginx.ingress.kubernetes.io/auth-signin: "https://$host/oauth2/start?rd=$escaped_request_uri"
+# A gated host answers 302-to-Keycloak instead of the app's own response, so it
+# must never appear by surprise in a health check.
+opsAuthProxy:
+  enabled: false
+  image: quay.io/oauth2-proxy/oauth2-proxy:v7.7.1
+  replicaCount: 1
+  imagePullSecrets: []
+  # realm issuer, e.g. https://<keycloak-host>/realms/SRI
+  issuerUrl: ""
+  clientId: oauth2-proxy-ops
+  # must be <scheme>://<gated-host>/oauth2/callback
+  redirectUrl: ""
+  # THE GATE — a Keycloak realm role, read by oauth2-proxy as `role:<name>`
+  allowedRole: sri-platform-admin
+  clientSecret:
+    secretName: sri-ops-oidc
+    secretKey: oauth2-proxy-ops
+  cookieSecret:
+    secretName: sri-ops-oidc
+    secretKey: cookie-secret
+  extraArgs: []
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+  ingress:
+    enabled: false
+    className: nginx
+    # one entry per host being gated: /oauth2/* must be served on the SAME host
+    # as the app, or the cookie and the subrequest do not line up
+    hosts: []
+    tlsSecretName: ""
+    annotations: {}
+
+# ── BRING-YOUR-OWN TLS (P13) ────────────────────────────────────────────────
+# Certificates supplied by the INSTALLATION rather than issued by cert-manager.
+#
+# WHY THIS EXISTS: every ingress in the deploy values carries
+# `cert-manager.io/cluster-issuer: letsencrypt-production`, and that issuer
+# authenticates DNS-01 against **Azure** DNS. An installation whose DNS is not
+# Azure — a corporate zone, Cloudflare, an air-gapped estate — cannot use it, and
+# had no supported alternative: the annotation is a literal in the values file, so
+# "no cert-manager" meant hand-editing six places with nothing checking you got
+# them all. A missed one leaves an Ingress asking an issuer that does not exist,
+# which fails when the certificate is needed, not when the chart is installed.
+#
+# So: name a secret here, give it a cert and key, and the chart renders a
+# kubernetes.io/tls Secret. Point an ingress's tlsSecretName at it and DROP the
+# cluster-issuer annotation — cert-manager is then not involved at all, and no
+# ACME account, DNS credential or rate limit applies.
+#
+# The values are CREDENTIALS: supply them from the deploy secrets layer
+# (secrets.gen.yaml) or a provisioner material (files:/base64:), never here. A
+# material is the better route for an in-cluster install, which has no filesystem
+# to read a PEM from.
+#
+#   tlsSecrets:
+#     sri-wildcard-tls:
+#       crt: |
+#         -----BEGIN CERTIFICATE-----
+#         …leaf, then any intermediates, in that order…
+#       key: |
+#         -----BEGIN PRIVATE KEY-----
+#
+# Both keys are required and are checked at RENDER time — an empty or absent one
+# fails the install with a named error rather than producing a Secret that mounts
+# fine and then serves a broken chain.
+tlsSecrets: {}
+
+# ── Spark job RBAC, per environment (P14) ───────────────────────────────────
+# The identity spark drivers run as, in THIS environment's namespace. The shared
+# spark-operator watches all namespaces and therefore renders no per-namespace
+# objects, so each environment provides its own — see templates/spark-job-rbac.yaml
+# for why the alternative (naming every namespace on the shared operators release)
+# does not scale past one environment.
+sparkJobRbac:
+  enabled: false
+  # must match `spark.serviceAccount.name` on the operators release, since that is
+  # the name a SparkApplication's driver requests
+  serviceAccountName: sri-operator-spark-jobs

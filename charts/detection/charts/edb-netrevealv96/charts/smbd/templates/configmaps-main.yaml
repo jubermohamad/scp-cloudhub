@@ -1,0 +1,43 @@
+{{- $rootContext := . -}}
+
+{{- range $solution := .Values.global.nrSparkSolutionSwitches.smbd }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ $.Release.Name }}-{{ $.Chart.Name }}-{{ $solution }}-configs"
+  namespace: {{ $.Values.global.namespace }}
+
+data:
+  {{- range $path, $_  := $.Files.Glob (printf "data/conf/%s/**" $solution) }}
+  {{- if not (or (hasSuffix "application.conf" $path) (hasSuffix "environment.conf" $path) (hasSuffix "norkom.nks" $path)  (hasPrefix (printf "data/conf/%s/aml" $solution)  $path) (hasPrefix (printf "data/conf/%s/model" $solution)  $path)) }}
+  {{  trimPrefix (printf "data/conf/%s/" $solution) $path |  replace "/" "__" |  replace " " "--"}}: |-
+{{ tpl ( $.Files.Get $path) $ | indent 4 }}
+  {{- end }}
+  {{- end }}
+
+
+binaryData:
+
+  {{- range $path, $_  := $.Files.Glob (printf "data/conf/%s/**" $solution) }}
+  {{- if (hasSuffix "norkom.nks" $path) }}
+  {{  trimPrefix (printf "data/conf/%s/" $solution) $path|  replace "/" "__" |  replace " " "--"}}: {{ ($.Files.Get $path) | b64enc | quote }}
+  {{- end }}
+  {{- end }}
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ $.Release.Name }}-{{ $.Chart.Name }}-data-{{ $solution }}-dir"
+  namespace: {{ $.Values.global.namespace }}
+
+data:
+  {{- range $path, $_  := $.Files.Glob (printf "data/data/%s/**" $solution) }}
+  {{  trimPrefix (printf "data/data/%s/" $solution) $path |  replace "/" "__" |  replace " " "--"}}: |-
+{{ tpl ( $.Files.Get $path) $ | indent 4 }}
+  {{- end }}
+
+
+---
+{{- end }}

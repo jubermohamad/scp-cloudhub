@@ -1,0 +1,23 @@
+apiVersion: v2
+name: sensaai-sanctions
+appVersion: "9.6.1.5"
+description: A Helm chart for Sensa AI
+version: 2.0.14
+type: application
+
+dependencies:
+- name: minio
+  version: "5.1.0"
+  repository: file://./charts/minio
+
+- name: minio-provisioner
+  version: "1.0.1"
+  repository: file://./charts/minio-provisioner
+
+- name: sensaai-sanctions-inference
+  version: "2.0.14"
+  repository: file://./charts/sensaai-sanctions-inference
+
+- name: sensaai-sanctions-training
+  version: "2.0.14"
+  repository: file://./charts/sensaai-sanctions-training

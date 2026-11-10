@@ -1,0 +1,26 @@
+imageRepository: "nri-nrod-k8s-db"
+imageTag: "16.10-20250917073342"
+pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+schedule: "*/5 * * * *"
+ttlSecondsAfterFinished: 600
+
+db_conn_timeout: 5
+db_user_secret_name:
+  name: "postgres-credential-apps-user-cnpg"
+  key: "username"
+db_password_secret_name:
+  name: "postgres-credential-apps-user-cnpg"
+  key: "password"
+
+sql_scripts: # add sql queries that return json values write the result to stdout
+  - "copy (select * from amlorch_job_run WHERE status = 'SUCCEEDED' order by start_date desc) to stdout;"
+  - "copy (select * from calendar_signal order by 5 desc limit 10) to stdout;"
+  - "copy (select json_build_object('Number of concurrent users logged into EIM UI', count(*)) from user_sessions where logout_date is null) to stdout;"
+  #- "copy (select json_build_object('Count_v_pf_batch_payment_processing', count(*)) from v_pf_batch_payment_processing) to stdout;"
+  - "copy (select /*csv*/ * from acq_batch_process where name like 'Payment%' order by 1 desc limit 5) to stdout;"
+  - "copy (select * from acq_batch_process where flow_identifier = 'CDD Processing' order by 1 desc limit 10) to stdout;"
+  - 'copy (select substr(par.param_value, 47, 30) as "File", created_timestamp, completed_timestamp, process_time/1000/60 as "Time Taken(m)", record_count, record_bad_count from acq_batch_process a, acq_batch_process_param par where a.created_timestamp >= current_date - 1 and a.batch_process_id = par.batch_process_id and par.param_name = ''SourceFile'' order by created_timestamp) to stdout;'

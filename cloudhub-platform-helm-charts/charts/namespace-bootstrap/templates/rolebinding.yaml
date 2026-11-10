@@ -1,0 +1,36 @@
+{{- if .Values.rbac.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: app-developer
+  namespace: {{ include "namespace-bootstrap.namespace" . }}
+  labels:
+    {{- include "namespace-bootstrap.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "configmaps", "secrets", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-developer
+  namespace: {{ include "namespace-bootstrap.namespace" . }}
+  labels:
+    {{- include "namespace-bootstrap.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: app-developer
+subjects:
+{{- if .Values.rbac.subjects }}
+{{- toYaml .Values.rbac.subjects | nindent 2 }}
+{{- else }}
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ include "namespace-bootstrap.namespace" . }}
+{{- end }}
+{{- end }}

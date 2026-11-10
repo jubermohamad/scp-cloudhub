@@ -1,0 +1,302 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ include "job.standalone.license.schema.init.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-standalone-instance"
+  annotations:
+    # This is what defines this resource as a hook. Without this line, the job is considered part of the release.
+    "helm.sh/hook": post-install, pre-upgrade
+    "helm.sh/hook-weight": "-8"
+    "helm.sh/hook-delete-policy": post-install, pre-upgrade
+spec:
+  ttlSecondsAfterFinished: {{ .Values.dbInit.ttlSecondsAfterFinished }}
+  template:
+    spec:
+      initContainers:
+      - name: copy-dbscripts-to-volume
+        image: "{{- include "standalone.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            echo "Copying DB scripts to volume..."
+            cp -r /opt/docker/data/DBInitScripts/*  /opt/DBInitScripts
+
+            echo "Changing the sh to bash..."
+            cd /opt/DBInitScripts/; find . -type f -name "*.sh" -exec sed -i -E 's/#!\/bin\/sh/#!\/bin\/bash/' {} \;
+
+            echo "Changing the environment variables..."
+            sed -i "s/\${eim.database.username}/${DB_USERNAME}/g" *.*
+            sed -i "s/\${unified-etl.database.username}/${DB_USERNAME}/g" *.*
+            sed -i "s/\${netreveal.database.username}/${DB_USERNAME}/g" *.*
+            sed -i "s/\${visualizer.database.username}/${DB_USERNAME}/g" *.*
+            sed -i "s/\${admin.database.username}//g" *.*
+            sed -i "s/\${eim.database.password}/${DB_PASSWORD}/g" *.*
+            sed -i "s/\${unified-etl.database.password}/${DB_PASSWORD}/g" *.*
+            sed -i "s/\${netreveal.database.password}/${DB_PASSWORD}/g" *.*
+            sed -i "s/\${visualizer.database.password}/${DB_PASSWORD}/g" *.*
+            sed -i "s/\${admin.database.password}/${DB_PASSWORD}/g" *.*
+            sed -i "s/\${eim.database.service.id}/{{ .Values.global.baseConfigProperties.db.postgresql.database }}/g" *.*
+            sed -i "s/\"\${eim_db_host:-postgres}\"/{{ include "db.host" . }}/g" *.*
+            sed -i "s/\${eim_database_port:-5432}/{{ .Values.global.baseConfigProperties.db.postgresql.port }}/g" *.*
+            sed -i "s/\${eim.database.tablespaces.eim_main.name}//g" *.*
+            sed -i "s/\${eim.database.tablespaces.eim_index.name}//g" *.*
+        env:
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credential-apps-user-cnpg
+              key: username
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credential-apps-user-cnpg
+              key: password
+        volumeMounts:
+        - name: "{{ .Release.Name }}-standalone-conf-temp"
+          mountPath: /opt/DBInitScripts
+      - name: wait-for-postgres
+        image: "{{- include "standalone.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            /wait-for-it/wait-for-it.sh {{ include "db.url" . }} --timeout=500
+      - name: run-db-scripts
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.psqlDockerImage }}"
+        securityContext:
+          runAsUser: 0
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            if [ -f /opt/WLM/db_job_completed.flag ]; then
+              echo "\"/opt/WLM/db_job_completed.flag\" is present. Skipping db script run..."
+              exit 0
+            fi
+            cd /opt/DBInitScripts/
+            {{- if .Values.global.saml.enabled }}
+            echo "./data/singlesignon/SAML_Enable.sql" > 00_saml.lst
+            echo "# End of File" >> 00_saml.lst
+            echo "" >> database_install.sh
+            echo "./install.sh \$USERID \$PASSW \$DBSID \$DBHOST 00_saml.lst" >> database_install.sh
+            {{- end }}
+            echo "Running database_install.sh..."
+            ./database_install.sh >> /dev/null
+            if grep -wi "ERROR:" *.log; then
+              echo "ERROR: ************Error has been found in the SQL scripts.*********************"
+              echo "ERROR: ************Please fix SQL issues.***************************************"
+              exit 10
+            fi
+            echo "Running database_post_install.sh..."
+            ./database_post_install.sh >> /dev/null
+            if grep -wi "ERROR:" *.log; then
+              echo "ERROR: ************Error has been found in the SQL scripts.*********************"
+              echo "ERROR: ************Please fix SQL issues.***************************************"
+              exit 10
+            fi
+            echo "Database scripts have been run successfully."
+        volumeMounts:
+        - name: "{{ .Release.Name }}-standalone-conf-temp"
+          mountPath: /opt/DBInitScripts
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+      - name: insert-db-license
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.psqlDockerImage }}"
+        command:
+          - sh
+          - -c
+          - |
+            set +x
+            if [ -f /opt/WLM/db_job_completed.flag ]; then
+              echo "Update licence."
+              result=$( \
+                {{- if and .Values.global.baseConfigProperties.db.postgresql.sslmode (ne .Values.global.baseConfigProperties.db.postgresql.sslmode "disable") }}
+                PGSSLMODE={{ .Values.global.baseConfigProperties.db.postgresql.sslmode }} \
+                PGSSLROOTCERT={{ .Values.global.baseConfigProperties.db.postgresql.sslrootcert }} \
+                {{- end }}
+                psql \
+                -h {{ include "db.host" . }} \
+                -d {{ .Values.global.baseConfigProperties.db.postgresql.database }} \
+                -p {{ .Values.global.baseConfigProperties.db.postgresql.port }} \
+                --username=apps -a -f /init_scripts/Update_license.sql)
+              if echo $result | grep -wi "ERROR:"; then
+                echo "Licence update failed."
+                exit 10
+              else
+                echo "Licence updated."
+              fi
+            else
+              echo "Insert new licence."
+              result=$( \
+                {{- if and .Values.global.baseConfigProperties.db.postgresql.sslmode (ne .Values.global.baseConfigProperties.db.postgresql.sslmode "disable") }}
+                PGSSLMODE={{ .Values.global.baseConfigProperties.db.postgresql.sslmode }} \
+                PGSSLROOTCERT={{ .Values.global.baseConfigProperties.db.postgresql.sslrootcert }} \
+                {{- end }}
+                psql \
+                -h {{ include "db.host" . }} \
+                -d {{ .Values.global.baseConfigProperties.db.postgresql.database }} \
+                -p {{ .Values.global.baseConfigProperties.db.postgresql.port }} \
+                --username=apps -a -f /init_scripts/Insert_license.sql)
+              if echo $result | grep -wi "ERROR:"; then
+                echo "Licence import failed."
+                exit 10
+              else
+                echo "Licence imported."
+              fi
+            fi
+        env:
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credential-apps-user-cnpg
+              key: password
+        volumeMounts:
+        {{ include "postgres.server.secret-mount" . | nindent 8 }}
+        - name: "{{ include "secret.standalone.db.init.script.insert.license.name" . }}"
+          mountPath: /init_scripts
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+      - name: run-import-scripts
+        image: "{{- include "standalone.docker.image" . -}}"
+        securityContext:
+          runAsUser: 0
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            if [ -f /opt/WLM/db_job_completed.flag ]; then
+              echo "\"/opt/WLM/db_job_completed.flag\" is present. Skipping application import..."
+              exit 0
+            fi
+            wlm_sub_dirs=("alertsaver" "batch" "config" "indexes" "listDownload" "shared" "xslt" "archive" "batchwatch" "fpfa" "gwl" "listImport" "settings" "trans" "worldcheck")
+            base_dir="conf/wlm/"
+            for dir in "${wlm_sub_dirs[@]}"; do mkdir -p "$base_dir/$dir"; done
+
+            # FCENGX-3368 fix
+            if  ! grep -q -L 'ALL-UNNAMED' ./importExport.sh; then
+              echo "Java 17 options are not present in the importExport.sh script. Add them."
+              export JAVA_OPTS=" ${JAVA_OPTS} {{- include "jdk17.java.opts" . -}} "
+              echo "JAVA_OPTS=${JAVA_OPTS}"
+            else
+              echo "Java 17 options are present in the importExport.sh script."
+            fi
+
+            if [ -f /opt/netreveal/standaloneHome/conf/importexport/EIM.lst ]; then
+              echo "Import /opt/netreveal/standaloneHome/conf/importexport/EIM.lst"
+              status="success"
+              ./importExport.sh /opt/netreveal/standaloneHome/conf/importexport/EIM.lst | tail -n1 | grep -v 0 && status="failed"
+              if [ "${status}" == "failed" ]; then
+                cat /opt/netreveal/standaloneHome/logs/importexport.log
+                exit 1
+              fi
+            fi
+
+            if [ -f /opt/netreveal/standaloneHome/conf/importexport/postEIM.lst ]; then
+              echo "/opt/netreveal/standaloneHome/conf/importexport/postEIM.lst"
+              status="success"
+              ./importExport.sh /opt/netreveal/standaloneHome/conf/importexport/postEIM.lst  | tail -n1 | grep -v 0 && status="failed"
+              if [ "${status}" == "failed" ]; then
+                cat /opt/netreveal/standaloneHome/logs/importexport.log
+                exit 1
+              fi
+            fi
+            if [ -f /opt/netreveal/standaloneHome/logs/importexport.log ]; then
+              cat /opt/netreveal/standaloneHome/logs/importexport.log
+            fi
+            echo "postEIM.lst has been imported successfully."
+            echo "Application import has been finished successfully."
+        env:
+        - name: IMPORT_EXPORT_HEAP_MAX
+          value: {{ .Values.dbInit.java.importExportHeapMinMax }}
+        volumeMounts:
+        {{ include "postgres.server.secret-mount" . | nindent 8 }}
+        - name: "{{ include "standalone.schema.import.base.config.property.name" . }}"
+          mountPath: /opt/netreveal/standaloneHome/conf/base_config.properties
+          subPath: base_config.properties
+        - name: "{{ include "config.map.standalone.eim.lst.name" . }}"
+          mountPath: /opt/netreveal/standaloneHome/conf/importexport/EIM.lst
+          subPath: EIM.lst
+        - name: "{{ include "config.map.standalone.posteim.lst.name" . }}"
+          mountPath: /opt/netreveal/standaloneHome/conf/importexport/postEIM.lst
+          subPath: postEIM.lst
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+
+{{- include "image.pull.secrets" . | nindent 6 }}
+
+      containers:
+      - name: flag-file-creation
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.psqlDockerImage }}"
+        securityContext:
+          {{- if .Values.global.useRootAccountForInit }}
+          runAsUser: 0
+          {{- else }}
+          runAsUser: 200
+          runAsGroup: 200
+          {{- end }}
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          {{- if not .Values.global.useRootAccountForInit }}
+          runAsNonRoot: true
+          {{- end }}
+        command:
+          - sh
+          - -c
+          - |
+            chown -R 200:200 /opt/WLM
+            if [ -f "/opt/WLM/db_job_completed.flag" ]; then rm "/opt/WLM/db_job_completed.flag"; fi
+            touch "/opt/WLM/db_job_completed.flag" && echo "Flag files is created. Licence, schema and configuration import successfully completed" || echo "Flag files is not created, something went wrong. Please check the logs."
+            chown 200:200 /opt/WLM/db_job_completed.flag
+        volumeMounts:
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+      volumes:
+        {{ include "postgres.server.secret-volume" . | nindent 8 }}
+        {{- if (lookup "v1" "ConfigMap" .Values.global.namespace (include "secret.standalone.db.init.script.insert.license.name" .) ) }}
+        - name: "{{ include "secret.standalone.db.init.script.insert.license.name" . }}"
+          configMap:
+            name: "{{ include "secret.standalone.db.init.script.insert.license.name" . }}"
+        {{- else }}
+        - name: "{{ include "secret.standalone.db.init.script.insert.license.name" . }}"
+          secret:
+            secretName: "{{ include "secret.standalone.db.init.script.insert.license.name" . }}"
+        {{- end }}
+        - name: "{{ .Release.Name }}-standalone-conf-temp"
+          emptyDir: {}
+        - name: "{{ include "standalone.schema.import.base.config.property.name" . }}"
+          configMap:
+            name: "{{ include "standalone.schema.import.base.config.property.name" . }}"
+            items:
+            - key: base_config.properties
+              path: base_config.properties
+        - name: "{{ include "config.map.standalone.eim.lst.name" . }}"
+          configMap:
+            name: "{{ include "config.map.standalone.eim.lst.name" . }}"
+            items:
+            - key: EIM.lst
+              path: EIM.lst
+        - name: "{{ include "config.map.standalone.posteim.lst.name" . }}"
+          configMap:
+            name: "{{ include "config.map.standalone.posteim.lst.name" . }}"
+            items:
+            - key: postEIM.lst
+              path: postEIM.lst
+        - name: {{ .Release.Name }}-wlm-indexes
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+      restartPolicy: Never
+  backoffLimit: 0

@@ -1,0 +1,61 @@
+<processing>
+    <profilings>
+        <profiling name="Transaction_profiling" profilePeriod="all" outputMode="parquet"/>
+    </profilings>
+
+    <detections>
+        <detection name="Transaction_detection" timeBase="all"/>
+    </detections>
+
+    <processes>
+        <process name="AMLCB_Profiling" domain="AML_CB">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+            </services>
+	    </process>
+        <process name="AMLCB_Detection" domain="AML_CB">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection"/>
+                </service>
+            </services>
+	    </process>
+	    <process name="AMLCB_Tagging" domain="AML_CB">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="tagging" dataSource="Transaction" entity="" orgUnit="" onError="stop">
+                    <apply name="transactionTagging"/>
+                </service>
+            </services>
+	    </process>
+        <process name="AMLCB_Processing" domain="AML_CB">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection"/>
+                </service>
+            </services>
+	    </process>
+        <process name="AMLCB_ProcessingAndTagging" domain="AML_CB">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection"/>
+                </service>
+                <service type="tagging" dataSource="Transaction" entity="" orgUnit="" onError="stop">
+                    <apply name="transactionTagging"/>
+                </service>
+			</services>
+		</process>
+    </processes>
+</processing>

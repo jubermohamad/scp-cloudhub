@@ -1,0 +1,36 @@
+{{- if .Values.ca.generate }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Release.Name }}-sensaai-selfsigned
+  namespace: {{ tpl .Values.namespace . }}
+spec:
+  selfSigned: {}
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-sensaai-selfsigned-ca
+  namespace: {{ tpl .Values.namespace . }}
+spec:
+  isCA: true
+  secretName: {{ tpl .Values.ca.secretName . }}
+  duration: {{ tpl .Values.issuer.selfSigned.certificate.duration . }}
+  renewBefore: {{ tpl .Values.issuer.selfSigned.certificate.renewBefore . }}
+  commonName: CA Root SensaAI
+  subject:
+    organizations: {{ .Values.certificate.subject.organizations }}
+    countries: {{ .Values.certificate.subject.countries }}
+    organizationalUnits: {{ .Values.certificate.subject.organizationalUnits }}
+    localities: {{ .Values.certificate.subject.localities }}
+    provinces: {{ .Values.certificate.subject.provinces }}
+  privateKey:
+    algorithm: {{  .Values.certificate.privateKey.algorithm }}
+    size: {{ .Values.certificate.privateKey.size }}
+  issuerRef:
+    name: {{ .Release.Name }}-sensaai-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+{{- end }}

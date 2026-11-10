@@ -1,0 +1,189 @@
+{{- /*
+ENSURE DATABASES — provision what an EXTERNAL Postgres does not give us.
+
+Flipping infra.<store>.enabled to false stops the chart from running a server,
+but it does NOT make the databases appear on the server you pointed it at. The
+bundled StatefulSets get theirs for free (the postgres image's entrypoint
+creates POSTGRES_DB on first boot, and the restore/rebuild jobs CREATE the
+warehouse databases); an external server has neither. Without this Job, external
+mode renders cleanly and then fails at runtime: the API cannot connect to
+prism_ledger, and `psql -d foundation_warehouse` in the restore job has nothing
+to connect to.
+
+ONE JOB PER SERVER, not per database, because the two servers are different
+failure domains AND different credential domains:
+  • the ledger is truth; the warehouse is disposable and is DROPped and rebuilt.
+    A failure provisioning the warehouse must not stop the ledger being ready.
+  • the owner passwords live in separate secrets (ledger-pg / warehouse-pg) so
+    that no warehouse credential can reach truth — merging the two Jobs would
+    mount both secrets in one pod and give that up for nothing.
+The warehouse's two databases loop inside its own Job, where they share a
+credential already.
+*/}}
+{{- if .Values.ensureDatabases.enabled }}
+{{- $root := . }}
+{{- $adminShared := .Values.ensureDatabases.adminExistingSecret }}
+{{- $keyUser := .Values.ensureDatabases.adminSecretKeys.username }}
+{{- $keyPass := .Values.ensureDatabases.adminSecretKeys.password }}
+
+{{- /* server = the two stores, each with its own host/owner/secret/databases */}}
+{{- $servers := list }}
+{{- /* Per-server opt-out. A platform may already create one store's role and
+       database by its own means — SRI's platform-services runs an ensure-db Job
+       for every product on the shared Postgres — and two creators of one database
+       end up disagreeing about who owns it. Without this, pointing the ledger at
+       an external server FORCED this Job to manage it too, so the only way to
+       avoid the overlap was to disable ensureDatabases entirely, which silently
+       took the bundled warehouse's databases with it. Defaults are true, so
+       existing installs are unchanged. */}}
+{{- if and .Values.ensureDatabases.ledgerPostgres.enabled (or (not .Values.infra.ledgerPostgres.enabled) .Values.ensureDatabases.includeBundled) }}
+{{- $servers = append $servers (dict
+      "key" "ledger"
+      "bundled" .Values.infra.ledgerPostgres.enabled
+      "host" (include "prism.ledgerHost" .)
+      "port" (ternary 5432 (.Values.externalInfra.ledgerPostgres.port | default 5432) .Values.infra.ledgerPostgres.enabled)
+      "owner" (include "prism.ledgerUser" .)
+      "ownerSecret" .Values.secrets.ledgerPg
+      "admin" (.Values.ensureDatabases.ledgerPostgres.adminExistingSecret | default $adminShared)
+      "databases" (list (include "prism.ledgerDatabase" .))) }}
+{{- end }}
+{{- if and .Values.ensureDatabases.warehousePostgres.enabled (or (not .Values.infra.warehousePostgres.enabled) .Values.ensureDatabases.includeBundled) }}
+{{- $servers = append $servers (dict
+      "key" "warehouse"
+      "bundled" .Values.infra.warehousePostgres.enabled
+      "host" (include "prism.warehouseHost" .)
+      "port" (ternary 5432 (.Values.externalInfra.warehousePostgres.port | default 5432) .Values.infra.warehousePostgres.enabled)
+      "owner" (include "prism.warehouseUser" .)
+      "ownerSecret" .Values.secrets.warehousePg
+      "admin" (.Values.ensureDatabases.warehousePostgres.adminExistingSecret | default $adminShared)
+      "databases" .Values.warehouseDatabases) }}
+{{- end }}
+
+{{- range $s := $servers }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "prism.fullname" $root }}-ensure-db-{{ $s.key }}
+  labels:
+    app: prism-ensure-db
+    {{- include "prism.labels" $root | nindent 4 }}
+  annotations:
+    {{- if $s.bundled }}
+    # POST phase for a BUNDLED server: the StatefulSet it provisions on does not
+    # exist until the apply phase, so a pre-hook would wait for a server that
+    # cannot appear until the hook returns — a deadlock.
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    {{- else }}
+    # PRE phase for an EXTERNAL server: it is already running, and the databases
+    # must exist before the API pod (apply phase) and before the reproject /
+    # restore / rebuild Jobs, which are plain manifests and therefore also apply
+    # phase. A pre-hook is ordered ahead of all of them.
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    {{- end }}
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  # Low enough to fail fast on a real error (bad credential, unreachable host),
+  # high enough to ride out a cold or failing-over server: 6 retries is ~10
+  # minutes of exponential backoff on top of the in-pod wait loop.
+  backoffLimit: {{ $root.Values.ensureDatabases.backoffLimit }}
+  ttlSecondsAfterFinished: {{ $root.Values.jobs.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app: prism-ensure-db
+        {{- include "prism.labels" $root | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- include "prism.scheduling" $root | nindent 6 }}
+      containers:
+        - name: ensure-db
+          image: "{{ $root.Values.infra.warehousePostgres.image.repository }}:{{ $root.Values.infra.warehousePostgres.image.tag }}"
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $root "policy" $root.Values.infra.warehousePostgres.image.pullPolicy) }}
+          env:
+            - name: PGHOST
+              value: {{ $s.host | quote }}
+            - name: PGPORT
+              value: {{ $s.port | quote }}
+            {{- if $s.bundled }}
+            # A server THIS CHART creates has no separate superuser: the postgres
+            # image's entrypoint makes POSTGRES_USER one, and POSTGRES_USER is the
+            # owner. So the admin credential IS the owner credential, and demanding
+            # a distinct admin secret for a bundled server asks for something that
+            # does not exist — supply the platform's shared superuser instead and
+            # the Job authenticates to the wrong server's identity:
+            #   FATAL: password authentication failed for user "postgres"
+            - name: PGUSER
+              value: {{ $s.owner | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s.ownerSecret }}
+                  key: password
+            {{- else }}
+            # The ADMIN (superuser) credential — only this Job ever uses it.
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required (printf "ensureDatabases: an admin secret is required for the %s server — set ensureDatabases.adminExistingSecret (or ensureDatabases.%sPostgres.adminExistingSecret)" $s.key $s.key) $s.admin }}
+                  key: {{ $keyUser }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required (printf "ensureDatabases: an admin secret is required for the %s server" $s.key) $s.admin }}
+                  key: {{ $keyPass }}
+            {{- end }}
+            - name: DB_OWNER
+              value: {{ $s.owner | quote }}
+            # The owner's password comes from the SAME secret the applications
+            # read, so the role this Job creates is the role they can log in as.
+            - name: DB_OWNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $s.ownerSecret }}
+                  key: password
+            - name: DB_NAMES
+              value: {{ join " " $s.databases | quote }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            # No `set -x` anywhere in here: the owner password is an argument to
+            # psql variables, and tracing would print it to the pod log.
+            - |
+              echo "==> Waiting for PostgreSQL at $PGHOST:$PGPORT"
+              # A shared platform server answers on the port while it is mid
+              # failover, so wait for pg_isready rather than a TCP connect.
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -d postgres -t 5 >/dev/null 2>&1; do sleep 3; done
+              echo "==> Ensuring role $DB_OWNER"
+              psql -d postgres -v ON_ERROR_STOP=1 \
+                   -v owner="$DB_OWNER" -v pw="$DB_OWNER_PASSWORD" <<'SQL'
+              SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'owner', :'pw')
+                WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'owner') \gexec
+              -- Keep the role's password in step with the secret on every run:
+              -- a rotated secret that never reaches the server locks the apps out
+              -- of their own database.
+              SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'owner', :'pw')
+                WHERE EXISTS (SELECT FROM pg_roles WHERE rolname = :'owner') \gexec
+              SQL
+              for db in $DB_NAMES; do
+                echo "==> Ensuring database $db owned by $DB_OWNER"
+                psql -d postgres -v ON_ERROR_STOP=1 -v db="$db" -v owner="$DB_OWNER" <<'SQL'
+              SELECT format('CREATE DATABASE %I OWNER %I', :'db', :'owner')
+                WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'db') \gexec
+              SQL
+                # Ownership already implies full rights; this is explicit for the
+                # case where the database pre-existed with a different owner.
+                psql -d postgres -v ON_ERROR_STOP=1 -v db="$db" -v owner="$DB_OWNER" <<'SQL'
+              SELECT format('GRANT ALL PRIVILEGES ON DATABASE %I TO %I', :'db', :'owner') \gexec
+              SQL
+                # The apps and the dump restores create their own objects, so the
+                # owner needs CREATE on the schema it will populate.
+                psql -d "$db" -v ON_ERROR_STOP=1 -v owner="$DB_OWNER" <<'SQL'
+              SELECT format('GRANT ALL ON SCHEMA public TO %I', :'owner') \gexec
+              SQL
+                echo "==> $db ready"
+              done
+              echo "==> {{ $s.key }} server provisioned: $DB_NAMES"
+{{- end }}
+{{- end }}

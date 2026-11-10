@@ -1,0 +1,87 @@
+{{- if .Values.keycloakSetup.enabled }}
+# Post-install/upgrade: prepare Keycloak for the pipeline platform's auth
+# integration with the SRI portal. The portal's client (common-ui) does the
+# browser login; this job idempotently adds an AUDIENCE MAPPER to that
+# client so its access tokens carry aud=<audience> — the same pattern the
+# lens integration uses (aud=lens) — letting pipeline backends validate
+# portal tokens once they enable auth. Admin credentials come from an
+# in-namespace secret (keys keycloak-admin-user / keycloak-admin-password),
+# mirroring the sri-micro-frontend chart's setup job.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-keycloak-setup
+  labels:
+    app: pipeline-keycloak-setup
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: pipeline-keycloak-setup
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: keycloak-setup
+          image: "{{ .Values.keycloakSetup.image }}:{{ .Values.keycloakSetup.imageTag }}"
+          env:
+            - name: KC_URL
+              value: {{ .Values.keycloakSetup.url | quote }}
+            - name: KC_REALM
+              value: {{ .Values.keycloakSetup.realm | quote }}
+            - name: KC_ADMIN_REALM
+              value: {{ .Values.keycloakSetup.adminRealm | quote }}
+            - name: PORTAL_CLIENT_ID
+              value: {{ .Values.keycloakSetup.portalClientId | quote }}
+            - name: AUDIENCE
+              value: {{ .Values.keycloakSetup.audience | quote }}
+            - name: KEYCLOAK_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloakSetup.adminExistingSecret }}
+                  key: keycloak-admin-user
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.keycloakSetup.adminExistingSecret }}
+                  key: keycloak-admin-password
+          command: ["/bin/bash", "-ec"]
+          args:
+            - |
+              KCADM=/opt/keycloak/bin/kcadm.sh
+              $KCADM config credentials --server "$KC_URL" --realm "$KC_ADMIN_REALM" \
+                --user "$KEYCLOAK_ADMIN_USER" --password "$KEYCLOAK_ADMIN_PASSWORD"
+
+              # grep -vx 'id' guards against kcadm versions that emit a CSV
+              # header row — a literal "id" CID would 404 every call.
+              CID=$($KCADM get clients -r "$KC_REALM" -q clientId="$PORTAL_CLIENT_ID" \
+                --fields id --format csv --noquotes | grep -vx 'id' | head -1)
+              if [[ -z "$CID" ]]; then
+                echo "portal client '$PORTAL_CLIENT_ID' not found in realm '$KC_REALM'" >&2
+                exit 1
+              fi
+
+              MAPPER_NAME="audience-$AUDIENCE"
+              if $KCADM get "clients/$CID/protocol-mappers/models" -r "$KC_REALM" \
+                   --fields name --format csv --noquotes | grep -qx "$MAPPER_NAME"; then
+                echo "mapper $MAPPER_NAME already present — nothing to do"
+              else
+                $KCADM create "clients/$CID/protocol-mappers/models" -r "$KC_REALM" -f - <<EOF
+              {
+                "name": "$MAPPER_NAME",
+                "protocol": "openid-connect",
+                "protocolMapper": "oidc-audience-mapper",
+                "config": {
+                  "included.custom.audience": "$AUDIENCE",
+                  "access.token.claim": "true",
+                  "id.token.claim": "false"
+                }
+              }
+              EOF
+                echo "mapper $MAPPER_NAME created on client $PORTAL_CLIENT_ID"
+              fi
+{{- end }}

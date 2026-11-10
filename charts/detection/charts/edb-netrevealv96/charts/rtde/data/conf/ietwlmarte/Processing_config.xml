@@ -1,0 +1,103 @@
+<smart>
+	<topics>
+		<topic name="nr-wlm_alert_triage" format="SVM_MSG_XML" type="kafka">
+			<fields>
+				<field name="AlertId" type="string"/>
+				<field name="ValueDateSeconds" type="int"/>
+				<field name="CurrentDateSeconds" type="int"/>
+				<field name="MessageType" type="string"/>
+				<field name="Currency" type="string"/>
+				<field name="Direction" type="string"/>
+				<field name="ServiceId" type="string"/>
+			</fields>
+		</topic>
+		<topic name="nr-wlm_alert_status_escalate" format="SVM_MSG_XML" type="kafka">
+			<fields>
+				<field name="AlertId" type="string"/>
+				<field name="MessageType" type="string"/>
+				<field name="Direction" type="string"/>
+				<field name="ReceivingISO" type="string"/>
+				<field name="ReceivingBIC" type="string"/>
+				<field name="ListName" type="multivalue"/>
+				<field name="DetectionCheckName" type="multivalue"/>
+				<field name="Amount" type="double"/>
+				<field name="SendingBIC" type="string"/>
+				<field name="SendingISO" type="string"/>
+				<field name="Currency" type="string"/>
+			</fields>
+		</topic>
+	</topics>
+
+	<mappings>
+		<mapping name="riskOrganizationalUnitScoresMappingWLM">
+			<field name="WLMAlerts_AlertId" alias="AlertId"/>
+		</mapping>
+		<mapping name="alertStatusEscalationMappingWLM">
+			<field name="WLMAlertsEscalate_AlertId" alias="AlertId"/>
+		</mapping>
+	</mappings>
+
+	<filters>
+		<filter name="alertTriageFilteringWLM">
+			<field name="AlertId"/>
+			<field name="MessageProcessorLabel"/>
+			<field name="MessageTypeLabel"/>
+			<field name="DefaultTypeLabel"/>
+			<field name="WLM_CC_score"/>
+			<field name="WLM_CC_score_info"/>
+		</filter>
+		<filter name="alertStatusEscalationFilteringWLM">
+			<field name="AlertId"/>
+			<field name="WLM_AlertStatusEscalation_score"/>
+			<field name="WLM_AlertStatusEscalation_score_contributions"/>
+		</filter>
+	</filters>
+
+	<processes>
+		<process name="RTDE_WLM" dataSource="WLMAlerts" trigger="BATCH" intervalSeconds="0" outputMode="update">
+			<inputTopics>
+				<inputTopic name="nr-wlm_alert_triage"/>
+			</inputTopics>
+			<services>
+				<service type="parse"/>
+				<service type="datalabel">
+					<apply name="*"/>
+				</service>
+				<service type="detect"/>
+				<service type="score"/>
+				<service type="filter_columns">
+					<apply name="alertTriageFilteringWLM"/>
+				</service> 
+				<service type="map_columns_names">
+					<apply name="riskOrganizationalUnitScoresMappingWLM"/>
+				</service> 
+			</services>
+			<outputTopics>
+				<outputTopic name="nr-wlm_alert_triage_score" rootName="WLMAlert"/>
+			</outputTopics>
+		</process>
+		<process name="RTDE_WLM_AlertStatusEscalation" dataSource="WLMAlertsEscalate" trigger="BATCH" intervalSeconds="0" outputMode="update">
+			<inputTopics>
+				<inputTopic name="nr-wlm_alert_status_escalate"/>
+			</inputTopics>
+			<services>
+				<service type="parse"/>
+				<service type="datalabel">
+					<apply name="*"/>
+				</service>
+				<service type="detect"/>
+				<service type="score"/>
+				<service type="filter_columns">
+					<apply name="alertStatusEscalationFilteringWLM"/>
+				</service>
+				<service type="map_columns_names">
+					<apply name="alertStatusEscalationMappingWLM"/>
+				</service> 
+			</services>
+			<outputTopics>
+				<outputTopic name="nr-wlm_alert_status_escalate_result" rootName="WLMAlert"/>
+			</outputTopics>
+		</process>
+	</processes>
+
+</smart>

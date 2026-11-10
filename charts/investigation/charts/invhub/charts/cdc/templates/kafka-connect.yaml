@@ -1,0 +1,54 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  name: {{ .Values.kafkaConnect.name }}
+  annotations:
+    # use-connector-resources configures this KafkaConnect
+    # to use KafkaConnector resources to avoid
+    # needing to call the Connect REST API directly
+    strimzi.io/use-connector-resources: "true"
+spec:
+  version: {{ .Values.kafkaConnect.version }}
+  replicas: {{ .Values.kafkaConnect.replicas }}
+  {{- if .Values.resources }}
+  resources:
+    {{- toYaml .Values.resources | nindent 4 }}
+  {{- end }}
+  {{- if .Values.kafkaConnect.image }}
+  image: "{{ .Values.kafkaConnect.image.repository }}:{{ .Values.kafkaConnect.image.tag | default .Chart.AppVersion }}"
+  {{- end }}
+  bootstrapServers: {{ .Values.kafkaConnect.bootstrapServers }}
+  {{- if .Values.kafkaConnect.trustedCertificateSecretName }}
+  {{- if ne .Values.kafkaConnect.trustedCertificateSecretName "" }}
+  tls:
+    trustedCertificates:
+      - secretName: {{ .Values.kafkaConnect.trustedCertificateSecretName }}
+        certificate: ca.crt
+  {{- end }}
+  {{- end }}
+  config:
+    group.id: {{ .Values.kafkaConnect.config.groupId | default "invhub-connect" }}
+    offset.storage.topic: {{ .Values.kafkaConnect.config.offsetStorageTopic | default "connect-offsets" }}
+    config.storage.topic: {{ .Values.kafkaConnect.config.configStorageTopic | default "connect-configs" }}
+    status.storage.topic: {{ .Values.kafkaConnect.config.statusStorageTopic | default "connect-status" }}
+    key.converter: {{ .Values.kafkaConnect.config.keyConverter | default "org.apache.kafka.connect.json.JsonConverter" }}
+    value.converter: {{ .Values.kafkaConnect.config.valueConverter | default "org.apache.kafka.connect.json.JsonConverter" }}
+    key.converter.schemas.enable: {{ .Values.kafkaConnect.config.keyConverterSchemasEnable | default false }}
+    value.converter.schemas.enable: {{ .Values.kafkaConnect.config.valueConverterSchemasEnable | default false }}
+    # -1 means it will use the default replication factor configured in the broker
+    config.storage.replication.factor: {{ .Values.kafkaConnect.config.configStorageReplicationFactor | default -1 }}
+    offset.storage.replication.factor: {{ .Values.kafkaConnect.config.offsetStorageReplicationFactor | default -1 }}
+    status.storage.replication.factor: {{ .Values.kafkaConnect.config.statusStorageReplicationFactor | default -1 }}
+    max.request.size: {{ .Values.kafkaConnect.config.maxRequestSize | default 10485880 }}
+    producer.max.request.size: {{ .Values.kafkaConnect.config.producerMaxRequestSize | default 10485880 }}
+    consumer.max.request.size: {{ .Values.kafkaConnect.config.consumerMaxRequestSize | default 10485880 }}
+  logging:
+    type: inline
+    loggers:
+      connect.root.logger.level: {{ .Values.kafkaConnect.logging.level | default "INFO" }}
+  {{- if .Values.kafkaConnect.template }}
+  template:
+    {{- toYaml .Values.kafkaConnect.template | nindent 4 }}
+  {{- end }}
+
+

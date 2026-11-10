@@ -1,0 +1,5 @@
+storageClass:
+  enable:
+    scAzureNetapFiles: true
+    scAzureFileNfs: true
+    scXfsStandardssdLrs: true

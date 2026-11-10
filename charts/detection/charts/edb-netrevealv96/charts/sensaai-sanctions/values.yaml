@@ -1,0 +1,189 @@
+###
+# Senasa AI Sanctions parameters
+##
+
+namespace: sensaai
+
+pod:
+  useResourceConstraints: "true"
+  useImagePullSecrets: "true"
+
+  # soft: preferredDuringSchedulingIgnoredDuringExecution
+  # hard: requiredDuringSchedulingIgnoredDuringExecution
+  # custom: custom affinity rules defined with affinityRules
+  antiAffinity: "soft"
+  customAffinityRules: {}
+
+  # Docker Image name and Tag without Registry name
+  dockerRegistryName: "519876397211.dkr.ecr.eu-west-1.amazonaws.com"
+  #imageRepository: "nri-nrod-k8s-wlm-ai"
+  imageRepository: "k8s-sensaai-sanctions"
+  imageTag: "9.4.0.5"
+  #
+  replicas: 2
+  minReadySeconds: 60
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1"
+    limits:
+      memory: "3Gi"
+      cpu: "2"
+
+  livenessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 60
+    periodSeconds: 20
+    successThreshold: 1
+    timeoutSeconds: 5
+  readinessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    successThreshold: 1
+    timeoutSeconds: 5
+  # startupProbe:
+  #   failureThreshold: 3
+  #   initialDelaySeconds: 30
+  #   periodSeconds: 20
+  #   successThreshold: 1
+  #   timeoutSeconds: 5
+
+################################
+# config.properties
+################################
+serverConfig:
+  LOGGING_LEVEL: "info"
+  REDOC_URL: "/redoc"                   # Use 'None' to disable it. Version 9.4+
+  SCHEDULER_CRON_EXP: "0, 15, 30, 45"   # Version 9.4+
+  SSL_KEYFILE_PASSWORD: "None"          # Replace 'None' with SSL Key password when needed
+  SWAGGER_URL: "/doc"                   # Use 'None' to disable it
+  ACCESS_TOKEN_EXPIRY_MINUTES: 30
+  WORKERS: 1
+appConfig:
+  ACRONYM_BEST_MATCH_SCORE: "0.6"       # Version 9.4+
+  BEST_MATCH_FALLBACK_SCORE: "0.45"     # Version 9.4+
+  DEFAULT_THRESHOLD: "f100"             # Version 9.4+
+  MAX_ADDRESS_PARTS: "6"                # Version 9.4+
+  MULTIPLE_LANGUAGES: "True"            # True|False. Version 9.4+
+  SPACY_MODEL: "en_core_web_trf"
+  SPACY_MODELS: "{\"en\": \"en_core_web_trf\", \"es\": \"es_core_news_md\", \"fr\": \"fr_core_news_md\", \"de\": \"de_core_news_md\"}"    # Version 9.4+
+  STRING_NORMALISATION: "True"          # True|False
+  TRANSLITERATION: "True"               # True|False
+  TRANSLITERATION_PLACEHOLDERS: "{\"¥\": \"yenSymbolPl4ceholder\", \"€\": \"euroSymbolPl4ceholder\", \"£\": \"poundSymbolPl4ceholder\", \"$\": \"dollarSymbolPl4ceholder\", \"₹\": \"rupeeSymbolPl4ceholder\", \"₩\": \"wonSymbolPl4ceholder\", \"₽\": \"rubleSymbolPl4ceholder\"}"    # Version 9.4+
+
+################################
+# password.json
+################################
+# Secret with defined user definition:
+# Example: {"<user_name>": {"password": "<hashed_passwor>", "is_hashed": true}}
+#
+# userPasswordSecretName and userPasswordSecretKey have to be defined to use external secret
+userPasswordSecretName: ""
+userPasswordSecretKey: ""
+
+# pass is hashed password
+users:
+  admin:
+    pass: ""
+    role: "user"       # admin|user Required for version 9.4+
+  #   role: "admin"       # admin|user Required for version 9.4+
+  # uiuser:
+  #   pass: ""
+  #   role: "user"        # admin|user Required for version 9.4+
+
+################################
+# cert-manages
+################################
+ca:
+  generate: true
+  # The secret name where certificates are stored.
+  secretName: "{{ .Release.Name }}-root-ca"
+  # In case ca.generate=false the internal CA will not be generated. Then the issuerRef Name has to be provided.
+  issuerRefName: ""
+issuer:
+  selfSigned:
+    certificate:
+      duration: 87600h # 10 years
+      renewBefore: 24h
+certificate:
+  duration: 8760h # 1 year
+  renewBefore: 24h
+  subject:
+    organizations:
+    - SensaAI
+    countries:
+    - IE
+    organizationalUnits:
+    - IT
+    localities:
+    - Dublin
+    provinces:
+    - Dublin
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  # Extra DNS(s) which needs to be added into certificate
+  extraDnsList: [
+    "sensaai-sensaai-sanctions.local"
+  ]
+
+################################
+# topologySpreadConstraints
+################################
+enableTopologySpreadConstraints: true
+
+################################
+# Ingress
+################################
+ingress:
+  enabled: true
+  ingressAllowList:
+    customerIPs: []
+    platformIPs: []
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: sensaai-sanctions.local
+      paths:
+        # This path has to be defined as .serverConfig.SWAGGER_URL. When this parameter is 'None' then this path can be removed
+        # - path: /doc
+        #   pathType: ImplementationSpecific
+        # This path has to be defined as .serverConfig.REDOC_URL. When this parameter is 'None' then this path can be removed
+        # - path: /redoc
+        #   pathType: ImplementationSpecific      # 9.4+
+        - path: /token
+          pathType: ImplementationSpecific
+        - path: /getMatchScore
+          pathType: ImplementationSpecific
+        # - path: /getDefaultValues               # 9.4+
+        #   pathType: ImplementationSpecific
+        # - path: /setDefaultValues
+        #   pathType: ImplementationSpecific      # 9.4+
+  tls:
+   - secretName: sensaai-sanctions.local
+     hosts:
+       - chart-example.local
+
+################################
+# HPA
+################################
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPU: "90"
+  targetMemory: "90"

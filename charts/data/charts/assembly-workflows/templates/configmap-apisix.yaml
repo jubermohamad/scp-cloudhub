@@ -1,0 +1,105 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aw.prefix" . }}-apisix-config
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    deployment:
+      role: data_plane
+      role_data_plane:
+        config_provider: yaml
+
+    apisix:
+      node_listen:
+        - 9080
+      enable_admin: false
+      ssl:
+        # Only APISIX-terminated TLS (mode "apisix") turns the :443 listener on.
+        # In mode "ingress" the ingress-nginx controller terminates and APISIX
+        # stays plain HTTP behind it.
+        enable: {{ if (include "aw.apisixTerminatesTls" .) }}true{{ else }}false{{ end }}
+        listen:
+          - port: 9443
+            enable_http2: true
+        ssl_protocols: "TLSv1.2 TLSv1.3"
+      dns_resolver:
+        - kube-dns.kube-system.svc.cluster.local
+      dns_resolver_valid: 30
+
+    plugins:
+      - proxy-rewrite
+      - proxy-control
+      - prometheus
+      - cors
+      - response-rewrite
+      - openid-connect
+      - limit-req
+      - echo
+
+    nginx_config:
+      # Cap request bodies at the gateway so oversized payloads are rejected
+      # (413) before a backend buffers them into memory. 64m clears the largest
+      # legit upload (50 MB agent-image build context); app-level per-endpoint
+      # caps remain the finer bound. Without this APISIX forwards unbounded
+      # bodies → DoS (#1487).
+      http:
+        client_max_body_size: "64m"
+      error_log: "/dev/stderr"
+      error_log_level: "warn"
+      http_configuration_snippet: |
+        # Keycloak's response-header buffer (#218, reopened). An *authenticated* GET
+        # /realms/.../protocol/openid-connect/auth returns a 302 whose header block is
+        # ~4.6 KB measured on dev-assembly: KC_RESTART (1079 B) +
+        # KEYCLOAK_IDENTITY/_LEGACY (757+741 B, signed JWTs) + KEYCLOAK_SESSION/_LEGACY
+        # + AUTH_SESSION_ID/_LEGACY + 4 expiry Set-Cookies + a ~394 B Location carrying
+        # the OIDC fragment. nginx's default proxy_buffer_size is one page (4 KB), so
+        # nginx aborted with "upstream sent too big header" -> 502, which the
+        # sanitize-upstream-5xx global rule then rendered to the user as
+        # {"error":"internal_server_error"} -- the symptom being a 500 page instead of
+        # the login screen right after logout. #218 was closed as "not reproducing"
+        # because the *local* stack's equivalent response is ~3.4 KB (short
+        # http://localhost redirect_uri, no HSTS header) -- just under the 4 KB page.
+        # Any longer public hostname, longer redirect_uri, or a user with more roles
+        # (bigger KEYCLOAK_IDENTITY) crosses it, which is exactly what happened.
+        #
+        # These MUST live in this raw nginx snippet: APISIX's ngx_tpl.lua renders only
+        # the `nginx_config.http` keys it knows by name, so a `proxy_buffer_size:` entry
+        # under `http:` above would be silently dropped -- it would look correct in the
+        # YAML and change nothing at runtime.
+        proxy_buffer_size 16k;
+        proxy_buffers 8 16k;
+        proxy_busy_buffers_size 32k;
+        {{- if (include "aw.apisixTerminatesTls" .) }}
+        map_hash_bucket_size 128;
+        map "$server_port:$host" $assembly_should_https_redirect {
+          default                    "0";
+          "9080:{{ .Values.apisix.tls.publicHostname }}"  "1";
+        }
+        {{- end }}
+      http_server_configuration_snippet: |
+        # Baseline security response headers (#1584), re-implemented via raw nginx
+        # add_header directives instead of APISIX's response-rewrite plugin. PR #1534's
+        # original implementation used a 2nd global_rules entry configuring
+        # response-rewrite, which conflicted with the pre-existing sanitize-upstream-5xx
+        # rule (also response-rewrite) -- that plugin gates its ENTIRE behavior (headers
+        # included) on a single vars condition per instance, so two rules configuring it
+        # never compose. The 5xx-only body substitution started firing on EVERY response,
+        # with Content-Length left at the real pre-rewrite length, hanging every client
+        # (#1547, live outage, reverted by #1550). add_header has no such interaction --
+        # it doesn't touch global_rules or Content-Length at all. "always" applies these
+        # even on error responses, matching what the reverted global-rule version covered.
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "frame-ancestors 'self'" always;
+        {{- if (include "aw.apisixTerminatesTls" .) }}
+        # Always allow Let's Encrypt HTTP-01 challenge over plain HTTP, even when redirect is on.
+        if ($request_uri ~* "^/\.well-known/acme-challenge/") {
+          set $assembly_should_https_redirect "0";
+        }
+        if ($assembly_should_https_redirect = "1") {
+          return 308 https://$host$request_uri;
+        }
+        {{- end }}

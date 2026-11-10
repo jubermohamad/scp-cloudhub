@@ -1,0 +1,187 @@
+{{- /*
+One Job PER product (USER REQUIREMENT: every provisioning concern is its own
+Job — a failure provisioning one product must not block or mask the others,
+and each must be independently re-runnable). Same shape as ensure-db-<name>.
+
+The platform object store itself (sri-minio) is rendered by detectionhub's
+minio chart; platform-services only provisions ON it, using the root
+credentials that chart writes into Secret .Values.minio.rootSecret.name.
+
+Each job idempotently ensures, for one product:
+  * its buckets                       (mc mb --ignore-existing)
+  * a policy scoped to those buckets  (mc admin policy create, overwrite-safe)
+  * a login user with that policy     (mc admin user add is an upsert)
+*/}}
+{{- if .Values.minio.enabled }}
+{{- $root := . }}
+{{- range $product, $spec := .Values.minioTenants }}
+{{- $accessKey := $spec.accessKey | default $product }}
+{{- $secretKey := index $root.Values.minioTenantSecretKeys $product | default "" }}
+{{- if not $secretKey }}
+{{- fail (printf "platform-services: minioTenants.%s has no secret key — set minioTenantSecretKeys.%s in the deploy secrets layer" $product $product) }}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-tenant-{{ $product }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- include "platform-services.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: ensure-minio
+    platform.sri/minio-tenant: {{ $product }}
+type: Opaque
+stringData:
+  # the same key names ai-store's modelhub-secrets / zot use, so consumers can
+  # envFrom this secret directly if they prefer it over their own copy
+  aws-access-key-id: {{ $accessKey | quote }}
+  aws-secret-access-key: {{ $secretKey | quote }}
+  endpoint: {{ $root.Values.minio.endpoint | quote }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ensure-minio-{{ $product | replace "_" "-" }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- include "platform-services.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: ensure-minio
+    platform.sri/minio-tenant: {{ $product }}
+  annotations:
+    # ALWAYS a post-phase hook. It must run AFTER the apply phase, because on the
+    # phase-1 -> phase-2 bootstrap the CNPG cluster / MinIO it provisions on does
+    # not exist until that apply. A pre-upgrade hook deadlocks there, waiting for a
+    # server that cannot appear until the hook returns.
+    #
+    # The invhub sri-api-migrations Job is a PLAIN MANIFEST, so it runs in the apply
+    # phase and therefore BEFORE this — it will hit its database before the role
+    # exists and fail with 28P01. That is handled on the other side, by its
+    # backoffLimit (raised to 8, ~10 minutes of exponential retries), which is
+    # ample: this Job completes within a minute of the apply.
+    helm.sh/hook: post-install,post-upgrade
+    # -5 matches ensure-db-*: after the main manifests are applied, before any
+    # product hook that wants the buckets (ai-store's zot bucket job is 15).
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ $root.Values.minio.provisionJobs.backoffLimit }}
+  ttlSecondsAfterFinished: {{ $root.Values.minio.provisionJobs.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ $root.Release.Name }}
+        app.kubernetes.io/component: ensure-minio
+        platform.sri/minio-tenant: {{ $product }}
+    spec:
+      restartPolicy: OnFailure
+      {{- with $root.Values.minio.provisionJobs.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: ensure-minio
+          image: {{ $root.Values.minio.provisionJobs.image }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: MINIO_ENDPOINT
+              value: {{ $root.Values.minio.endpoint | quote }}
+            {{- /* A secretKeyRef cannot cross namespaces. In multi-namespace mode
+                 the object store lives in the DETECTION namespace while these Jobs
+                 run in the common one, so rootUser/rootPassword can be supplied
+                 directly from the (secrets-layer) values instead. Same exposure
+                 class as ensure-db's DB_OWNER_PASSWORD. */}}
+            {{- if $root.Values.minio.rootPassword }}
+            - name: MINIO_ROOT_USER
+              value: {{ $root.Values.minio.rootUser | quote }}
+            - name: MINIO_ROOT_PASSWORD
+              value: {{ $root.Values.minio.rootPassword | quote }}
+            {{- else }}
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.minio.rootSecret.name }}
+                  key: {{ $root.Values.minio.rootSecret.userKey }}
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.minio.rootSecret.name }}
+                  key: {{ $root.Values.minio.rootSecret.passwordKey }}
+            {{- end }}
+            - name: TENANT
+              value: {{ $product | quote }}
+            - name: ACCESS_KEY
+              value: {{ $accessKey | quote }}
+            # inlined rather than a secretKeyRef to minio-tenant-<product>: this
+            # Job is a pre-upgrade hook, so it runs BEFORE the apply phase that
+            # creates that Secret. Same approach as ensure-db-<name>'s
+            # DB_OWNER_PASSWORD, and the same exposure class (both land in a pod
+            # spec either way).
+            - name: SECRET_KEY
+              value: {{ $secretKey | quote }}
+            - name: BUCKETS
+              value: {{ join " " ($spec.buckets | default list) | quote }}
+            - name: ALLOW_ALL_BUCKETS
+              value: {{ $spec.allowAllBuckets | default false | quote }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              MC=$(command -v mc 2>/dev/null || echo /usr/bin/mc)
+              echo "==> Waiting for MinIO at $MINIO_ENDPOINT"
+              until "$MC" alias set sri "$MINIO_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+                echo "    not reachable yet..."; sleep 5
+              done
+
+              for b in $BUCKETS; do
+                echo "==> Ensuring bucket $b"
+                "$MC" mb --ignore-existing "sri/$b"
+              done
+
+              echo "==> Ensuring policy sri-$TENANT"
+              # s3:* on the tenant's own buckets only, plus the bucket listing
+              # every S3 client does on connect.
+              if [ "$ALLOW_ALL_BUCKETS" = "true" ]; then
+                # Products that create buckets at RUNTIME cannot be scoped to a
+                # fixed list — a bucket they make later would fall outside the
+                # policy. They get s3:* on every bucket instead; the `buckets`
+                # list is still pre-created so first use is deterministic.
+                RES='"arn:aws:s3:::*",'
+              else
+                RES=""
+                for b in $BUCKETS; do
+                  RES="$RES\"arn:aws:s3:::$b\",\"arn:aws:s3:::$b/*\","
+                done
+              fi
+              cat >/tmp/policy.json <<EOF
+              {
+                "Version": "2012-10-17",
+                "Statement": [
+                  { "Effect": "Allow",
+                    "Action": ["s3:ListAllMyBuckets", "s3:GetBucketLocation"],
+                    "Resource": ["arn:aws:s3:::*"] },
+                  { "Effect": "Allow",
+                    "Action": ["s3:*"],
+                    "Resource": [${RES%,}] }
+                ]
+              }
+              EOF
+              # `policy create` is an upsert in recent mc; older builds need
+              # `policy add`. Try both so the job works across mc releases.
+              "$MC" admin policy create sri "sri-$TENANT" /tmp/policy.json \
+                || "$MC" admin policy add sri "sri-$TENANT" /tmp/policy.json
+
+              echo "==> Ensuring user $ACCESS_KEY"
+              # `--` ends flag parsing. Without it a secret that begins with
+              # '-' is read as a FLAG — mc failed with "flag provided but not
+              # defined: -4FkK…" on a legitimately generated key, and the whole
+              # install failed on the unlucky draw. The generator now pins the
+              # first character alphanumeric too; this is the belt to that brace,
+              # because operator-supplied keys arrive here as well.
+              "$MC" admin user add -- sri "$ACCESS_KEY" "$SECRET_KEY"
+              "$MC" admin policy attach sri "sri-$TENANT" --user "$ACCESS_KEY" \
+                || "$MC" admin policy set sri "sri-$TENANT" "user=$ACCESS_KEY"
+
+              echo "==> minio tenant $TENANT ready"
+{{- end }}
+{{- end }}

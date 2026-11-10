@@ -1,0 +1,6 @@
+apiVersion: v2
+name: disc-web
+description: A Helm chart for installing Disclosure Web
+type: application
+version: 0.34.1
+appVersion: v2026.07.1

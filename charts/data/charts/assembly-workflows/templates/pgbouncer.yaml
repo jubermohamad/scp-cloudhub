@@ -1,0 +1,109 @@
+{{- if and .Values.infra.enabled .Values.infra.pgbouncer.enabled }}
+{{- /*
+Connection pooler in front of the bundled Postgres.
+
+Every service holds its own async SQLAlchemy pool (llmGateway alone defaults to
+poolSize 30 + maxOverflow 60), and Postgres' max_connections is the hard ceiling —
+so a scaled-out install can exhaust it while most of those connections sit idle.
+Transaction pooling multiplexes them onto a much smaller server-side set.
+
+OFF by default: it is a real behaviour change (see the pool_mode note below) and the
+single-replica installs this chart ships do not need it. The demo cluster runs one,
+which is why the knob exists.
+
+pool_mode=transaction is the default here because it is what makes pooling worth it,
+but it forbids session-scoped state — no session-level advisory locks, no LISTEN/NOTIFY,
+no server-side prepared statements. asyncpg uses prepared statements by default, so a
+service pointed at this pooler MUST disable statement caching in its DSN
+(?prepared_statement_cache_size=0 / statement_cache_size=0). That is why the services
+are NOT repointed here: flipping `enabled` only creates the pooler, and moving traffic
+onto it is a deliberate second step per service.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-pgbouncer
+  labels:
+    app: assembly-pgbouncer
+    tier: infra
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.infra.pgbouncer.replicas }}
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: assembly-pgbouncer
+  template:
+    metadata:
+      labels:
+        app: assembly-pgbouncer
+        tier: infra
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      containers:
+        - name: {{ include "aw.prefix" . }}-pgbouncer
+          image: {{ include "aw.infraImage" (dict "ref" .Values.infra.pgbouncer.image "ctx" $) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 6432
+              name: {{ include "aw.prefix" . }}-pgbouncer
+          env:
+            - name: DB_HOST
+              value: {{ include "aw.prefix" . }}-postgres
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+            - name: POOL_MODE
+              value: {{ .Values.infra.pgbouncer.poolMode | quote }}
+            - name: MAX_CLIENT_CONN
+              value: {{ .Values.infra.pgbouncer.maxClientConn | quote }}
+            - name: DEFAULT_POOL_SIZE
+              value: {{ .Values.infra.pgbouncer.defaultPoolSize | quote }}
+            # Without this the pooler answers only for the one database in DB_NAME.
+            - name: AUTH_TYPE
+              value: scram-sha-256
+            {{- with .Values.infra.pgbouncer.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.infra.pgbouncer.resources | nindent 12 }}
+          readinessProbe:
+            tcpSocket:
+              port: 6432
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 6432
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-pgbouncer
+  labels:
+    app: assembly-pgbouncer
+    tier: infra
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6432
+      targetPort: 6432
+      name: {{ include "aw.prefix" . }}-pgbouncer
+  selector:
+    app: assembly-pgbouncer
+{{- end }}

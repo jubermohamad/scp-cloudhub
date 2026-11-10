@@ -1,0 +1,45 @@
+{{- if .Values.global.useCertManager }}
+{{ $currentScope := .}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name}}-sensaai-sanctions
+  namespace: {{ tpl .Values.global.namespace . }}
+spec:
+  secretName: {{ .Release.Name }}-sensaai-sanctions-cert
+  duration: {{ tpl .Values.global.certificate.duration . }}
+  renewBefore: {{ tpl .Values.global.certificate.renewBefore . }}
+  dnsNames:
+  - localhost
+  - {{ .Release.Name }}-sensaai-sanctions-inference
+  - {{ .Release.Name }}-sensaai-sanctions-inference.{{ tpl .Values.global.namespace . }}.svc
+  - {{ .Release.Name }}-sensaai-sanctions-inference.{{ tpl .Values.global.namespace . }}.svc.cluster.local
+  - {{ .Release.Name }}-sensaai-sanctions-training
+  - {{ .Release.Name }}-sensaai-sanctions-training.{{ tpl .Values.global.namespace . }}.svc
+  - {{ .Release.Name }}-sensaai-sanctions-training.{{ tpl .Values.global.namespace . }}.svc.cluster.local
+  - {{ .Release.Name }}-nr-ui.{{ tpl .Values.global.namespace . }}.svc.cluster.local
+  - {{ .Release.Name }}-sensaai-sanctions-inference.{{ .Release.Name }}-sensaai-sanctions-inference.{{ tpl .Values.global.namespace . }}.svc.cluster.local
+  - {{ .Release.Name }}-sensaai-sanctions-training.{{ .Release.Name }}-sensaai-sanctions-training.{{ tpl .Values.global.namespace . }}.svc.cluster.local
+  {{- if .Values.global.certificate.extraDnsList }}
+    {{- range $item := .Values.global.certificate.extraDnsList }}
+  {{- with $currentScope }}
+  - {{ tpl $item . }}
+  {{- end }}
+    {{- end }}
+  {{- end }}
+  subject:
+    organizations: {{ .Values.global.certificate.subject.organizations }}
+    countries: {{ .Values.global.certificate.subject.countries }}
+    organizationalUnits: {{ .Values.global.certificate.subject.organizationalUnits }}
+    localities: {{ .Values.global.certificate.subject.localities }}
+    provinces: {{ .Values.global.certificate.subject.provinces }}
+  issuerRef:
+    name: {{ include "sai.issuer.ca.issuerRef.name" . }}
+  keystores:
+    pkcs12:
+      create: false
+  secretTemplate:
+      annotations:
+        reloader.stakater.com/match: "true"
+{{- end }}

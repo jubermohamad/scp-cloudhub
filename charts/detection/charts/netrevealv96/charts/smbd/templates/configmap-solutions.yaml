@@ -1,0 +1,277 @@
+### Volumes generation ####
+{{- define "smbd.standalone-config-volumes" -}}
+{{- $solution := .solution -}}
+{"configMap": { "name": "{{ .Release.Name }}-{{ .Chart.Name }}-init-script", "defaultMode": 493, "items": \[ {"key": "smbdInitScript.sh", "path": "smbdInitScript.sh"} \] }, "name": "{{ .Release.Name }}-{{ .Chart.Name }}-init-script" }, {"configMap": { "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-{{ $solution }}-configs" }, "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-{{ $solution }}-configs" }, { "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-{{ $solution }}-secret-configs", "secret": { "secretName": "{{ $.Release.Name }}-{{ $.Chart.Name }}-{{ $solution }}-secret-configs" }}
+{{- end -}}
+
+{{- define "smbd.standalone-qa-volumes" -}}
+{{- $solution := .solution -}}
+{"configMap": { "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-dir-aml-{{ $solution }}-configs" }, "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-dir-aml-{{ $solution }}-configs"}, {"configMap": { "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-dir-aml2-{{ $solution }}-configs" }, "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-dir-aml2-{{ $solution }}-configs"}, {"configMap": { "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-dir-model-{{ $solution }}-configs" }, "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-dir-model-{{ $solution }}-configs" }
+{{- end -}}
+
+{{- define "smbd.standalone-data-volumes" -}}
+{{- $solution := .solution -}}
+{"configMap": { "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-data-{{ $solution }}-dir" }, "name": "{{ $.Release.Name }}-{{ $.Chart.Name }}-data-{{ $solution }}-dir"}
+{{- end -}}
+
+{{- define "smbd.postgres.server.secret-volume" -}}
+{"name": "postgresql-cert-ca", "secret": { "secretName": "{{ .Release.Name }}-postgres-server-cert", "items": [{"key": "ca.crt", "path": "ca.crt"}] }}
+{{- end -}}
+
+{{- define "smbd.standalone-pv-volumes" -}}
+{{- $rootContext := . -}}
+{{- $solution := .solution -}}
+{{- $first_element := true -}}
+{{- $volumes := index .Values (printf "%sVolumes" $solution) -}}
+{{- range $volumes }}
+{{- $persistentVolumeClaimclaimName := .persistentVolumeClaim.claimName -}}
+{{- if not $first_element }},{{ end -}}
+{{- with $rootContext -}}
+{ "name": "{{ printf "%s-%s" .Release.Name $persistentVolumeClaimclaimName  }}", "persistentVolumeClaim": { "claimName": {{ include "generate.name.with.release.name" (list $ . $persistentVolumeClaimclaimName) | quote }} } }
+{{- end -}}
+{{- $first_element = false -}}
+{{- end }}
+{{- end }}
+
+{{- define "smbd.standalone-volumes-include" -}}
+{{- $solution := .solution -}}
+{{- $mounts := list -}}
+{{- $context := . -}}
+{{- $includes_list := list -}}
+{{- $includes_list = append $includes_list "smbd.standalone-config-volumes"  -}}
+{{- $includes_list = append $includes_list "smbd.standalone-pv-volumes"  -}}
+{{- $includes_list = append $includes_list "smbd.standalone-data-volumes"  -}}
+{{- if and .Values.global.baseConfigProperties.db.postgresql.sslmode (ne .Values.global.baseConfigProperties.db.postgresql.sslmode "disable") -}}
+{{- $includes_list = append $includes_list "smbd.postgres.server.secret-volume" -}}
+{{- end -}}
+{{- if eq .Values.app_env "qa" -}}
+  {{- $includes_list = append $includes_list "smbd.standalone-qa-volumes" -}}
+{{- end -}}
+{{- range $include := $includes_list -}}
+{{- $mount := include $include  (merge (dict "solution" $solution)  $context ) -}}
+{{- if not (empty $mount) -}}
+{{- $mounts = append $mounts $mount -}}
+{{- end -}}
+{{- end -}}
+{{ join ", " $mounts }}
+{{- end -}}
+
+### Volume mounts generation ####
+{{- define "smbd.postgres.server.secret-mount" -}}
+{"name": "postgresql-cert-ca", "mountPath": "{{ .Values.global.baseConfigProperties.db.postgresql.sslrootcert }}", "subPath": "ca.crt"}
+{{- end -}}
+
+{{- define "smbd.standalone-volumes-mount" -}}
+{{- $solution := .solution -}}
+{{- $first_element := true -}}
+{{- $volumemounts := index .Values (printf "%sVolumemounts" $solution) -}}
+{{- range $volumemounts }}
+{{- if not $first_element }},{{ end -}}
+{{- $name := .name -}}
+{{- $mountPath := .mountPath -}}
+{{- $subPath := .subPath -}}
+{ "name": "{{ $.Release.Name }}-{{ $name }}", "mountPath": "{{ $mountPath }}"{{- if $subPath }}, "subPath": "{{ $subPath }}"  {{- end }}}
+{{- $first_element = false -}}
+{{- end -}}
+{{- if and .Values.global.baseConfigProperties.db.postgresql.sslmode (ne .Values.global.baseConfigProperties.db.postgresql.sslmode "disable") -}}
+{{- if not $first_element }},{{ end -}}
+{{ include "smbd.postgres.server.secret-mount" . }}
+{{- $first_element = false -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "smbd.init-script-volume-mount" -}}
+{ "name": "{{ .Release.Name }}-{{ .Chart.Name }}-init-script", "mountPath": "/opt/smbdInitScript.sh", "subPath": "smbdInitScript.sh" }
+{{- end -}}
+
+{{- define "smbd.standalone-cm-mount" -}}
+{{- $solution := .solution -}}
+{{- $first_element := true -}}
+{{- range $path, $bytes := .Files.Glob  (printf "data/conf/%s/**" $solution) -}}
+{{- if not (or (hasSuffix "application.conf" $path) (hasSuffix "environment.conf" $path) (hasPrefix (printf "data/conf/%s/aml" $solution) $path) (hasPrefix (printf "data/conf/%s/model" $solution) $path)) -}}
+{{- if not $first_element }},{{ end -}}
+{{- $mountPath := printf "/opt/tmpConf/%s" (trimPrefix (printf "data/conf/%s/" $solution) $path) -}}
+{{- $name := printf "%s-%s-%s-configs" $.Release.Name $.Chart.Name $solution }}
+{{- $subPath := trimPrefix (printf "data/conf/%s/" $solution) $path| replace "/" "__" | replace " " "--" -}}
+{ "mountPath": "{{ $mountPath }}", "name": "{{ $name }}", "subPath": "{{ $subPath }}" }
+{{- $first_element = false -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "smbd.standalone-data-cm-mount" -}}
+{{- $solution := .solution -}}
+{{- $first_element := true -}}
+{{- range $path, $bytes := .Files.Glob  (printf "data/data/%s/**" $solution) -}}
+{{- if not $first_element }},{{ end -}}
+{{- $mountPath := printf "/opt/tmpData/%s" (trimPrefix (printf "data/data/%s/" $solution) $path) -}}
+{{- $name := printf "%s-%s-data-%s-dir" $.Release.Name $.Chart.Name $solution -}}
+{{- $subPath := trimPrefix (printf "data/data/%s/" $solution) $path| replace "/" "__" | replace " " "--" -}}
+{ "mountPath": "{{ $mountPath }}", "name": "{{ $name }}", "subPath": "{{ $subPath }}" }
+{{- $first_element = false -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "smbd.standalone-aml-cm-mount" -}}
+{{- $solution := .solution -}}
+{{- $first_element := true -}}
+{{- range $path, $bytes := .Files.Glob  (printf "data/conf/%s/aml/**" $solution) -}}
+{{- if not $first_element }},{{ end -}}
+{{- $mountPath := printf "/opt/tmpConf/aml/%s" (trimPrefix (printf "data/conf/%s/aml/" $solution) $path) -}}
+{{- $name := printf "%s-%s-dir-aml-%s-configs" $.Release.Name $.Chart.Name $solution -}}
+{{- $subPath := trimPrefix (printf "data/conf/%s/" $solution) $path| replace "/" "__" | replace " " "--" -}}
+{ "mountPath": "{{ $mountPath }}", "name": "{{ $name }}", "subPath": "{{ $subPath }}" }
+{{- $first_element = false -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "smbd.standalone-model-cm-mount" -}}
+{{- $solution := .solution -}}
+{{- $first_element := true -}}
+{{- range $path, $bytes := .Files.Glob (printf "data/conf/%s/model/**" $solution) -}}
+{{- if not $first_element }},{{ end -}}
+{{- $mountPath := printf "/opt/tmpConf/model/%s" (trimPrefix (printf "data/conf/%s/model/" $solution) $path) -}}
+{{- $name := printf "%s-%s-dir-model-%s-configs" $.Release.Name $.Chart.Name $solution -}}
+{{- $subPath := trimPrefix (printf "data/conf/%s/" $solution) $path| replace "/" "__" | replace " " "--" -}}
+{ "mountPath": "{{ $mountPath }}", "name": "{{ $name }}", "subPath": "{{ $subPath }}" }
+{{- $first_element = false -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "smbd.standalone-secret-mount" -}}
+{{- $solution := .solution -}}
+{{- $first_element := true -}}
+{{- range $path, $bytes := .Files.Glob  (printf "data/conf/%s/**" $solution) -}}
+{{- if or (hasSuffix "application.conf" $path) (hasSuffix "environment.conf" $path) -}}
+{{- if not $first_element }},{{ end -}}
+{{- $mountPath := printf "/opt/tmpConf/%s" (trimPrefix (printf "data/conf/%s/" $solution) $path) -}}
+{{- $name := printf "%s-%s-%s-secret-configs" $.Release.Name $.Chart.Name $solution -}}
+{{- $subPath := trimPrefix (printf "data/conf/%s/" $solution) $path| replace "/" "__" | replace " " "--" -}}
+{ "mountPath": "{{ $mountPath }}", "name": "{{ $name }}", "subPath": "{{ $subPath }}" }
+{{- $first_element = false -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "smbd.standalone-mounts-include" -}}
+{{- $solution := .solution -}}
+{{- $mounts := list -}}
+{{- $context := . -}}
+{{- $includes_list := list -}}
+{{- $includes_list = append $includes_list "smbd.standalone-cm-mount"  -}}
+{{- $includes_list = append $includes_list "smbd.standalone-secret-mount" -}}
+{{- $includes_list = append $includes_list "smbd.standalone-volumes-mount" -}}
+{{- $includes_list = append $includes_list "smbd.standalone-data-cm-mount" -}}
+{{- $includes_list = append $includes_list "smbd.init-script-volume-mount" -}}
+{{- if eq .Values.app_env "qa" -}}
+  {{- $includes_list = append $includes_list "smbd.standalone-aml-cm-mount" -}}
+  {{- $includes_list = append $includes_list "smbd.standalone-model-cm-mount" -}}
+{{- end -}}
+{{- range $include := $includes_list -}}
+{{- $mount := include $include $context -}}
+{{- if not (empty $mount) -}}
+{{- $mounts = append $mounts $mount -}}
+{{- end -}}
+{{- end -}}
+{{ join ", " $mounts }}
+{{- end -}}
+
+{{- define "smbd.init.container" -}}
+{{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.smbd -}}
+"image":"{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+{{- else -}}
+"image":"{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+{{- end -}}
+{{- end -}}
+
+{{- define "smbd.init.command" -}}
+{{- $solution := .solution -}}
+{{- $initCommand := "\"/opt/smbdInitScript.sh\"," -}}
+{{- $initCommand = print $initCommand "\"" $solution "\"" -}}
+{{- $initCommand -}}
+{{- end -}}
+
+#################################
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-{{ .Chart.Name }}-init-script"
+  namespace: {{ .Values.global.namespace }}
+data:
+  smbdInitScript.sh: |
+    #!/bin/bash
+    solution=$1
+    cp -r /opt/tmpConf/. /opt/smbd/conf/
+    {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.smbd }}
+    if [ -f /opt/override/override_version.properties ]; then
+      cp /opt/override/override_version.properties /opt/smbd/conf
+    fi
+    if [ -d  /opt/override/conf/smbd/${solution} ]; then
+      cp -r /opt/override/conf/smbd/${solution}/. /opt/smbd/conf/
+    fi
+    {{- end }}
+    if [ -d /opt/tmpData ]; then
+      cp -r /opt/tmpData/. /opt/smbd/data
+    fi
+    chown -R 200:200 /opt/smbd
+
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-{{ .Chart.Name }}-standalone-config"
+  namespace: {{ .Values.global.namespace }}
+  annotations:
+    reloader.stakater.com/match: "true"
+data:
+  smbd_standalone_config.properties: |
+    spark.operator.namespace={{ .Values.global.namespace  }}
+    spark.operator.image={{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}
+    spark.operator.smbd.main.file={{ .Values.mainApplicationFile }}
+    spark.operator.monitoring="monitoring": { "exposeDriverMetrics": {{ .Values.monitoring.exposeDriverMetrics }}, "exposeExecutorMetrics": {{ .Values.monitoring.exposeExecutorMetrics }}, "prometheus": { "jmxExporterJar": "{{ .Values.monitoring.prometheus.jmxExporterJar }}", "port": {{ .Values.monitoring.prometheus.port }} }}
+    spark.operator.restart.policy="restartPolicy": { "onFailureRetries": {{ .Values.restartPolicy.retries.onFailureRetries }}, "onFailureRetryInterval": {{ .Values.restartPolicy.retries.onFailureRetryInterval }}, "onSubmissionFailureRetries": {{ .Values.restartPolicy.retries.onSubmissionFailureRetries }}, "onSubmissionFailureRetryInterval": {{ .Values.restartPolicy.retries.onSubmissionFailureRetryInterval }}, "type": "{{ .Values.restartPolicy.type }}" }
+    spark.operator.spark.conf="timeToLiveSeconds": {{ .Values.timeToLiveSeconds }}, "sparkConf": { "spark.driver.extraClassPath": "{{ index .Values.sparkConf "spark.driver.extraClassPath" }}", "spark.driver.userClassPathFirst": "{{ index .Values.sparkConf "spark.driver.userClassPathFirst" }}", "spark.executor.extraClassPath": "{{ index .Values.sparkConf "spark.executor.extraClassPath" }}", "spark.kubernetes.driver.connectionTimeout": "{{ index .Values.sparkConf "spark.kubernetes.driver.connectionTimeout" }}", "spark.kubernetes.driver.requestTimeout": "{{ index .Values.sparkConf "spark.kubernetes.driver.requestTimeout" }}", "spark.kubernetes.submission.connectionTimeout": "{{ index .Values.sparkConf "spark.kubernetes.submission.connectionTimeout" }}", "spark.kubernetes.submission.requestTimeout": "{{ index .Values.sparkConf "spark.kubernetes.submission.requestTimeout" }}", "spark.sql.autoBroadcastJoinThreshold": "{{ index .Values.sparkConf "spark.sql.autoBroadcastJoinThreshold" }}", "spark.sql.shuffle.partitions": "{{ index .Values.sparkConf "spark.sql.shuffle.partitions" }}" }
+
+    aml.spark.operator.spark.conf="timeToLiveSeconds": {{ .Values.timeToLiveSeconds }}, "sparkConf": { "spark.driver.extraClassPath": "{{ index .Values.sparkConf "spark.driver.extraClassPath" }}", "spark.driver.userClassPathFirst": "{{ index .Values.solution.aml.sparkConf "spark.driver.userClassPathFirst" }}", "spark.executor.extraClassPath": "{{ index .Values.sparkConf "spark.executor.extraClassPath" }}", "spark.kubernetes.driver.connectionTimeout": "{{ index .Values.solution.aml.sparkConf "spark.kubernetes.driver.connectionTimeout" }}", "spark.kubernetes.driver.requestTimeout": "{{ index .Values.solution.aml.sparkConf "spark.kubernetes.driver.requestTimeout" }}", "spark.kubernetes.submission.connectionTimeout": "{{ index .Values.solution.aml.sparkConf "spark.kubernetes.submission.connectionTimeout" }}", "spark.kubernetes.submission.requestTimeout": "{{ index .Values.solution.aml.sparkConf "spark.kubernetes.submission.requestTimeout" }}", "spark.sql.autoBroadcastJoinThreshold": "{{ index .Values.solution.aml.sparkConf "spark.sql.autoBroadcastJoinThreshold" }}", "spark.sql.shuffle.partitions": "{{ index .Values.solution.aml.sparkConf "spark.sql.shuffle.partitions" }}" }
+    aml.spark.operator.volumes="volumes": \[ {{ include "smbd.standalone-volumes-include" (merge (dict "solution" "aml") . ) }} \]
+    aml.spark.operator.driver="driver": { "coreLimit": "{{ .Values.solution.aml.driver.coreLimit }}", "cores": {{ .Values.solution.aml.driver.cores }}, "initContainers":\[ {"command": \[ {{ include "smbd.init.command" (merge (dict "solution" "aml") . ) }} \], {{ include "smbd.init.container" . }}, "imagePullPolicy": "{{ .Values.imagePullPolicy }}", "name": "folder-init", "securityContext" : {"allowPrivilegeEscalation":false, "runAsUser":0 }, "volumeMounts" : \[ {{ include "smbd.standalone-mounts-include" (merge (dict "solution" "aml") . ) }} \] } \], "javaOptions": "{{ .Values.driver.javaOptions }}", "labels": { "app.kubernetes.io/release.name": "{{ .Release.Name }}", "app": "{{ .Values.labels.app }}", "version": "{{ .Values.sparkVersion }}" }, "memory": "{{ .Values.solution.aml.driver.memory }}", "serviceAccount": "{{ .Values.serviceAccount }}", "volumeMounts": \[ {{ include "smbd.standalone-mounts-include" (merge (dict "solution" "aml") . ) }} \] }
+    aml.spark.operator.executor="executor": { "cores": {{ .Values.solution.aml.executor.cores }}, "instances": {{ .Values.solution.aml.executor.instances }}, "javaOptions": "{{ .Values.executor.javaOptions }}", "labels": { "app.kubernetes.io/release.name": "{{ .Release.Name }}", "app": "{{ .Values.labels.app }}", "version": "{{ .Values.sparkVersion }}" }, "memory": "{{ .Values.solution.aml.executor.memory }}", "volumeMounts": \[ {{ include "smbd.standalone-volumes-mount" (merge (dict "solution" "aml") . ) }} \], "affinity": {"podAntiAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":\[{"weight":100,"podAffinityTerm":{"labelSelector":{"matchExpressions":\[{"key":"app","operator":"In","values":\["smbd"\]},{"key":"app.kubernetes.io/release.name","operator": "In","values": \["{{ .Release.Name }}"\]},{"key":"solution","operator":"In","values":\["aml"\]}\]},"topologyKey":"topology.kubernetes.io/zone"}}\]}} }
+
+    amlcb.spark.operator.spark.conf="timeToLiveSeconds": {{ .Values.timeToLiveSeconds }}, "sparkConf": { "spark.driver.extraClassPath": "{{ index .Values.sparkConf "spark.driver.extraClassPath" }}", "spark.driver.userClassPathFirst": "{{ index .Values.solution.amlcb.sparkConf "spark.driver.userClassPathFirst" }}", "spark.executor.extraClassPath": "{{ index .Values.sparkConf "spark.executor.extraClassPath" }}", "spark.kubernetes.driver.connectionTimeout": "{{ index .Values.solution.amlcb.sparkConf "spark.kubernetes.driver.connectionTimeout" }}", "spark.kubernetes.driver.requestTimeout": "{{ index .Values.solution.amlcb.sparkConf "spark.kubernetes.driver.requestTimeout" }}", "spark.kubernetes.submission.connectionTimeout": "{{ index .Values.solution.amlcb.sparkConf "spark.kubernetes.submission.connectionTimeout" }}", "spark.kubernetes.submission.requestTimeout": "{{ index .Values.solution.amlcb.sparkConf "spark.kubernetes.submission.requestTimeout" }}", "spark.sql.autoBroadcastJoinThreshold": "{{ index .Values.solution.amlcb.sparkConf "spark.sql.autoBroadcastJoinThreshold" }}", "spark.sql.shuffle.partitions": "{{ index .Values.solution.amlcb.sparkConf "spark.sql.shuffle.partitions" }}" }
+    amlcb.spark.operator.volumes="volumes": \[ {{ include "smbd.standalone-volumes-include" (merge (dict "solution" "amlcb") . )  }} \]
+    amlcb.spark.operator.driver="driver": { "coreLimit": "{{ .Values.solution.amlcb.driver.coreLimit }}", "cores": {{ .Values.solution.amlcb.driver.cores }}, "initContainers":\[ {"command": \[ {{ include "smbd.init.command" (merge (dict "solution" "amlcb") . ) }} \], {{ include "smbd.init.container" . }}, "imagePullPolicy": "{{ .Values.imagePullPolicy }}", "name": "folder-init", "securityContext" : {"allowPrivilegeEscalation":false, "runAsUser":0 }, "volumeMounts" : \[ {{ include "smbd.standalone-mounts-include" (merge (dict "solution" "amlcb") . ) }} \] } \], "javaOptions": "{{ .Values.driver.javaOptions }}", "labels": { "app.kubernetes.io/release.name": "{{ .Release.Name }}", "app": "{{ .Values.labels.app }}", "version": "{{ .Values.sparkVersion }}" }, "memory": "{{ .Values.solution.amlcb.driver.memory }}", "serviceAccount": "{{ .Values.serviceAccount }}", "volumeMounts": \[ {{ include "smbd.standalone-mounts-include" (merge (dict "solution" "amlcb") . ) }} \] }
+    amlcb.spark.operator.executor="executor": { "cores": {{ .Values.solution.amlcb.executor.cores }}, "instances": {{ .Values.solution.amlcb.executor.instances }}, "javaOptions": "{{ .Values.executor.javaOptions }}", "labels": { "app.kubernetes.io/release.name": "{{ .Release.Name }}", "app": "{{ .Values.labels.app }}", "version": "{{ .Values.sparkVersion }}" }, "memory": "{{ .Values.solution.amlcb.executor.memory }}", "volumeMounts": \[ {{ include "smbd.standalone-volumes-mount" (merge (dict "solution" "amlcb") . ) }} \], "affinity": {"podAntiAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":\[{"weight":100,"podAffinityTerm":{"labelSelector":{"matchExpressions":\[{"key":"app","operator":"In","values":\["smbd"\]},{"key":"app.kubernetes.io/release.name","operator": "In","values": \["{{ .Release.Name }}"\]},{"key":"solution","operator":"In","values":\["amlcb"\]}\]},"topologyKey":"topology.kubernetes.io/zone"}}\]}} }
+
+    amlcust.spark.operator.spark.conf="timeToLiveSeconds": {{ .Values.timeToLiveSeconds }}, "sparkConf": { "spark.driver.extraClassPath": "{{ index .Values.sparkConf "spark.driver.extraClassPath" }}", "spark.driver.userClassPathFirst": "{{ index .Values.solution.amlcust.sparkConf "spark.driver.userClassPathFirst" }}", "spark.executor.extraClassPath": "{{ index .Values.sparkConf "spark.executor.extraClassPath" }}", "spark.kubernetes.driver.connectionTimeout": "{{ index .Values.solution.amlcust.sparkConf "spark.kubernetes.driver.connectionTimeout" }}", "spark.kubernetes.driver.requestTimeout": "{{ index .Values.solution.amlcust.sparkConf "spark.kubernetes.driver.requestTimeout" }}", "spark.kubernetes.submission.connectionTimeout": "{{ index .Values.solution.amlcust.sparkConf "spark.kubernetes.submission.connectionTimeout" }}", "spark.kubernetes.submission.requestTimeout": "{{ index .Values.solution.amlcust.sparkConf "spark.kubernetes.submission.requestTimeout" }}", "spark.sql.autoBroadcastJoinThreshold": "{{ index .Values.solution.amlcust.sparkConf "spark.sql.autoBroadcastJoinThreshold" }}", "spark.sql.shuffle.partitions": "{{ index .Values.solution.amlcust.sparkConf "spark.sql.shuffle.partitions" }}" }
+    amlcust.spark.operator.volumes="volumes": \[ {{ include "smbd.standalone-volumes-include" (merge (dict "solution" "amlcust") . )  }} \]
+    amlcust.spark.operator.driver="driver": { "coreLimit": "{{ .Values.solution.amlcust.driver.coreLimit }}", "cores": {{ .Values.solution.amlcust.driver.cores }}, "initContainers": \[ {"command": \[{{ include "smbd.init.command" (merge (dict "solution" "amlcust") . ) }} \], {{ include "smbd.init.container" . }}, "imagePullPolicy": "{{ .Values.imagePullPolicy }}", "name": "folder-init", "securityContext" : {"allowPrivilegeEscalation":false, "runAsUser":0 }, "volumeMounts" : \[ {{ include "smbd.standalone-mounts-include" (merge (dict "solution" "amlcust") . ) }} \] } \], "javaOptions": "{{ .Values.driver.javaOptions }}", "labels": { "app.kubernetes.io/release.name": "{{ .Release.Name }}", "app": "{{ .Values.labels.app }}", "version": "{{ .Values.sparkVersion }}" }, "memory": "{{ .Values.solution.amlcust.driver.memory }}", "serviceAccount": "{{ .Values.serviceAccount }}", "volumeMounts": \[ {{ include "smbd.standalone-mounts-include" (merge (dict "solution" "amlcust") . )  }} \] }
+    amlcust.spark.operator.executor="executor": { "cores": {{ .Values.solution.amlcust.executor.cores }}, "instances": {{ .Values.solution.amlcust.executor.instances }}, "javaOptions": "{{ .Values.executor.javaOptions }}", "labels": { "app.kubernetes.io/release.name": "{{ .Release.Name }}", "app": "{{ .Values.labels.app }}", "version": "{{ .Values.sparkVersion }}" }, "memory": "{{ .Values.solution.amlcust.executor.memory }}", "volumeMounts": \[ {{ include "smbd.standalone-volumes-mount" (merge (dict "solution" "amlcust") . ) }} \], "affinity": {"podAntiAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":\[{"weight":100,"podAffinityTerm":{"labelSelector":{"matchExpressions":\[{"key":"app","operator":"In","values":\["smbd"\]},{"key":"app.kubernetes.io/release.name","operator": "In","values": \["{{ .Release.Name }}"\]},{"key":"solution","operator":"In","values":\["amlcust"\]}\]},"topologyKey":"topology.kubernetes.io/zone"}}\]}} }
+
+    amlopt.spark.operator.spark.conf="timeToLiveSeconds": {{ .Values.timeToLiveSeconds }}, "sparkConf": { "spark.driver.extraClassPath": "{{ index .Values.sparkConf "spark.driver.extraClassPath" }}", "spark.driver.userClassPathFirst": "{{ index .Values.solution.amlopt.sparkConf "spark.driver.userClassPathFirst" }}", "spark.executor.extraClassPath": "{{ index .Values.sparkConf "spark.executor.extraClassPath" }}", "spark.kubernetes.driver.connectionTimeout": "{{ index .Values.solution.amlopt.sparkConf "spark.kubernetes.driver.connectionTimeout" }}", "spark.kubernetes.driver.requestTimeout": "{{ index .Values.solution.amlopt.sparkConf "spark.kubernetes.driver.requestTimeout" }}", "spark.kubernetes.submission.connectionTimeout": "{{ index .Values.solution.amlopt.sparkConf "spark.kubernetes.submission.connectionTimeout" }}", "spark.kubernetes.submission.requestTimeout": "{{ index .Values.solution.amlopt.sparkConf "spark.kubernetes.submission.requestTimeout" }}", "spark.sql.autoBroadcastJoinThreshold": "{{ index .Values.solution.amlopt.sparkConf "spark.sql.autoBroadcastJoinThreshold" }}", "spark.sql.shuffle.partitions": "{{ index .Values.solution.amlopt.sparkConf "spark.sql.shuffle.partitions" }}" }
+    amlopt.spark.operator.volumes="volumes": \[ {{ include "smbd.standalone-volumes-include" (merge (dict "solution" "amlopt") . ) }} \]
+    amlopt.spark.operator.driver="driver": { "coreLimit": "{{ .Values.solution.amlopt.driver.coreLimit }}", "cores": {{ .Values.solution.amlopt.driver.cores }}, "initContainers":\[ {"command": \[ {{ include "smbd.init.command" (merge (dict "solution" "amlopt") . ) }} \], {{ include "smbd.init.container" . }}, "imagePullPolicy": "{{ .Values.imagePullPolicy }}", "name": "folder-init", "securityContext" : {"allowPrivilegeEscalation":false, "runAsUser":0 }, "volumeMounts" : \[ {{ include "smbd.standalone-mounts-include" (merge (dict "solution" "amlopt") . ) }} \] } \], "javaOptions": "{{ .Values.driver.javaOptions }}", "labels": { "app.kubernetes.io/release.name": "{{ .Release.Name }}", "app": "{{ .Values.labels.app }}", "version": "{{ .Values.sparkVersion }}" }, "memory": "{{ .Values.solution.amlopt.driver.memory }}", "serviceAccount": "{{ .Values.serviceAccount }}" , "securityContext" : { "privileged":true, "capabilities": { "add": \[ "SYS_ADMIN" \] } }, "volumeMounts": \[ {{ include "smbd.standalone-mounts-include" (merge (dict "solution" "amlopt") . )  }} \] }
+    amlopt.spark.operator.executor="executor": { "cores": {{ .Values.solution.amlopt.executor.cores }}, "instances": {{ .Values.solution.amlopt.executor.instances }}, "javaOptions": "{{ .Values.executor.javaOptions }}", "labels": { "app.kubernetes.io/release.name": "{{ .Release.Name }}", "app": "{{ .Values.labels.app }}", "version": "{{ .Values.sparkVersion }}" }, "memory": "{{ .Values.solution.amlopt.executor.memory }}", "securityContext": { "privileged": true, "capabilities": { "add": \[ "SYS_ADMIN" \] } }, "volumeMounts": \[ {{ include "smbd.standalone-volumes-mount" (merge (dict "solution" "amlopt") . ) }} \], "affinity": {"podAntiAffinity":{"preferredDuringSchedulingIgnoredDuringExecution":\[{"weight":100,"podAffinityTerm":{"labelSelector":{"matchExpressions":\[{"key":"app","operator":"In","values":\["smbd"\]},{"key":"app.kubernetes.io/release.name","operator": "In","values": \["{{ .Release.Name }}"\]},{"key":"solution","operator":"In","values":\["amlopt"\]}\]},"topologyKey":"topology.kubernetes.io/zone"}}\]}} }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-{{ .Chart.Name }}-nr-ui-config"
+  namespace: {{ .Values.global.namespace }}
+  annotations:
+    reloader.stakater.com/match: "true"
+data:
+  smbd_nr_ui_config.properties: |
+    spark.operator.namespace={{ .Values.global.namespace  }}
+    spark.operator.image={{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}
+    spark.operator.smbd.main.file={{ .Values.mainApplicationFile }}
+    spark.operator.monitoring="monitoring": { "exposeDriverMetrics": {{ .Values.monitoring.exposeDriverMetrics }}, "exposeExecutorMetrics": {{ .Values.monitoring.exposeExecutorMetrics }}, "prometheus": { "jmxExporterJar": "{{ .Values.monitoring.prometheus.jmxExporterJar }}", "port": {{ .Values.monitoring.prometheus.port }} }}
+    spark.operator.restart.policy="restartPolicy": { "onFailureRetries": {{ .Values.restartPolicy.retries.onFailureRetries }}, "onFailureRetryInterval": {{ .Values.restartPolicy.retries.onFailureRetryInterval }}, "onSubmissionFailureRetries": {{ .Values.restartPolicy.retries.onSubmissionFailureRetries }}, "onSubmissionFailureRetryInterval": {{ .Values.restartPolicy.retries.onSubmissionFailureRetryInterval }}, "type": "{{ .Values.restartPolicy.type }}" }
+    spark.operator.spark.conf="timeToLiveSeconds": {{ .Values.timeToLiveSeconds }}, "sparkConf": { "spark.driver.extraClassPath": "{{ index .Values.sparkConf "spark.driver.extraClassPath" }}", "spark.driver.userClassPathFirst": "{{ index .Values.sparkConf "spark.driver.userClassPathFirst" }}", "spark.executor.extraClassPath": "{{ index .Values.sparkConf "spark.executor.extraClassPath" }}", "spark.kubernetes.driver.connectionTimeout": "{{ index .Values.sparkConf "spark.kubernetes.driver.connectionTimeout" }}", "spark.kubernetes.driver.requestTimeout": "{{ index .Values.sparkConf "spark.kubernetes.driver.requestTimeout" }}", "spark.kubernetes.submission.connectionTimeout": "{{ index .Values.sparkConf "spark.kubernetes.submission.connectionTimeout" }}", "spark.kubernetes.submission.requestTimeout": "{{ index .Values.sparkConf "spark.kubernetes.submission.requestTimeout" }}", "spark.sql.autoBroadcastJoinThreshold": "{{ index .Values.sparkConf "spark.sql.autoBroadcastJoinThreshold" }}", "spark.sql.shuffle.partitions": "{{ index .Values.sparkConf "spark.sql.shuffle.partitions" }}" }
+
+    amlopt.spark.operator.spark.conf="timeToLiveSeconds": {{ .Values.timeToLiveSeconds }}, "sparkConf": { "spark.driver.extraClassPath": "{{ index .Values.sparkConf "spark.driver.extraClassPath" }}", "spark.driver.userClassPathFirst": "{{ index .Values.solution.amlopt.sparkConf "spark.driver.userClassPathFirst" }}", "spark.executor.extraClassPath": "{{ index .Values.sparkConf "spark.executor.extraClassPath" }}", "spark.kubernetes.driver.connectionTimeout": "{{ index .Values.solution.amlopt.sparkConf "spark.kubernetes.driver.connectionTimeout" }}", "spark.kubernetes.driver.requestTimeout": "{{ index .Values.solution.amlopt.sparkConf "spark.kubernetes.driver.requestTimeout" }}", "spark.kubernetes.submission.connectionTimeout": "{{ index .Values.solution.amlopt.sparkConf "spark.kubernetes.submission.connectionTimeout" }}", "spark.kubernetes.submission.requestTimeout": "{{ index .Values.solution.amlopt.sparkConf "spark.kubernetes.submission.requestTimeout" }}", "spark.sql.autoBroadcastJoinThreshold": "{{ index .Values.solution.amlopt.sparkConf "spark.sql.autoBroadcastJoinThreshold" }}", "spark.sql.shuffle.partitions": "{{ index .Values.solution.amlopt.sparkConf "spark.sql.shuffle.partitions" }}" }
+    amlopt.spark.operator.volumes="volumes": \[ {{ include "smbd.standalone-volumes-include" (merge (dict "solution" "amlopt") . ) }} \]
+    amlopt.spark.operator.driver="driver": { "coreLimit": "{{ .Values.solution.amlopt.driver.coreLimit }}", "cores": {{ .Values.solution.amlopt.driver.cores }}, "initContainers":\[ {"command": \[ {{ include "smbd.init.command" (merge (dict "solution" "amlopt") . ) }} \], {{ include "smbd.init.container" . }}, "imagePullPolicy": "{{ .Values.imagePullPolicy }}", "name": "folder-init", "securityContext" : {"allowPrivilegeEscalation":false, "runAsUser":0 }, "volumeMounts" : \[ {{ include "smbd.standalone-mounts-include" (merge (dict "solution" "amlopt") . ) }} \] } \], "javaOptions": "{{ .Values.driver.javaOptions }}", "labels": { "app.kubernetes.io/release.name": "{{ .Release.Name }}", "app": "{{ .Values.labels.app }}", "version": "{{ .Values.sparkVersion }}" }, "memory": "{{ .Values.solution.amlopt.driver.memory }}", "serviceAccount": "{{ .Values.serviceAccount }}" , "securityContext" : { "privileged":true, "capabilities": { "add": \[ "SYS_ADMIN" \] } }, "volumeMounts": \[ {{ include "smbd.standalone-mounts-include" (merge (dict "solution" "amlopt") . )  }} \] }
+    amlopt.spark.operator.executor="executor": { "cores": {{ .Values.solution.amlopt.executor.cores }}, "instances": {{ .Values.solution.amlopt.executor.instances }}, "javaOptions": "{{ .Values.executor.javaOptions }}", "labels": { "app.kubernetes.io/release.name": "{{ .Release.Name }}", "app": "{{ .Values.labels.app }}", "version": "{{ .Values.sparkVersion }}" }, "memory": "{{ .Values.solution.amlopt.executor.memory }}", "securityContext" : { "privileged":true, "capabilities": { "add": \[ "SYS_ADMIN" \] } } , "volumeMounts": \[ {{ include "smbd.standalone-volumes-mount" (merge (dict "solution" "amlopt") . )  }} \] }

@@ -1,0 +1,27 @@
+replicaCount: 1
+
+image:
+  repository: haproxy
+  tag: "2.9"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8443
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+mtls:
+  certPath: /etc/mtls
+  domains: []
+
+networkPolicy:
+  enabled: true
+  externalCidrs: []
+  internalCidrs: []

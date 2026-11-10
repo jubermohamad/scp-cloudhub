@@ -1,0 +1,27 @@
+# ClusterRoleBinding: Bind Backstage SPN to the read-only ClusterRole
+#
+# Replace BACKSTAGE_SPN_CLIENT_ID with the actual Azure AD application
+# (client) ID of the Backstage Service Principal.
+#
+# The subject uses the SPN's AAD object ID as a Kubernetes User subject,
+# which is the correct binding when AKS local accounts are enabled.
+# If the cluster uses Azure AD integrated RBAC, replace with:
+#   kind: Group / name: <AAD_GROUP_OBJECT_ID>
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backstage-cost-automation-reader-binding
+  labels:
+    app.kubernetes.io/managed-by: backstage
+    backstage.io/purpose: cost-automation
+    backstage.io/onboarding: 'true'
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: backstage-cost-automation-reader
+subjects:
+  - kind: User
+    # Replace with the Backstage SPN client ID (Azure AD application ID)
+    name: '${BACKSTAGE_SPN_CLIENT_ID}'
+    apiGroup: rbac.authorization.k8s.io

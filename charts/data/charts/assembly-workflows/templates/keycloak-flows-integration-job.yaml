@@ -1,0 +1,153 @@
+{{- if and .Values.infra.enabled .Values.infra.keycloak.flowsIntegration.enabled }}
+# Converge the InvHub flows-integration Keycloak objects on EXISTING realms.
+#
+# --import-realm (infra.yaml) is a no-op once the realm exists, so the seed JSON
+# only provisions FRESH installs; live instances drift (dev-assembly needed the
+# workflow-canvas client, invhub_service_user, and frontend redirect URIs fixed by
+# hand). This post-install/upgrade hook re-asserts the same desired state from the
+# SAME aw.keycloak.* helpers the seed uses (so the two can't drift), idempotently.
+#
+# Secrets (AGENTS.md rule 5): passwords enter only as secretKeyRef env; the script
+# never echoes them and runs without xtrace. They do hit kcadm's argv inside this
+# short-lived pod (its own /proc only) -- same accepted class as the minio hook.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aw.prefix" . }}-keycloak-flows-integration
+  labels:
+    # NOT app:keycloak — that matches the keycloak Service selector, so this
+    # short-lived Job pod (no readiness probe → counted Ready while running)
+    # gets enrolled as a keycloak endpoint and steals auth traffic to :8080
+    # where nothing listens (connection refused, platform-wide). Own label.
+    app: assembly-keycloak-flows-integration
+    {{- include "aw.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  # 7200, NOT 300: helm4's --wait watcher held this release for its full
+  # 1500s timeout waiting on a Job that had already COMPLETED — the TTL
+  # reaped it before the watcher observed the completion, and from then on
+  # the watcher saw only "status: NotFound". A TTL shorter than the helm
+  # wait fails a working release; 7200 matches the platform convention.
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        app: assembly-keycloak-flows-integration
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      restartPolicy: OnFailure
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      containers:
+        - name: kcadm
+          # Reuse the Keycloak image: ships /opt/keycloak/bin/kcadm.sh + bash,
+          # needs no jq/curl, and stays version-locked to the server.
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.keycloak.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              KCADM=/opt/keycloak/bin/kcadm.sh
+
+              # 1) Wait for Keycloak + authenticate (90x5s covers a fresh
+              #    install's cold start: readiness delay + DB init). Output
+              #    suppressed so credentials never reach the logs.
+              ok=""
+              for i in $(seq 1 90); do
+                "$KCADM" config credentials --server "$KC_SERVER" --realm master \
+                    --user admin --password "$KC_ADMIN_PASSWORD" >/dev/null 2>&1 && { ok=1; break; }
+                echo "waiting for keycloak ($i/90)"; sleep 5
+              done
+              [ -n "$ok" ] || { echo "ERROR: keycloak not reachable/authenticable at $KC_SERVER"; exit 1; }
+
+              # 2) Flows client: create if missing, else converge to the same
+              #    desired JSON the realm seed uses. Id extraction via
+              #    --format csv --noquotes (no jq in the keycloak image).
+              cid=$("$KCADM" get clients -r "$KC_REALM" -q clientId="$FLOWS_CLIENT_ID" \
+                    --fields id --format csv --noquotes)
+              if [ -z "$cid" ]; then
+                printf '%s' "$FLOWS_CLIENT_JSON" | "$KCADM" create clients -r "$KC_REALM" -f -
+                echo "created client $FLOWS_CLIENT_ID"
+              else
+                printf '%s' "$FLOWS_CLIENT_JSON" | "$KCADM" update "clients/$cid" -r "$KC_REALM" -f -
+                echo "converged client $FLOWS_CLIENT_ID"
+              fi
+
+              # 3) Service user. -q exact=true: the plain username query is a
+              #    substring match. realmRoles/credentials are ignored by the
+              #    admin REST create (import-only fields), so the role and
+              #    password are asserted explicitly below -- both idempotent.
+              uid=$("$KCADM" get users -r "$KC_REALM" -q username="$FLOWS_USERNAME" -q exact=true \
+                    --fields id --format csv --noquotes)
+              if [ -z "$uid" ]; then
+                printf '%s' "$FLOWS_USER_JSON" | "$KCADM" create users -r "$KC_REALM" -f -
+                echo "created user $FLOWS_USERNAME"
+              else
+                printf '%s' "$FLOWS_USER_JSON" | "$KCADM" update "users/$uid" -r "$KC_REALM" -f -
+                echo "converged user $FLOWS_USERNAME"
+              fi
+              "$KCADM" add-roles -r "$KC_REALM" --uusername "$FLOWS_USERNAME" --rolename user
+              "$KCADM" set-password -r "$KC_REALM" --username "$FLOWS_USERNAME" \
+                  --new-password "$FLOWS_USER_PASSWORD"
+              echo "flows service user converged"
+
+              # 4) Optional: re-assert the drift-prone assembly-platform-frontend
+              #    redirect/webOrigins/post-logout lists (update-only; the seed
+              #    owns creation). JSON merge via `update -f -` on purpose:
+              #    kcadm -s 'attributes."k"=v' mangles through the shell, and
+              #    `get --fields attributes` returns {} even when set --
+              #    production-verified kcadm traps.
+              if [ -n "${FRONTEND_PATCH_JSON:-}" ]; then
+                fid=$("$KCADM" get clients -r "$KC_REALM" -q clientId=assembly-platform-frontend \
+                      --fields id --format csv --noquotes)
+                if [ -n "$fid" ]; then
+                  printf '%s' "$FRONTEND_PATCH_JSON" | "$KCADM" update "clients/$fid" -r "$KC_REALM" -f -
+                  echo "converged assembly-platform-frontend redirect/webOrigins/post-logout"
+                else
+                  echo "assembly-platform-frontend not found; skipped"
+                fi
+              fi
+              echo "keycloak flows-integration reconcile complete"
+          env:
+            # kcadm writes its session config under $HOME; the keycloak image
+            # runs as a non-root user whose default HOME is not writable.
+            - name: HOME
+              value: /tmp
+            - name: KC_SERVER
+              value: {{ include "aw.keycloakServerUrl" . }}
+            - name: KC_REALM
+              value: {{ .Values.externalInfra.keycloak.realm | default "assembly-platform" | quote }}
+            - name: FLOWS_CLIENT_ID
+              value: {{ .Values.infra.keycloak.flowsIntegration.clientId | quote }}
+            - name: FLOWS_USERNAME
+              value: {{ .Values.infra.keycloak.flowsIntegration.serviceUser | quote }}
+            - name: FLOWS_CLIENT_JSON
+              value: {{ include "aw.keycloak.flowsClientJson" . | quote }}
+            # withPassword=false: the REST create ignores inline credentials;
+            # the password is set via kcadm set-password from the env below.
+            - name: FLOWS_USER_JSON
+              value: {{ include "aw.keycloak.flowsUserJson" (dict "ctx" . "withPassword" false) | quote }}
+            {{- if .Values.infra.keycloak.flowsIntegration.convergeSeedClients }}
+            - name: FRONTEND_PATCH_JSON
+              value: {{ include "aw.keycloak.frontendClientPatchJson" . | quote }}
+            {{- end }}
+            - name: KC_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.prefix" . }}-keycloak-secret
+                  key: admin-password
+            - name: FLOWS_USER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.prefix" . }}-keycloak-secret
+                  key: invhub-service-user-password
+          resources:
+            # kcadm is a JVM -- the 64/128Mi profile of the other hook jobs OOMs it.
+            requests: { memory: 256Mi, cpu: 50m }
+            limits: { memory: 768Mi, cpu: 500m }
+{{- end }}

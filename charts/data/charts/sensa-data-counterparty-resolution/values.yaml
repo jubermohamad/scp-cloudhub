@@ -1,0 +1,388 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+# Default values — tuned for a local minikube demo. See values-aks.yaml for the AKS overlay.
+# ─────────────────────────────────────────────────────────────────────────────
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Images. In minikube these are built straight into the node's docker (imagePullPolicy: Never means
+# "use the local image, never pull"). For AKS, set repository to your ACR path and pullPolicy: IfNotPresent.
+images:
+  engine:
+    repository: cpr-engine
+    tag: dev
+  api:
+    repository: cpr-api
+    tag: dev
+  web:
+    repository: cpr-web
+    tag: dev
+  # Always, NOT upstream's minikube default "Never": Never means "only use
+  # an image already on the node", so on AKS every pod would fail with
+  # ErrImageNeverPull. The tags are mutable branch tags too, so a restart
+  # must re-pull.
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  # Private-registry auth. Empty for minikube (local images) and for the recommended AKS path —
+  # attach the ACR to the cluster's kubelet identity (`az aks update --attach-acr <acr>`), which needs
+  # NO secret and also covers R38 on-demand build pods. Set only for a private registry authed by a
+  # pre-created docker-registry secret (applies to install-time api/web/backfill pods; see README).
+  pullSecrets: []
+
+# ── Storage backend (R69) — WHERE the pipeline writes the resolved store. ─────────────────────────
+# A first-class chart value, not a hand-set env var: it is plumbed into the engine SparkApplication
+# (driver + executors), the on-demand build CRs the api submits, and the api Deployment itself, so a
+# backend switch is a `--set storage.backend=…` and nothing else. `postgres` (the default) leaves every
+# existing install unchanged; `iceberg` writes the design §5 source-of-truth instead. (This deliberately
+# closes the gap CPR_INPUT_FORMAT still has: env-read but not values-driven.)
+storage:
+  backend: postgres            # postgres | iceberg
+
+  # ── Iceberg (design §3/§6/§13) — inert unless storage.backend or query.backend is `iceberg`. ────
+  # The whole catalog surface is FOUR Spark config keys (§13); everything below either feeds one of
+  # them or decides physical layout. The runtime jar is baked into the engine image
+  # (iceberg-spark-runtime-4.1_2.13:1.11.0 — per-Spark-minor, see engine.Dockerfile).
+  iceberg:
+    # mountPath: where the warehouse VOLUME appears inside every pod, and it MUST be identical on the
+    # driver, the executors and the api — Iceberg manifests store ABSOLUTE file paths, so a table
+    # written at one path is unreadable at another (spike finding 2). That is also why moving to ADLS
+    # later is a rewrite/migration rather than a repoint.
+    mountPath: /warehouse
+    # warehouse: the Hadoop-catalog root. Must live UNDER mountPath. → `abfs://…` later (R70).
+    warehouse: /warehouse/ice
+    catalog: cpr               # Spark catalog name; tables are <catalog>.<namespace>.<table>
+    namespace: cpr
+    catalogType: hadoop        # hadoop (no metastore — the PV/HNS trick) | rest | jdbc (later, §6)
+    buckets: 16                # hash-partition width for the lookup-keyed tables (probe pruning)
+    writeMode: copy-on-write   # copy-on-write | merge-on-read for the row-level MERGE/UPDATE/DELETE
+    # Design §9's lights-out batch policy: write class A + the Day-1 index, and NOT the UI-only
+    # projections (`profile_edge` — the largest write in the build and the R71 deadlock site — and
+    # `match_evidence`). OFF by default so an Iceberg store is a like-for-like replacement that the
+    # UI can serve; ON is the downstream batch contract, and the UI then materialises the network
+    # view on demand from the source-of-truth instead (see query.backend).
+    lightsOut: false
+    # Where the warehouse actually lives. hostPath is the minikube trick (single node ⇒ a node-local
+    # directory behaves as shared storage for every Spark pod, no RWX provisioner needed); `pvc` uses
+    # a claim, which on a real cluster must be RWX because driver, executors and api all mount it.
+    persistence:
+      type: hostPath           # hostPath | pvc
+      hostPath: /data/ice-wh   # node dir (created if absent) when type=hostPath
+      existingClaim: ""        # use this claim when type=pvc; "" ⇒ the chart creates one
+      size: 20Gi
+      storageClass: ""         # "" = cluster default. A real cluster wants an RWX class here.
+      accessMode: ReadWriteOnce
+
+# ── Query backend (R69 read seam) — WHERE the API reads from. ─────────────────────────────────────
+# The symmetric half of storage.backend, and independent of it: `postgres` is today's indexed SQL
+# (sub-ms point lookups), `iceberg` is PyIceberg + DuckDB embedded in the api process (no extra
+# service, tens-of-ms point lookups). Coupling to know (design §8): the read backend must match where
+# the data lives — an Iceberg WRITE with a Postgres query backend serves an empty store. Control-plane
+# metadata (config / model / build registries, design §4 class C) stays Postgres either way, so the
+# api keeps its PG pool regardless.
+query:
+  backend: postgres            # postgres | iceberg
+
+# ── Postgres serving store — a CloudNativePG-managed Cluster (HA / WAL / automatic failover). ──────
+# Replaces the earlier single-pod postgres:16 Deployment: ONE Postgres path from minikube to AKS
+# ("demo == target"), matching the NetReveal ER product infra. The CNPG operator (subchart, toggled by
+# postgresOperator.install below) reconciles the Cluster CR and MANAGES the credential Secrets — it
+# emits a `<cluster>-app` Secret (username / password / dbname / uri) that the api + backfill read via
+# secretKeyRef, so NO password lives in values.yaml or the helm-release history (secrets, item 3).
+postgres:
+  cnpg:
+    # Cluster name → the CNPG Services (<name>-rw / -ro / -r) + generated <name>-app / -superuser
+    # Secrets. "" ⇒ "<release>-cpr-pg".
+    clusterName: ""
+    # PG major must suit the app (schema.sql is plain DDL; 16 == the prior single-pod image).
+    imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+    instances: 1               # 1 on minikube; AKS overlay raises this for HA + automatic failover.
+    primaryUpdateStrategy: unsupervised
+    database: cpr              # bootstrap.initdb database the pipeline/API use.
+    owner: cpr                 # app role that OWNS the database (schema.sql runs as this role).
+    storage:
+      size: 20Gi               # a 10M-observation build writes ~2.3M profiles + 10M txn links.
+      storageClass: ""         # "" = cluster default (minikube: standard). AKS: managed-csi.
+    walStorage:                # separate WAL volume (CNPG best practice; mirrors the ER reference).
+      enabled: true
+      size: 4Gi                # bulk COPY + index rebuilds generate WAL in proportion to the load.
+      storageClass: ""
+    # The serving store is a WRITE-heavy component during a build, not just a query surface: a backfill
+    # bulk-loads every table through COPY and then rebuilds each table's secondary indexes. At 1 CPU /
+    # 1Gi (the old demo default) that was the wall — txn_profile_links took 1707s for 10,083,949 rows
+    # (5,908 rows/s) while the Spark-side write path was measured at 293k rows/s, i.e. ~50x faster than
+    # the server could accept. Four concurrent COPY streams cannot share one core, and GIN/btree builds
+    # want working memory. Sized for the 8-CPU/24g minikube; the AKS overlay should raise it again.
+    # requests.memory must be >= shared_buffers, or CNPG's webhook rejects the Cluster: Postgres would
+    # be allowed to reserve more than Kubernetes guarantees it.
+    resources:
+      requests: { cpu: "500m", memory: "2Gi" }
+      limits:   { cpu: "4",    memory: "6Gi" }
+    # Postgres only uses memory it is told it may use — limits alone change nothing. shared_buffers at
+    # ~25% of the limit is the standard starting point; maintenance_work_mem is what an index REBUILD
+    # (now every swap) actually consumes, and starving it forces an external merge sort on disk.
+    parameters:
+      shared_buffers: "1536MB"
+      maintenance_work_mem: "512MB"
+      work_mem: "64MB"
+      max_wal_size: "2GB"        # must stay BELOW walStorage.size above (CNPG validates this).
+    enableSuperuserAccess: true # CNPG generates <cluster>-superuser; the app uses the owner role only.
+    # Escape hatch for any CNPG Cluster field not surfaced above (e.g. backup, affinity, tablespaces):
+    # extraSpec: { ... } is merged into spec.
+    extraSpec: {}
+  service:
+    port: 5432
+  # Host access for the LOCAL demo only (minikube): a NodePort onto the CNPG primary (CNPG's own
+  # Services are ClusterIP). Demo-grade — exposes Postgres on the node; the AKS overlay disables it.
+  nodePort:
+    enabled: true
+    port: 30432              # 30000–32767; "" = auto-assign.
+  # ── External / pre-existing Postgres (NON-CNPG) escape hatch. Set existingSecret.name to point the
+  # api + backfill at a managed DB (e.g. Azure Database for PostgreSQL) instead of CNPG: the CNPG
+  # Cluster is then NOT rendered, and the password is read from this secret via secretKeyRef. ────────
+  existingSecret:
+    name: ""                 # "" ⇒ use CNPG (default). Non-empty ⇒ external Postgres.
+    passwordKey: password    # key in the secret holding the password (→ PGPASSWORD).
+    host: ""
+    port: 5432
+    user: cpr
+    database: cpr
+
+# ── Day-0 backfill — a distributed SparkApplication (Kubeflow Spark Operator). ─────────────────────
+# The engine image runs as a Spark DRIVER + N EXECUTORS: ingest → train Splink → resolve → §4b → COPY
+# into Postgres. A discrete, PARAMETERISED, submittable CR (re-run with `helm upgrade` — the name
+# carries the revision; the R38 / Argo seam). CPR_SPARK_MASTER="" is injected so the pipeline inherits
+# spark-submit's k8s master and genuinely fans out (see cpr.pipeline.session).
+backfill:
+  enabled: true
+  # demo  = generate a synthetic population WITH ground truth → Postgres + metrics.json (Evaluation
+  #         page works; heavy work still fans out to executors, generation/eval on the driver).
+  # scale = ingest real pacs.008 from messages.existingClaim → Postgres, no metrics (the true
+  #         end-to-end distributed path).
+  seedMode: demo
+  sparkVersion: "4.1.2"        # MUST match the engine image's Spark (apache/spark:4.1.2-python3).
+  # scale mode only: DROP + recreate the store before ingest so a scale run's throughput isn't
+  # confounded by a pre-existing population (owner steer). The export is idempotent either way (R45);
+  # set false only to layer a scale build onto an existing store.
+  resetStore: true
+  demo:
+    nBackgroundEntities: 200   # population scale (0 = just the seed §4b archetypes; 1000 = rich).
+    volumeScale: 2.0
+    seed: 42
+  # scale mode only: a pre-populated volume of pacs.008 XML (+ optional ground_truth.csv), mounted
+  # READ-ONLY at the SAME path on the driver AND every executor — Spark's binaryFile ingest spreads
+  # the files across executors, so a driver-only mount would break the distributed read. Two sources:
+  #   • existingClaim — a pre-populated PVC (bring-your-own / AKS azurefile). Preferred on a cluster.
+  #   • hostPath      — a path on the node (minikube: `minikube mount <host-dir>:/data/1m` first, then
+  #                     set hostPath: /data/1m). Simplest for the local 1M demo; NOT for multi-node.
+  # (Future seam, not wired: an abfss:// Azure Blob source read distributed natively by Spark — see
+  # README. It mirrors the CNPG/existingSecret "local now, cloud later" pattern.)
+  messages:
+    mountPath: /data/messages
+    # existingClaim: my-pacs008-pvc
+    hostPath: ""               # e.g. /data/1m for a minikube-mounted dataset dir.
+  # Extra Spark confs merged into the SparkApplication's sparkConf — the tuning surface for a real
+  # run (right-size to the node). Empty by default (demo is small); see values-scale.yaml for the
+  # 1M-tuned set (shuffle partitions, parallelism). DO NOT hardcode these in pipeline/session.py.
+  #
+  # ⚠️ **A Day-0 and a Day-1 want DIFFERENT widths, and this one value serves both.** The rule
+  # (values-50m.yaml) is `observations / 150_000` — but a Day-1's observations are the DELTA's, not the
+  # base's, so a Day-0-sized count is wildly over-provisioned for an incremental and costs real time:
+  #
+  #   MEASURED, 10M store, the same 195,012-observation delta, nothing else changed:
+  #     shuffle.partitions=160 (the Day-0 figure)  ->  583.4s
+  #     shuffle.partitions=16  (delta-sized)       ->  142.8s     = 4.1x faster, bit-identical output
+  #
+  # It is not an Iceberg effect — it is worse on Postgres, whose Day-1 writes are per-partition
+  # executemany, so N partitions means N connections and transactions per table. Matched smoke A/B:
+  # postgres 14.9s -> 160.5s (10.8x worse), iceberg 18.9s -> 91.5s (4.8x worse). At correct sizing
+  # Iceberg's 10M Day-1 (142.8s) BEATS the Postgres runs on the same delta (255.9-287.0s).
+  #
+  # Operationally: raise this for a backfill, lower it before an incremental. There is no per-build
+  # override today (`BuildRequest` has `executor_instances` but no `spark_conf`), so alternating means
+  # a `helm upgrade` between builds — the obvious follow-up is to add that override.
+  sparkConf: {}
+    # spark.sql.shuffle.partitions: "16"  # size to total executor cores (~2-4×). AQE coalesces the
+    #                                     # reduce side, but the initial count still drives per-stage
+    #                                     # map-side task overhead — a blanket 200 hurts at low cores.
+    # spark.default.parallelism: "16"     # non-SQL RDD ops — size to total executor cores.
+  # Driver/executor sizing — the defaults suit the small demo population. For a real run bump these
+  # (see values-scale.yaml) and confirm total (driver + instances × executor) cores/memory fit the
+  # node — on single-node minikube every pod co-locates. On a cluster, scale `instances` out (the
+  # horizontal scale-out story). `instances` is the executor count.
+  driver:
+    cores: 1
+    coreLimit: "1200m"
+    memory: "4g"
+  executor:
+    instances: 2
+    cores: 2               # ≥2 task slots per executor (2 executors × 2 = 4-way parallelism)
+    memory: "4g"           # ~2g/core headroom for the 1M shuffle stages
+  restartPolicy: Never
+
+# Shared volume mounted at the SAME path on the driver + every executor. The demo-mode driver
+# generates messages here, and Spark checkpoints/warehouse live here (executors can't read a
+# driver-local path), plus metrics.json for the api's Evaluation page. RWO works on single-node
+# minikube (all pods co-locate); AKS needs an RWX class (see values-aks.yaml).
+sharedWorkdir:
+  path: /work
+  metricsFile: /work/metrics.json
+  persistence:
+    size: 2Gi
+    storageClass: ""
+    accessMode: ReadWriteOnce
+
+# ── FastAPI serving layer (no JVM). ────────────────────────────────────────────────────────────────
+api:
+  replicaCount: 1
+  service:
+    port: 8000
+  # Sized for the READ BACKEND, which is what decides what this pod does. On `query.backend=postgres`
+  # the api is a thin SQL proxy and 512Mi is ample. On `iceberg` it HOSTS the query engine — PyIceberg
+  # scans + DuckDB + Arrow buffers, all in this process — so its memory must be sized to the STORE.
+  #
+  # MEASURED on minikube (idle ~110Mi; one served request ~215Mi at smoke scale):
+  #   smoke / ~1M store : 1Gi limit + 256MB DuckDB   — comfortable
+  #   ~10M store        : 1Gi is NOT enough. The entity picker aggregates the whole clustering
+  #                       (880,947 profiles), which exceeds a 256MB DuckDB budget; the request then
+  #                       fails with a DuckDB OutOfMemoryError (an HTTP 500 for a query that should
+  #                       merely be slow) and the container peaks at its 1Gi limit. At
+  #                       **4Gi limit + 2GB DuckDB** the same store serves: picker 20s cold / 5ms warm,
+  #                       point reads ~1.1s, explainability 2.7s, network 9.6s.
+  # So: raise BOTH numbers together with store size. The default below is the demo/1M setting.
+  # A 512Mi/256Mi limit was the pre-R69 default and OOM-killed (exit 137) once concurrent picker
+  # requests each ran their own aggregation — see the stampede lock in cpr.query.iceberg.
+  resources:
+    requests: { cpu: "100m", memory: "256Mi" }
+    limits:   { cpu: "500m", memory: "1Gi" }
+  # DuckDB's own budget for the `iceberg` query backend. Well under the container limit above, because
+  # Arrow buffers and the Python baseline sit OUTSIDE DuckDB's accounting. `tempDir` is not optional:
+  # with a memory_limit set, DuckDB spills — and its default target is a RELATIVE `.tmp` dir that a
+  # non-root container cannot create, which turns an oversized query into a 500 rather than a slow one.
+  duckdb:
+    memoryLimit: "256MB"
+    threads: 2
+    tempDir: "/tmp/duckdb"
+  # Dedicated ServiceAccount for the api. When builds.enabled it is bound a least-privilege Role
+  # (create/get/list/watch sparkapplications + get/list pods & pods/log — see api-rbac.yaml); when
+  # off it stays a bare identity with no grants.
+  serviceAccount:
+    create: true
+    annotations: {}
+  # ── R38 on-demand Day-0 backfill (ADR-001: Spark Operator API, not Argo). ────────────────────────
+  # OFF by default ⇒ the api is serving-only and the /builds endpoints are not registered. Turn ON to
+  # let a deployed instance be pointed at an input location and told to build (POST /builds). The
+  # build's CR params (engine image, spark SA, resources, conninfo secret, shared PVC) are injected
+  # into the api pod from the SAME chart values the backfill uses — no second copy of the spec.
+  builds:
+    enabled: false
+    # R35 rebuild trigger: POST /builds {kind:rebuild} recomputes the clustering from the store using
+    # the active config + pinned model (no re-ingest). Requires builds.enabled. Set false to gate it
+    # off (the endpoint then returns 501).
+    rebuild: true
+    # Reject POST /builds while another build is still active (a backfill repopulates the store).
+    # POC-level guard; fuller concurrency vs Day-1 writes is future work. true ⇒ allow overlap.
+    allowConcurrent: false
+    # Optional dataset volume, mounted READ-ONLY on the on-demand build's driver AND every executor (so
+    # Spark's distributed binaryFile ingest works) AND on the api pod (so GET /builds/datasets can list
+    # it). ONE knob drives it — set `hostPath` to the PARENT dir that holds your dataset subdirs and
+    # everything else follows:
+    #   • hostPath   — the dataset root on the node. Put your datasets in subdirs under it, e.g.
+    #                  /data/smoke, /data/1m (minikube: stage them on the node — see deploy/README.md).
+    #                  THE volume the PO-demo builds read from: serving-only (backfill.enabled=false) +
+    #                  builds.enabled + hostPath=/data, then POST /builds {input_location:"/data/1m"}.
+    #   • mountPath  — in-pod mount path. DEFAULTS to hostPath, so input_location == the node path (leave
+    #                  empty unless you deliberately want a different in-pod path, e.g. an existingClaim).
+    #   • datasetRoot — dir whose subdirs the Builds dropdown lists. DEFAULTS to mountPath, so it can't
+    #                  drift from what the build CRs actually mount (the D2b PATH_NOT_FOUND gotcha).
+    #   • existingClaim — a pre-populated PVC instead of a hostPath (set mountPath explicitly with it).
+    # All empty ⇒ input_location must live under the shared workdir volume; the dropdown falls back to
+    # built-in presets (a free-typed path still works).
+    messages:
+      existingClaim: ""
+      hostPath: ""
+      mountPath: ""              # empty ⇒ follows hostPath (mount at the same path as on the node)
+      datasetRoot: ""            # empty ⇒ follows mountPath (list the mounted dataset dir's subdirs)
+
+# ── React UI (nginx static + /api reverse-proxy). ─────────────────────────────────────────────────
+web:
+  replicaCount: 1
+  service:
+    port: 80
+  resources:
+    requests: { cpu: "50m",  memory: "64Mi" }
+    limits:   { cpu: "200m", memory: "256Mi" }
+
+# ── Ingress (single host; the UI at / and the API proxied at /api by nginx inside the web pod). ────
+ingress:
+  enabled: true
+  className: nginx          # minikube ingress addon's class. (AKS overlay sets its own.)
+  host: cpr.local           # add to /etc/hosts → $(minikube ip), or use `minikube tunnel`.
+  annotations: {}
+  # TLS (HTTPS). OFF for the local minikube demo (HTTP is fine). Turn on for AKS:
+  #   • cert-manager: set issuer to a ClusterIssuer name → the chart adds the cluster-issuer annotation
+  #     and a tls: block; cert-manager issues the cert into secretName.
+  #   • AKS app-routing / pre-provisioned cert: leave issuer empty, set secretName to the managed TLS
+  #     secret, and add any app-routing annotations via `annotations` above.
+  tls:
+    enabled: false
+    secretName: ""          # "" ⇒ "<release>-cpr-tls". cert-manager writes here / app-routing manages it.
+    issuer: ""              # cert-manager ClusterIssuer name. "" ⇒ no cluster-issuer annotation.
+
+# ── Kubeflow Spark Operator (subchart) — installs the SparkApplication CRDs + controller so the
+# backfill runs distributed. Toggle the whole dependency with sparkOperator.install. Everything under
+# `spark-operator:` is passed through to the upstream chart (2.5.1).
+# ── CloudNativePG operator (subchart) — installs the postgresql.cnpg.io CRDs + controller that
+# reconciles the Postgres Cluster above. Toggle the whole dependency with postgresOperator.install
+# (mirrors sparkOperator.install). The CNPG operator is CLUSTER-SCOPED (one per cluster) — set this
+# false when CNPG is already installed cluster-wide (e.g. shared with the NetReveal ER product), so we
+# don't fight over its cluster-wide CRDs/controller. Everything under `cloudnative-pg:` passes through
+# to the upstream chart (0.26.1).
+postgresOperator:
+  install: true              # false = don't install the operator (e.g. it's already cluster-wide).
+
+cloudnative-pg:
+  # The operator watches all namespaces by default (cluster-wide) — leave as-is unless you scope it.
+  crds:
+    # FALSE on purpose: the CNPG CRDs are vendored into this chart's own crds/ directory
+    # (crds/cnpg-crds.yaml), which Helm installs AND waits to establish BEFORE any template — so the
+    # parent's `Cluster` CR resolves on a single `helm install` into a FRESH cluster. Left as a subchart
+    # template, the CRDs applied in the same pass as the Cluster and the API server hadn't registered
+    # the kind yet → "no matches for kind Cluster" on a clean install. Re-extract crds/cnpg-crds.yaml
+    # from the subchart if you bump the cloudnative-pg version (see deploy/README.md).
+    create: false
+
+sparkOperator:
+  install: true              # false = don't install the operator (e.g. it's already cluster-wide).
+
+# Pre-delete hook that clears the release's SparkApplications (finalizers + delete) before the operator
+# is removed, so `helm uninstall` doesn't hang on a stuck-Terminating CR. Reuses the cpr-api image (no
+# extra pull) + a least-privilege SA. Bounded (activeDeadlineSeconds) so it can never hang uninstall.
+uninstallHook:
+  enabled: true
+
+spark-operator:
+  spark:
+    # Namespaces the operator watches for SparkApplications — MUST include the release namespace.
+    # (Installing into a non-default namespace? set this to that namespace.)
+    jobNamespaces:
+      - default
+    serviceAccount:
+      create: true
+      name: cpr-spark        # SA the driver runs as; the operator grants it executor-management RBAC.
+  webhook:
+    # REQUIRED — must be ON. spark-operator 2.x applies a SparkApplication's `spec.driver.env` /
+    # `spec.executor.env` (and volumes) to the driver/executor pods via this MUTATING WEBHOOK. With it
+    # OFF, the pods come up with NONE of that env — so the driver dies immediately with
+    # "CPR_PG_CONNINFO is required but not set" and no build can reach Postgres. (An earlier comment
+    # here claimed the webhook double-injects volumes → "Duplicate value: shared"; that does NOT
+    # reproduce with the current CR shape — verified live on minikube: driver + 2 executors register
+    # cleanly and a smoke/1M build completes end-to-end. Env injection is not optional, so the webhook
+    # stays on.) Note: the operator's webhook cert warms up a few seconds after install; the backfill
+    # SparkApplication hook waits behind `--wait`, and on-demand builds are triggered later, so the
+    # warmup race is not an issue in practice.
+    enable: true
+  controller:
+    replicas: 1

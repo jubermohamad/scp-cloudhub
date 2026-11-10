@@ -1,0 +1,51 @@
+image:
+  repository: ghcr.io/cloudnative-pg/postgresql
+  tag: "16.10"
+
+instances: 3  # Default, override with global.database.internal.replicas
+primaryUpdateStrategy: unsupervised
+
+postgresql:
+  parameters:
+    shared_buffers: "512MB"
+    max_connections: "300"
+    lc_messages: "en_US.utf8"
+    lc_monetary: "en_US.utf8"
+    lc_numeric: "en_US.utf8"
+    lc_time: "en_US.utf8"
+
+storage:
+  size: "10Gi"
+
+resources:
+  requests:
+    memory: "1Gi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
+
+monitoring:
+  enablePodMonitor: true
+  customQueriesConfigMap: []
+  customQueriesSecret: []
+
+backup:
+  enabled: false  # Default, override with global.database.internal.backup.enabled
+  retentionPolicy: "30d"  # Default, override with global.database.internal.backup.retentionPolicy
+  barmanObjectStore:
+    wal:
+      compression: bzip2
+    data:
+      compression: bzip2
+
+backups:
+  schedule: "0 0 0 * * 0"
+
+externalAccess:
+  enabled: false
+  readOnly: false
+
+commonAnnotations:
+  prometheus.io/port: "9187"
+  prometheus.io/scrape: "true"

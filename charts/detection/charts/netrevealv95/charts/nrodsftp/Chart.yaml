@@ -1,0 +1,22 @@
+apiVersion: v2
+name: nrodsftp
+description: A Helm chart for installing nrodsftp
+icon: https://helm.symphonysensa.com/symphonyai_sensa_netreveal_logo.jpg
+type: application
+# netreveal chart version: 1.0.20
+version: 1.0.11
+appVersion: "9.4.0.0"
+
+dependencies:
+  - name: minio
+    version: 5.1.0
+    repository: https://charts.min.io/
+
+  - name: nrodsftp
+    version: 0.0.6
+    repository: https://helm.symphonysensa.com
+
+  # Redis
+  - name: redis
+    version: 20.13.4
+    repository: https://charts.bitnami.com/bitnami

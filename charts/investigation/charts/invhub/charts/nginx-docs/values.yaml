@@ -1,0 +1,72 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+replicaCount: 1
+
+image:
+  # When empty, omit imagePullPolicy and use the Kubernetes default.
+  pullPolicy: ""
+  tag: "master"
+
+imagePullSecrets:
+  - name: "regcred"
+
+nameOverride: ""
+fullnameOverride: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  # Note: this image currently listens on privileged port 80 (Trivy AVD-KSV-0117). We'll fix it in the image.
+  port: 80
+
+livenessProbe: {}
+
+readinessProbe:
+  initialDelaySeconds: 10
+  periodSeconds: 20
+  timeoutSeconds: 10
+  successThreshold: 1
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 20m
+    memory: 64Mi
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+calicoNetworkPolicy:
+  enabled: false
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source: {}
+      destination:
+        ports:
+          - 80
+  egress:
+    - action: Allow

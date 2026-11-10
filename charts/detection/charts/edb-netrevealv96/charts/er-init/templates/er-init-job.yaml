@@ -1,0 +1,79 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-er-init
+  namespace: {{ include "er.namespace" . }}
+  labels:
+    app: er-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "helm.sh/hook-weight": "-5"
+spec:
+  ttlSecondsAfterFinished: {{ .Values.ttlSecondsAfterFinished }}
+  template:
+    spec:
+      securityContext:
+        runAsUser: 1200
+        runAsGroup: 1200
+        fsGroup: 1200
+        fsGroupChangePolicy: "OnRootMismatch"
+      {{- if eq .Values.global.useImagePullSecrets "true" }}
+      imagePullSecrets:
+      - name: regcred
+      {{- end }}
+      initContainers:
+        - name: add-compliance-config
+          image: {{ .Values.global.dockerRegistryName }}/{{ .Values.compliance_config.image.imageRepository }}:{{ .Values.compliance_config.image.imageTag }}
+          imagePullPolicy: {{ .Values.compliance_config.image.imagePullPolicy }}
+          volumeMounts:
+            - name: er-config-volume
+              mountPath: /mnt/er-data
+      containers:
+        - name: er-init
+          image: {{ .Values.global.dockerRegistryName }}/{{ .Values.entity_resolution.image.imageRepository }}:{{ .Values.entity_resolution.image.imageTag }}
+          imagePullPolicy: {{ .Values.entity_resolution.image.imagePullPolicy }}
+          volumeMounts:
+            - name: er-config-volume
+              mountPath: /mnt/er-data
+          env:
+            - name: DB_USER_ENTRES
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credential-entres-user-cnpg
+                  key: username
+            - name: DB_PASSWORD_ENTRES
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credential-entres-user-cnpg
+                  key: password
+            - name: DB_USER_EXPORT
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credential-apps-user-cnpg
+                  key: username
+            - name: DB_PASSWORD_EXPORT
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credential-apps-user-cnpg
+                  key: password
+            - name: DB_USER_IMPORT
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credential-apps-user-cnpg
+                  key: username
+            - name: DB_PASSWORD_IMPORT
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credential-apps-user-cnpg
+                  key: password
+            - name: DB_URL
+              value: {{ printf "postgresql://%s/%s" (include "db.url" .) .Values.global.baseConfigProperties.db.postgresql.database | quote }}
+            - name: DB_CLOUD_NATIVE_PG
+              value: "true"
+      volumes:
+        - name: er-config-volume
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "er-pvc-config") | quote }}
+      restartPolicy: {{ .Values.restartPolicy }}
+  backoffLimit: {{ .Values.backoffLimit }}

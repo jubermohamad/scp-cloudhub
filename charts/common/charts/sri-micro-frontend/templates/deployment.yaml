@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sri-micro-frontend.fullname" . }}
+  labels:
+    {{- include "sri-micro-frontend.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "sri-micro-frontend.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "sri-micro-frontend.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "sri-micro-frontend.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: common-ui-svc
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.service.port | quote }}
+            - name: HOSTNAME
+              value: "0.0.0.0"
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- if .Values.auth.enabled }}
+            {{- /* All-or-nothing per src/lib/auth/config.ts — fail the render
+                   rather than deploy a half-configured auth mode. */}}
+            - name: KEYCLOAK_URL
+              value: {{ required "auth.keycloakUrl is required when auth.enabled" .Values.auth.keycloakUrl | quote }}
+            - name: KEYCLOAK_REALM
+              value: {{ required "auth.keycloakRealm is required when auth.enabled" .Values.auth.keycloakRealm | quote }}
+            - name: KEYCLOAK_CLIENT_ID
+              value: {{ required "auth.keycloakClientId is required when auth.enabled" .Values.auth.keycloakClientId | quote }}
+            - name: APP_URL
+              value: {{ required "auth.appUrl is required when auth.enabled" .Values.auth.appUrl | quote }}
+            {{- if and (not .Values.auth.existingSecret) (not .Values.auth.sessionSecret) }}
+            {{- fail "auth.enabled requires auth.existingSecret or auth.sessionSecret (the sai_auth signing key must come from somewhere)" }}
+            {{- end }}
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.auth.existingSecret | default (printf "%s-auth" (include "sri-micro-frontend.fullname" .)) }}
+                  key: session-secret
+            {{- end }}
+          {{- with .Values.envFromSecrets }}
+          # Whole-secret env injection for values that must never ride in
+          # git (e.g. PORTAL_DATABASE_URL for the Applications catalog) —
+          # the secrets are created in-namespace out-of-band.
+          envFrom:
+            {{- range . }}
+            - secretRef:
+                name: {{ . }}
+            {{- end }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

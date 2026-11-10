@@ -1,0 +1,23 @@
+minio:
+  # Namespace names (kubernetes.io/metadata.name) allowed to reach MinIO on API/console/SSH
+  # ports via east-west Service DNS. Configure per deployment environment (e.g. consumer workloads
+  # in other namespaces). Empty list keeps behavior unchanged aside from ingress + MinIO peers.
+  trustedClientNamespaces: []
+
+databaseAccess: []
+#   - podSelector:
+#       matchLabels:
+#         "app.kubernetes.io/name": "api"
+#     namespaceSelector:
+#       matchLabels:
+#         "kubernetes.io/metadata.name": "ih-cms-test"
+#   - podSelector:
+#       matchLabels:
+#         "app.kubernetes.io/name": "kafka-connect"
+#     namespaceSelector:
+#       matchLabels:
+#         "kubernetes.io/metadata.name": "ih-cms-test"
+skupper:
+  enabled: false
+  namespace: "" # Leave empty ("") when Skupper is deployed directly into the NR application namespace.
+  remoteCIDR: "" # Remote region VNet CIDR for cross-region Skupper traffic (e.g. "10.1.0.0/16")

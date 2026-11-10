@@ -1,0 +1,118 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+---
+engineName: "terrarium"
+
+replicaCount: 2
+
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/terrarium
+  # When empty, omit imagePullPolicy and use the Kubernetes default.
+  pullPolicy: ""
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets:
+  - name: "regcred"
+
+env:
+  - name: terrarium_svc
+    value: terrarium
+
+volumeMounts:
+  - name: pyodide-cache
+    mountPath: /usr/src/app/pyodide_cache
+
+volumes:
+  - name: pyodide-cache
+    emptyDir:
+      sizeLimit: 256Mi
+
+secrets:
+  []
+  # - name: MY_SECRET
+  #   secretName: my-secret
+  #   key: my-secret-key
+
+nameOverride: ""
+fullnameOverride: "terrarium"
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 228Mi
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+calicoNetworkPolicy:
+  enabled: false
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source: {}
+      destination:
+        ports:
+          - 8001
+  egress:
+    - action: Allow
+
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  portName: engine-port
+
+livenessProbe: {}
+#   httpGet:
+#     path: /api/v1/health
+#     port: 8001
+#   initialDelaySeconds: 10
+#   periodSeconds: 10
+#   failureThreshold: 5
+
+readinessProbe: {}
+#   httpGet:
+#     path: /api/v1/readiness
+#     port: 8001
+#   initialDelaySeconds: 10
+#   periodSeconds: 10
+#   failureThreshold: 5

@@ -1,0 +1,23 @@
+mirror:
+  image:
+    repository: rclone/rclone
+    tag: sha-f554fb1
+
+backupConfig:
+  enabled: false
+  schedule: "0 0 * * *"
+  mirror:
+    mirrorObjectStore:
+      destinationPath: container-name/minio
+      bucketsToMirror:
+        - event-ingestion
+        - subject-attachment
+        - subject-attachment-staging
+        - subject-events
+      azureCredentials:
+        storageAccount:
+          name: backup-creds
+          key: storageAccountName
+        storageKey:
+          name: backup-creds
+          key: storageAccountKey

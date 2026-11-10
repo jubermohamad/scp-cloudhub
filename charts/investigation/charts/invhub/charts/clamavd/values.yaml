@@ -1,0 +1,115 @@
+replicaCount: 1
+
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/invhub-clamav
+  # When empty, omit imagePullPolicy and use the Kubernetes default.
+  pullPolicy: ""
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "master"
+
+imagePullSecrets:
+  - name: "regcred"
+nameOverride: ""
+fullnameOverride: "clamavd"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 100
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 100
+  runAsGroup: 101
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 3310
+  targetPort: 3310
+  portName: http
+
+resources:
+  limits:
+    cpu: 1
+    memory: 6Gi
+  requests:
+    cpu: 100m
+    memory: 4Gi
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+livenessProbe: {}
+
+readinessProbe:
+  tcpSocket:
+    port: clamavd
+  initialDelaySeconds: 180
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - clamavd
+          topologyKey: "topology.kubernetes.io/zone"
+
+calicoNetworkPolicy:
+  enabled: false
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source: {}
+      destination:
+        ports:
+          - 3310
+  egress:
+    - action: Allow
+
+global:
+  imagePullPolicy: Always   # platform default; the umbrella global overrides it
+  CLAMAV_STREAM_MAX_LENGTH: 35M
+  CLAMAV_MAX_SCAN_SIZE: 35M
+  CLAMAV_MAX_FILE_SIZE: 35M

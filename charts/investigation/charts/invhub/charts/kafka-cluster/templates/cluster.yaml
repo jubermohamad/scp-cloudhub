@@ -1,0 +1,59 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: {{ required "Cluster name should be provided with .Values.name" .Values.name }}
+  annotations:
+    # KRaft mode: Strimzi >= 0.46 dropped ZooKeeper support entirely
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  {{- if .Values.operationTimeoutMs }}
+  operationTimeoutMs: {{ .Values.operationTimeoutMs }}
+  {{- end }}
+  kafka:
+    {{- if .Values.image }}
+    image: {{ .Values.image }}
+    {{- end}}
+    version: {{ .Values.kafka.version }}
+    {{- if .Values.kafka.resources }}
+    resources: {{- toYaml .Values.kafka.resources | nindent 6 }}
+    {{- end }}
+    listeners:
+      {{- range .Values.kafka.listeners }}
+      - name: {{ .name }}
+        port: {{ .port }}
+        type: {{ .type }}
+        tls: {{ .tls }}
+        {{- if .networkPolicyPeers }}
+        networkPolicyPeers:
+          {{ .networkPolicyPeers | toYaml | nindent 10 }}
+        {{- end }}
+      {{- end }}
+    config:
+      {{- toYaml .Values.kafka.config | nindent 6 }}
+    {{- if .Values.metrics.enabled }}
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: kafka-metrics-config.yml
+    {{- end }}
+    template:
+      {{- toYaml .Values.kafka.template | nindent 6 }}
+
+  entityOperator:
+    template:
+      {{- toYaml .Values.entityOperator.template | nindent 6 }}
+
+  {{- if .Values.metrics.enabled }}
+  kafkaExporter:
+    {{- if .Values.image }}
+    image: {{ .Values.image }}
+    {{- end}}
+    groupRegex: {{ .Values.kafkaExporter.groupRegex }}
+    logging: {{ .Values.kafkaExporter.logging }}
+    template:
+      {{- toYaml .Values.kafkaExporter.template | nindent 6 }}
+  {{- end }}
+

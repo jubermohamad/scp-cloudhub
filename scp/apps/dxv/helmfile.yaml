@@ -1,0 +1,105 @@
+repositories:
+  - name: minio-operator
+    url: https://operator.min.io/
+  - name: k8s-as-helm
+    url: https://ameijer.github.io/k8s-as-helm/
+  - name: symphonyfs
+    url: https://helm.symphonyfs.net
+
+helmDefaults:
+  timeout: 3000          # DXV is heavy (MinIO distributed x3, nrodsftp, redis); deploy.sh uses 50m
+  wait: false
+  kubeContext: aks-UPDATE_ME_NC_SUFFIX
+
+---
+
+environments:
+  default:
+    values:
+      - owners: "UPDATE_ME_OWNERS"
+      - client_facing: "UPDATE_ME_CLIENT_FACING"
+      - applicationPrefix: "dxv"
+      - clientSubDomain: "UPDATE_ME_CLIENT_SUBDOMAIN"
+      - envType: "UPDATE_ME_ENV_TYPE"
+      - overlayRepoName: "nrod-overlay-{{ .Values.clientSubDomain }}"
+      - namespace: '{{ requiredEnv "INSTANCE_NAME" }}'
+      - appName: '{{ requiredEnv "APP_NAME" }}'
+      # chart coordinates resolved from 1Password pipeline_refs (same idiom as flows/sais)
+      - helm_chart_repo_forwardslash_name: 'symphonyfs/{{ requiredEnv "APP_NAME" }}' # is this used??
+      - helm_chart_version: '{{ env "CLOUDHUB_UPDATE_ME_NAMESPACE__HELM_CHART_VERSION" }}'
+      - helm_chart_values_file_ref: '{{ env "CLOUDHUB_UPDATE_ME_NAMESPACE__HELM_CHART_VALUES_FILE_REF" }}'
+      - project_overlay_files_ref: '{{ env "CLOUDHUB_UPDATE_ME_NAMESPACE__PROJECT_OVERLAY_FILES_REF" }}'
+
+---
+
+releases:
+
+  - name: "{{ .Values.namespace }}-secret-https-certs"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "https-certs"
+      - type: "kubernetes.io/tls"
+      - ../../templated-overrides/secrets/certs.gotmpl
+
+  - name: "{{ .Values.namespace }}-secret-nrodsftp-ssh-key"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "nrodsftp-ssh-key"
+      - type: "Opaque"
+      - secretDataEncoded:
+          'id_rsa': '{{ env "CLOUDHUB_NRODSFTP_SSH_KEY__BASE64__ID_RSA" }}'
+          'id_rsa.pub': '{{ env "CLOUDHUB_NRODSFTP_SSH_KEY__BASE64__ID_RSA_PUB" }}'
+
+  - name: "{{ .Values.namespace }}-secret-nrodsftp-pgp-key"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "nrodsftp-pgp-key"
+      - type: "Opaque"
+      - secretDataEncoded:
+          'passphrase': '{{ env "CLOUDHUB_NRODSFTP_ARCHIVING_PGP_KEY__BASE64__PASSPHRASE" }}'
+          'private-key': '{{ env "CLOUDHUB_NRODSFTP_ARCHIVING_PGP_KEY__BASE64__PRIVATE_KEY" }}'
+          'public-key': '{{ env "CLOUDHUB_NRODSFTP_ARCHIVING_PGP_KEY__BASE64__PUBLIC_KEY" }}'
+
+  - name: "{{ .Values.namespace }}-secret-nrodsftp-archiving-pgp-key"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "nrodsftp-archiving-pgp-key"
+      - type: "Opaque"
+      - secretDataEncoded:
+          'passphrase': '{{ env "CLOUDHUB_NRODSFTP_PGP_KEY__BASE64__PASSPHRASE" }}'
+          'private-key': '{{ env "CLOUDHUB_NRODSFTP_PGP_KEY__BASE64__PRIVATE_KEY" }}'
+          'public-key': '{{ env "CLOUDHUB_NRODSFTP_PGP_KEY__BASE64__PUBLIC_KEY" }}'
+
+  - name: "{{ .Values.namespace }}-secret-regcred"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "regcred"
+      - type: "kubernetes.io/dockerconfigjson"
+      - secretData:
+          '.dockerconfigjson': '{{ env "CLOUDHUB_DOCKERHUB_AND_ACR__DOCKERCONFIGJSON" }}'
+
+  - name: "{{ .Values.namespace }}"
+    namespace: "{{ .Values.namespace }}"
+    chart: "{{ .Values.helm_chart_repo_forwardslash_name }}"
+    version: "{{ .Values.helm_chart_version }}"
+    values:
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/sri-dxv-helm.git@/chart/params-nr-nrod.yaml?ref={{ .Values.helm_chart_values_file_ref }}
+      - ../../templated-overrides/{{ .Values.appName }}/common.gotmpl
+      # project overlay
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/common/project.overrides.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/project.overrides.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+    needs:
+      - "{{ .Values.namespace }}-secret-https-certs"
+      - "{{ .Values.namespace }}-secret-nrodsftp-pgp-key"
+      - "{{ .Values.namespace }}-secret-nrodsftp-archiving-pgp-key"
+      - "{{ .Values.namespace }}-secret-regcred"

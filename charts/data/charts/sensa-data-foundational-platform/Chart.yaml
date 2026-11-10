@@ -1,0 +1,36 @@
+# VENDORED into the SRI umbrella from SymphonySensa/sensa-data-foundational-platform
+# at e96c499 (merged to main), plus the bolt-startup-race fix from
+# fix/neo4j-bolt-startup-race @ 3c08031 (PR #4, open) — every neo4j probe gates
+# on bolt and both consumers wait for it, which stops prism-api crash-looping on
+# a cold graph — and feat/prism-seed-job @ e297b4d (PR #5, open), the seed Job and its
+# PYTHONPATH=/app fix, and feat/ensure-db-per-server @ 7b407a2 (PR pending) so
+# the warehouse databases can be created without a second creator for the ledger,
+# because every other Job here rebuilds a projection and none of them puts a
+# record in. Re-vendor whole rather than patching: the two copies diverged once
+# and the drift cost an outage.
+apiVersion: v2
+name: sensa-data-foundational-platform
+description: >-
+  Prism — the FS Foundation data platform: an append-only ledger (Postgres),
+  its graph projection (Neo4j), the API that owns both, a console, an AI
+  assistant, and the warehouse databases the derived stores are built from.
+type: application
+
+# Chart version — bump on every chart change (the SRI platform pins this).
+version: 0.1.9
+
+# The image generation this chart is keyed to. Components ship on independent
+# tags (api/jobs v22, console v9, chat-backend v12 as of 2026-08-24); the API
+# image is the one that carries the ledger schema, the reprojection code and the
+# warehouse dumps, so its tag is what "which world does this deploy" means.
+appVersion: "v22"
+
+keywords:
+  - prism
+  - fs-foundation
+  - neo4j
+  - ledger
+home: https://github.com/SymphonySensa/sensa-data-foundational-platform
+maintainers:
+  - name: SensaData
+kubeVersion: ">=1.27.0"

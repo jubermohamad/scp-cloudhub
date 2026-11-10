@@ -1,0 +1,16 @@
+# Example configuration for Oracle database
+global:
+  remoteDataDbType: "oracle"
+  remoteDataDbHost: "your-oracle-host"
+  remoteDataDbName: "XE"
+  remoteDataDbPort: "1521"
+  remoteDataDbUsername: "APPS_EIM"
+  remoteDataDbPassword: "your-password"
+
+connectors:
+  subjectUpdatesJdbcConnector:
+    enabled: true
+    state: stopped
+  customersScreeningWmlJdbcConnector:
+    enabled: true
+    state: stopped

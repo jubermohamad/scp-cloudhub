@@ -1,0 +1,49 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-postgresql-dbstats-configmap
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: {{ .Release.Name }}-postgresql-dbstats-configmap
+data:
+  postgres_db_stats.sh: |
+    #!/bin/bash
+    set -e
+    set -u
+
+    export PGPASSWORD=$(cat /home/netreveal/password)
+    {{- if and .Values.global.baseConfigProperties.db.postgresql.sslmode (ne .Values.global.baseConfigProperties.db.postgresql.sslmode "disable") }}
+    export PGSSLMODE={{ .Values.global.baseConfigProperties.db.postgresql.sslmode }}
+    export PGSSLROOTCERT={{ .Values.global.baseConfigProperties.db.postgresql.sslrootcert }}
+    {{- end }}
+
+    psql \
+    -X \
+    -U apps \
+    -h {{ template "db.host" . }} \
+    -f /opt/sql/db_stats.sql \
+    --echo-all \
+    --set ON_ERROR_STOP=on \
+    {{ .Values.global.baseConfigProperties.db.postgresql.database }}
+
+    psql_exit_status=$?
+
+    echo $psql_exit_status
+
+    if [ $psql_exit_status != 0 ]; then
+        echo "psql failed while trying to run this sql script" 1>&2
+        exit $psql_exit_status
+    fi
+
+    echo "sql script successful"
+    exit 0
+  db_stats.sql: |
+    do $$
+    <<run_database_stats>>
+    begin
+        RAISE NOTICE 'Start Analysing Database!';
+        -- With no parameter, ANALYZE examines every table in the current database. With a parameter, ANALYZE examines only that table. It is further possible to give a list of column names, in which case only the statistics for those columns are collected.
+        ANALYZE VERBOSE;
+        RAISE NOTICE 'End Analysing Database';
+    end run_database_stats $$;

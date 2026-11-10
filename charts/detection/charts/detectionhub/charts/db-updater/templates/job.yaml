@@ -1,0 +1,83 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "db-updater.fullname" . }}
+  labels:
+    {{- include "db-updater.labels" . | nindent 4 }}
+    {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 4 }}
+spec:
+  backoffLimit: 6  # Number of retries before considering the job failed
+  ttlSecondsAfterFinished: {{ .Values.global.defaultJobTTL }}
+  template:
+    metadata:
+      labels:
+        {{- include "db-updater.selectorLabels" . | nindent 8 }}
+        {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "detectionhub.imagePullSecrets" . | indent 6 }}
+      restartPolicy: OnFailure
+      initContainers:
+      {{- $db := include "detectionhub.database" . | fromYaml }}
+        - name: wait-for-db
+          image: busybox
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - sh
+            - -c
+            - until nc -z {{ $db.host }} {{ $db.port }}; do echo waiting for database; sleep 2; done;
+      {{- if .Values.initContainers }}
+      {{-  tpl (toYaml .Values.initContainers) . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: db-updater
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            {{- $db := include "detectionhub.database" . | fromYaml }}
+            - name: DATABASE_URL
+              value: {{ include "db-updater.dbUrl" . | quote }}
+            - name: DATABASE_USER
+              value: {{ $db.user | quote }}
+            - name: MINIO_SERVICE
+              value: {{ tpl .Values.minioServiceName . }}
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $db.existingSecret }}
+                  key: {{ $db.secretKey | default "password" }}
+            - name: DATABASE_CHANGELOG
+              value: {{ .Values.changelog.path | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if $db.ssl }}
+          volumeMounts:
+            - name: certs
+              mountPath: "/certificates"
+            - name: cacerts
+              mountPath: "/cacertificates"
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if $db.ssl }}
+      volumes:
+        - name: certs
+          secret:
+            secretName: {{ $db.sslSecret }}
+        - name: cacerts
+          secret:
+            secretName: {{ $db.sslCASecret }}
+      {{- end }}

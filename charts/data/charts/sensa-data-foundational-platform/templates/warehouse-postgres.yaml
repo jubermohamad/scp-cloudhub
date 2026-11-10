@@ -1,0 +1,93 @@
+{{- if .Values.infra.warehousePostgres.enabled }}
+# The warehouses' postgres — data plane, reached only by external agents and by
+# the restore/rebuild jobs. Disposable: everything in it is rebuildable from the
+# dumps baked into the API image.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "prism.fullname" . }}-warehouse-postgres
+  labels:
+    app: prism-warehouse-postgres
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: prism-warehouse-postgres
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "prism.fullname" . }}-warehouse-postgres
+  labels:
+    app: prism-warehouse-postgres
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "prism.fullname" . }}-warehouse-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prism-warehouse-postgres
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: prism-warehouse-postgres
+        {{- include "prism.labels" . | nindent 8 }}
+    spec:
+      {{- include "prism.scheduling" . | nindent 6 }}
+      containers:
+        - name: postgres
+          image: "{{ .Values.infra.warehousePostgres.image.repository }}:{{ .Values.infra.warehousePostgres.image.tag }}"
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.infra.warehousePostgres.image.pullPolicy) }}
+          ports:
+            - name: pg
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.infra.warehousePostgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.warehousePgExisting | default .Values.secrets.warehousePg }}
+                  key: password
+            # No POSTGRES_DB on purpose: foundation_warehouse and kyc_warehouse
+            # are CREATEd by the restore/rebuild jobs, which must be able to
+            # DROP them — a database the entrypoint created would be the one
+            # the connection is using.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            {{- toYaml .Values.infra.warehousePostgres.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.infra.warehousePostgres.user | quote }}
+            periodSeconds: 10
+          # INVENTED (the raw manifest has readiness only) — same reasoning as
+          # the ledger: tcpSocket, so a WAL replay is not restarted mid-flight.
+          livenessProbe:
+            tcpSocket:
+              port: pg
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 6
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        storageClassName: {{ .Values.infra.warehousePostgres.persistence.storageClass }}
+        accessModes: {{ toYaml .Values.infra.warehousePostgres.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.infra.warehousePostgres.persistence.size }}
+{{- end }}

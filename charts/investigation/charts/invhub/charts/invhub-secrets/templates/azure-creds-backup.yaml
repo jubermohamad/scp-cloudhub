@@ -1,0 +1,10 @@
+{{- if .Values.global.BACKUPS_STORAGE_ACCOUNT }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "azure-creds-backup"
+type: Opaque
+stringData:
+  storage-account: "{{ .Values.global.BACKUPS_STORAGE_ACCOUNT }}"
+  access-key: "{{ .Values.global.BACKUPS_ACCESS_KEY }}"
+{{- end }}

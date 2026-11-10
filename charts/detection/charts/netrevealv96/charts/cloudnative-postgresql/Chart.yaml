@@ -1,0 +1,7 @@
+apiVersion: v2
+name: cloudnative-postgresql
+description: A Helm chart for cloudnative postgres
+type: application
+# netreveal chart version: 1.0.16
+version: 1.0.10
+appVersion: "16.3"

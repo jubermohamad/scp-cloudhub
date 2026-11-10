@@ -1,0 +1,241 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-engine-worker
+  labels:
+    app: assembly-engine-worker
+    tier: backend
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  {{- $tunerMode := .Values.agentsWorker.temporal.tunerMode | default (ternary "legacy" "resource-based" (.Values.agentsWorker.temporal.disableResourceTuner | default false)) }}
+  replicas: {{ .Values.agentsWorker.replicas }}
+  revisionHistoryLimit: 3
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-engine-worker
+  template:
+    metadata:
+      annotations:
+        # SDK worker metrics (schedule-to-start latency, slot usage, sticky
+        # cache hits) — tier-2 §2.4 observability bring-up. Inert without a
+        # cluster Prometheus; any annotation-based scraper picks them up.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
+        # Forces a rollout whenever platform-secrets changes -- secretKeyRef env
+        # vars are read once at container start, so without this a secret rotation
+        # never reaches already-running pods (#1325). Secrets are deterministic now
+        # (no randAlphaNum/lookup), so we hash the rendered Secret directly: it
+        # changes iff the actual content changes (incl. database-url, derived from
+        # the pg password) -- no spurious rollout on values-structure changes, and
+        # no need to fold in infra.postgres/externalInfra.
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+      labels:
+        app: assembly-engine-worker
+        tier: backend
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      # Must exceed the worker's graceful_shutdown_timeout (90s) so a drain
+      # lets in-flight activities finish instead of SIGKILLing them; with the
+      # old implicit 30s every rollout killed running >30s activities.
+      terminationGracePeriodSeconds: {{ .Values.agentsWorker.terminationGracePeriodSeconds | default 120 }}
+      # This workload does not call the Kubernetes API.
+      automountServiceAccountToken: false
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.scheduling" . | nindent 6 }}
+      {{- include "aw.waitForAgentBuilderTemporalInitContainer" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      topologySpreadConstraints:
+        # DoNotSchedule (hard) fixes real co-location contention (live-confirmed on
+        # assembly-perf-medium 2026-07-03: 3 of 4 engine-worker pods stacked on one node under a
+        # soft ScheduleAnyway constraint, each doing ~45-55% less CPU-bound work than the 1
+        # isolated pod). But DoNotSchedule has its own edge case on shapes with FEW topology
+        # domains: with only 2 app nodes (medium tier), a single-node loss still counts the dead
+        # node as an empty domain under maxSkew=1, so the scheduler refuses to place a 3rd/4th
+        # replacement pod on the surviving node AT ALL, regardless of its CPU headroom --
+        # live-confirmed: capping single-node-loss capacity at 50% (2/4 pods Pending) even after
+        # trying multiple CPU request values, because pods never get far enough to hit a CPU
+        # limit; they're blocked from scheduling outright. Full tier's 5 nodes have enough spare
+        # domains that this edge case doesn't bite. So this is tier-configurable: hard DoNotSchedule
+        # where there's enough node headroom to keep the resilience benefit (full/efficient
+        # default), soft ScheduleAnyway on thin-node shapes like medium where a hard constraint
+        # would trade rare-node-loss resilience for steady-state throughput -- see #1455/#1456.
+        #
+        # #2123 follow-up: nodeTaintsPolicy: Honor is the direct fix for the
+        # node-loss edge case described above. An unreachable node is tainted
+        # NoSchedule, and while it still counts as a domain it sits at zero
+        # pods — making it the ONLY domain the constraint accepts and the one
+        # place nothing can schedule, so replacements pend with headroom to
+        # spare. Honor drops it from the domain set instead.
+        #
+        # Reproduced and fixed on dev with a 3-node probe: without Honor a
+        # replacement stayed Pending ("1 node(s) had untolerated taint(s),
+        # 2 node(s) didn't match pod topology spread constraints"); with Honor
+        # the same rollout completed 3/3 across the surviving nodes.
+        #
+        # This is the mechanism the thin-tier soft override was working around,
+        # so tiers currently pinned to ScheduleAnyway may be able to return to
+        # hard. Not changed here — that needs re-testing on medium first.
+        #
+        # matchLabelKeys keeps the outgoing revision's placement from steering
+        # the incoming one during a rollout (upstream guidance). It is NOT a
+        # deadlock fix: a bare DoNotSchedule was measured rolling out cleanly
+        # from a fully bunched state.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: {{ .Values.agentsWorker.topologySpreadWhenUnsatisfiable | default "DoNotSchedule" }}
+          matchLabelKeys:
+            - pod-template-hash
+          nodeTaintsPolicy: Honor
+          labelSelector:
+            matchLabels:
+              app: assembly-engine-worker
+      containers:
+        - name: agents
+          image: {{ include "aw.image" (dict "registry" .Values.image.registry "repo" .Values.agentsWorker.image.repository "default" "assembly-workflows-engine" "tag" .Values.agentsWorker.image.tag "globalTag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 8000
+            - containerPort: 9100
+              name: metrics
+          env:
+            - name: AGENTS_ROLE
+              value: "worker"
+            - name: ASSEMBLY_ENGINE_ROLE
+              value: "worker"
+            - name: ENABLE_PHOENIX_TRACING
+              value: "false"
+            - name: ENABLE_PHOENIX_WORKFLOW_TRACING
+              value: "false"
+            - name: TEMPORAL_WORKER_TYPE
+              value: "agent-builder-only"
+            - name: TEMPORAL_AGENT_BUILDER_WORKER_QUEUES
+              value: {{ .Values.agentsWorker.temporal.workerQueues | default "main,subflow,aux" | quote }}
+            - name: TEMPORAL_AGENT_BUILDER_CODE_TASK_QUEUES
+              value: "agent-builder-code-tasks,agent-builder-code-tasks-0,agent-builder-code-tasks-1"
+            - name: TEMPORAL_AGENT_BUILDER_PARALLEL_CODE_TASK_QUEUES
+              value: "agent-builder-parallel-code-tasks,agent-builder-parallel-code-tasks-0,agent-builder-parallel-code-tasks-1"
+            - name: TEMPORAL_AGENT_BUILDER_AUX_TASK_QUEUE
+              value: "agent-builder-aux-tasks"
+            - name: ASSEMBLY_TRACE_ASYNC_INGEST
+              # Batched trace ingestion (#507): trace writes ride a redis
+              # stream + per-process batch consumer; every run keeps its full
+              # trace (sync fallback on enqueue failure). +28% runs/hr
+              # measured at C=1200. Set "false" to restore synchronous writes.
+              value: {{ .Values.traceAsyncIngest | default "true" | quote }}
+            - name: TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS
+              value: {{ .Values.agentsWorker.temporal.maxConcurrentWorkflowTasks | default 300 | quote }}
+            - name: TEMPORAL_MAX_CONCURRENT_ACTIVITIES
+              value: {{ .Values.agentsWorker.temporal.maxConcurrentActivities | default 400 | quote }}
+            - name: TEMPORAL_MAX_CACHED_WORKFLOWS
+              # >=1024: at sustained 500-concurrent the old 512 default meant
+              # constant sticky-cache eviction -> full-history replays — the
+              # measured FN P95 "path overhead" locus. Memory cost is covered
+              # by the 2Gi default worker limit.
+              value: {{ .Values.agentsWorker.temporal.maxCachedWorkflows | default 1024 | quote }}
+            # Worker Versioning (Build IDs) — chart-wide source of truth so every
+            # main-queue runner advertises the SAME build. See playbook 39 and the
+            # top-level `workerVersioning` values block.
+            - name: TEMPORAL_WORKER_VERSIONING_ENABLED
+              value: {{ include "aw.workerVersioning.enabled" . | quote }}
+            - name: ASSEMBLY_WORKER_BUILD_ID
+              value: {{ include "aw.workerVersioning.buildId" . | quote }}
+            - name: TEMPORAL_ENABLE_RESOURCE_TUNER
+              value: {{ if eq $tunerMode "resource-based" }}"true"{{ else }}"false"{{ end }}
+            - name: TEMPORAL_WORKER_TUNER_MODE
+              value: {{ $tunerMode | quote }}
+            # Poller autoscaler bounds. The old MAX default of 20 silently
+            # capped the code default (100) — tuning MIN upward via extraEnv
+            # could exceed MAX and pin the autoscaler. Floors are the
+            # tierA-measured values that keep schedule-to-start flat at high
+            # concurrency.
+            - name: TEMPORAL_WORKFLOW_TASK_POLLER_MIN
+              value: {{ .Values.agentsWorker.temporal.workflowTaskPollerMin | default 8 | quote }}
+            - name: TEMPORAL_WORKFLOW_TASK_POLLER_INITIAL
+              value: {{ .Values.agentsWorker.temporal.workflowTaskPollerInitial | default 12 | quote }}
+            - name: TEMPORAL_WORKFLOW_TASK_POLLER_MAX
+              value: {{ .Values.agentsWorker.temporal.workflowTaskPollerMax | default 100 | quote }}
+            - name: TEMPORAL_ACTIVITY_TASK_POLLER_MIN
+              value: {{ .Values.agentsWorker.temporal.activityTaskPollerMin | default 10 | quote }}
+            - name: TEMPORAL_ACTIVITY_TASK_POLLER_INITIAL
+              value: {{ .Values.agentsWorker.temporal.activityTaskPollerInitial | default 15 | quote }}
+            - name: TEMPORAL_ACTIVITY_TASK_POLLER_MAX
+              value: {{ .Values.agentsWorker.temporal.activityTaskPollerMax | default 100 | quote }}
+            - name: TEMPORAL_METRICS_PROMETHEUS_BIND_ADDRESS
+              value: "0.0.0.0:9100"
+            - name: WORKER_ID
+              value: "assembly-engine-worker"
+            {{- if .Values.agentsCodeWorker.trustedCodeInprocess }}
+            - name: ASSEMBLY_TRUSTED_CODE_INPROCESS
+              value: "true"
+            {{- end }}
+            - name: ASSEMBLY_WORKFLOW_CHECKPOINT_INTERVAL
+              value: {{ .Values.agentsWorker.checkpointInterval | default "12" | quote }}
+            - name: ASSEMBLY_FAST_CUSTOM_CODE_ACTIVITY_TIMEOUT_SECONDS
+              # 15s was documented-bad: parallel branches starve the fast
+              # path and hit spurious timeouts; every perf overlay corrected
+              # this to 60 — promote the correction.
+              value: {{ .Values.agentsWorker.fastCodeActivityTimeout | default 60 | quote }}
+            - name: ASSEMBLY_DEFAULT_ACTIVITY_RETRY_MAX_ATTEMPTS
+              # Code default is 3; the old pin of 1 hard-failed transient
+              # errors (worker death, pod rotation) that self-heal everywhere
+              # else. Pairs with terminationGracePeriodSeconds below.
+              value: {{ .Values.agentsWorker.temporal.defaultActivityRetryMaxAttempts | default 3 | quote }}
+            # Local-activity dispatch for short idempotent nodes: measured
+            # −39% history events, P95 84→40s, P99 77→35s at FN-500. Gated by
+            # workflow.patched(local-activity-dispatch-v1) so old histories
+            # replay unchanged. NOTE for operators: this env is frozen at
+            # import — changing the VALUE on a live cluster requires draining
+            # in-flight workflows first (see shared.py). custom_code belongs
+            # here only with trusted in-process execution (tierA posture).
+            - name: ASSEMBLY_LOCAL_ACTIVITY_NODE_TYPES
+              value: {{ .Values.agentsWorker.localActivityNodeTypes | default "api_request,transform,condition,while" | quote }}
+            # 0 (always yield) caused ~30% first-WFT 60s timeouts at C=500;
+            # graphs <=150 nodes plan sub-ms and shouldn't yield.
+            - name: ASSEMBLY_WORKFLOW_PLANNING_YIELD_NODE_THRESHOLD
+              value: {{ .Values.agentsWorker.planningYieldNodeThreshold | default 150 | quote }}
+            - name: ASSEMBLY_WORKFLOW_PROGRESS_BATCH_ALL
+              value: "true"
+            - name: ASSEMBLY_WORKFLOW_PROGRESS_BATCH_SIZE
+              value: "9999"
+            - name: ASSEMBLY_WORKFLOW_CONTINUE_AS_NEW_ENABLED
+              value: "true"
+            - name: ASSEMBLY_WORKFLOW_CONTINUE_AS_NEW_HISTORY_LENGTH
+              value: "10000"
+            {{- include "aw.agentEnv" . | nindent 12 }}
+            {{- with .Values.agentsWorker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.agentsWorker.resources | nindent 12 }}
+          # Liveness is a TCP check, NOT httpGet /health. This pod runs the
+          # Temporal worker and the uvicorn app on ONE asyncio loop; under
+          # sustained load the loop is busy enough that even a trivial /health
+          # handler can't be scheduled within the probe timeout. With httpGet
+          # liveness that read as "dead" and kubelet killed a perfectly-alive
+          # worker — destroying its in-flight Temporal activities, triggering a
+          # retry storm, and collapsing throughput (measured on tierA: at C=400
+          # throughput DROPPED below C=180 with a 107s p95 as workers were
+          # killed in a death spiral). A tcpSocket probe passes as long as the
+          # process is up and listening, so a busy worker is never killed.
+          # Dependency health stays in readiness below (flapping readiness is
+          # harmless — workers poll Temporal, they are not behind a Service).
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3

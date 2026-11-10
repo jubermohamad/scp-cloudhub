@@ -1,0 +1,116 @@
+{{- /*
+One Job PER database (USER REQUIREMENT: per-product provisioning must be
+separate Jobs — a failure provisioning one product must not block or mask
+the others, and each must be independently re-runnable).
+
+post-install/post-upgrade hooks, all at the same weight, so they run in
+parallel after the main manifests (including the CNPG Cluster) are applied.
+Each waits for the cluster itself, then idempotently ensures role+database.
+Consumers whose database appears in the same upgrade may crashloop for the
+seconds until their ensure job completes — they converge.
+*/}}
+{{- if .Values.postgres.enabled }}
+{{- $root := . }}
+{{- range $db, $spec := .Values.databases }}
+{{- /* `optional: true` — declare a database whose product is not enabled yet.
+       A MISSING password then SKIPS this Job instead of failing the render.
+       Without it, declaring a database for a disabled product broke every
+       environment whose secrets.gen.yaml predates it ("rolePasswords.X is
+       required"), and the alternative — generating a password in the template —
+       would mint a NEW one on every helm upgrade and lock the running app out of
+       its own database. The password is generated ONCE, by the scaffolder, into
+       secrets.gen.yaml; until it exists there is simply nothing to create.
+       Non-optional databases still fail loudly, which is what protects the
+       products that ARE enabled. */}}
+{{- if and $spec.optional (not (index $root.Values.rolePasswords ($spec.owner | default $db))) }}
+# ensure-db for optional database {{ $db }} skipped: no rolePasswords.{{ $spec.owner | default $db }} yet
+{{- else }}
+{{- $creds := include "platform-services.dbCreds" (dict "root" $root "db" $db) | fromYaml }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ensure-db-{{ $db | replace "_" "-" }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- include "platform-services.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: ensure-db
+    platform.sri/database: {{ $db }}
+  annotations:
+    # ALWAYS a post-phase hook. It must run AFTER the apply phase, because on the
+    # phase-1 -> phase-2 bootstrap the CNPG cluster / MinIO it provisions on does
+    # not exist until that apply. A pre-upgrade hook deadlocks there, waiting for a
+    # server that cannot appear until the hook returns.
+    #
+    # The invhub sri-api-migrations Job is a PLAIN MANIFEST, so it runs in the apply
+    # phase and therefore BEFORE this — it will hit its database before the role
+    # exists and fail with 28P01. That is handled on the other side, by its
+    # backoffLimit (raised to 8, ~10 minutes of exponential retries), which is
+    # ample: this Job completes within a minute of the apply.
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ $root.Values.ensureJobs.backoffLimit }}
+  ttlSecondsAfterFinished: {{ $root.Values.ensureJobs.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ $root.Release.Name }}
+        app.kubernetes.io/component: ensure-db
+        platform.sri/database: {{ $db }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: ensure-db
+          image: {{ $root.Values.ensureJobs.image }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ include "platform-services.postgresHost" $root }}
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.postgres.clusterName }}-superuser
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $root.Values.postgres.clusterName }}-superuser
+                  key: password
+            - name: DB_NAME
+              value: {{ $db | quote }}
+            - name: DB_OWNER
+              value: {{ $creds.owner | quote }}
+            - name: DB_OWNER_PASSWORD
+              value: {{ $creds.password | quote }}
+            - name: DB_EXTENSIONS
+              value: {{ join " " ($spec.extensions | default list) | quote }}
+          command: ["/bin/bash", "-ec"]
+          args:
+            - |
+              echo "==> Waiting for PostgreSQL at $PGHOST"
+              until pg_isready -d postgres -t 5 >/dev/null 2>&1; do sleep 3; done
+              echo "==> Ensuring role $DB_OWNER and database $DB_NAME"
+              psql -d postgres -v ON_ERROR_STOP=1 \
+                   -v owner="$DB_OWNER" -v pw="$DB_OWNER_PASSWORD" -v db="$DB_NAME" <<'SQL'
+              SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'owner', :'pw')
+                WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'owner') \gexec
+              -- keep the password in sync with values on every run
+              SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'owner', :'pw')
+                WHERE EXISTS (SELECT FROM pg_roles WHERE rolname = :'owner') \gexec
+              SELECT format('CREATE DATABASE %I OWNER %I', :'db', :'owner')
+                WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'db') \gexec
+              SQL
+              # Extensions must be created by a SUPERUSER (pgvector and friends
+              # are not "trusted"), so they belong here rather than in a product
+              # migration running as the owner role.
+              for ext in $DB_EXTENSIONS; do
+                echo "==> Ensuring extension $ext in $DB_NAME"
+                psql -d "$DB_NAME" -v ON_ERROR_STOP=1 \
+                     -c "CREATE EXTENSION IF NOT EXISTS \"$ext\""
+              done
+              echo "==> $DB_NAME ready"
+{{- end }}
+{{- end }}
+{{- end }}

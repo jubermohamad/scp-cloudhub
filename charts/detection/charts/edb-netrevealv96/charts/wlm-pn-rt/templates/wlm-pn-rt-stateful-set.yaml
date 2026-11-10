@@ -1,0 +1,953 @@
+{{- $solution := "wlm-pn-rt" -}}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt") | quote }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-wlm-pn-rt-instance"
+  annotations:
+    ad.datadoghq.com/wlm-pn-rt.logs: |
+      [
+          {
+              "source": "nri-{{ .Release.Name }}-k8s-wlm-pn-rt",
+              "service": "nri-{{ .Release.Name }}-k8s-wlm-pn-rt",
+              "log_processing_rules": [
+                  {
+                      "type": "multi_line",
+                      "name": "java_log_format",
+                      "pattern": "(app)\\s-\\s(\\d{2}-[A-Za-z]{3}-\\d{4}\\s\\d{2}:\\d{2}:\\d{2},\\d{3})\\s+-\\s+-\\s+(\\w+)\\s+([A-Za-z]+:\\d+)"
+                  }
+              ]
+          },
+          {
+              "source": "nri-{{ .Release.Name }}-k8s-wlm-pn-rt",
+              "service": "nri-{{ .Release.Name }}-k8s-wlm-pn-rt",
+              "log_processing_rules": [
+                  {
+                      "type": "multi_line",
+                      "name": "java_stats_log_format",
+                      "pattern": "((appmsg)|(appfunc))\\s-\\s(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}),+(.*)"
+                  }
+              ]
+          }
+      ]
+    reloader.stakater.com/search: "true"
+    secret.reloader.stakater.com/reload: "{{ .Release.Name }}-jks-password,{{ .Release.Name }}-cert-nr-ui,{{ .Release.Name }}-cert-wlm-pn-rt"
+    configmap.reloader.stakater.com/reload: "{{ .Release.Name }}-wlm-pn-rt-base-config-property"
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-wlm-pn-rt-instance-pod
+  serviceName: {{ .Release.Name }}-wlm-pn-rt
+  replicas: {{ .Values.pod.replicas }}
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      namespace: {{ .Values.global.namespace }}
+      labels:
+        app: {{ .Release.Name }}-wlm-pn-rt-instance-pod
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway #
+          labelSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-wlm-pn-rt-instance-pod
+      {{- if or (eq .Values.pod.antiAffinity "hard") (eq .Values.pod.antiAffinity "soft") (eq .Values.pod.antiAffinity "custom") }}
+      affinity:
+        podAntiAffinity:
+      {{- end }}
+      {{- if eq .Values.pod.antiAffinity "soft" }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ .Release.Name }}-wlm-pn-rt-instance-pod
+                topologyKey: topology.kubernetes.io/zone
+      {{- else if eq .Values.pod.antiAffinity "hard" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: {{ .Release.Name }}-wlm-pn-rt-instance-pod
+              topologyKey: topology.kubernetes.io/zone
+      {{- else if eq .Values.pod.antiAffinity "custom" }}
+{{- tpl (toYaml .Values.pod.customAffinityRules) . | nindent 10 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 1
+      securityContext:
+        runAsUser: 200
+        runAsGroup: 200
+        fsGroup: 200
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+      - name: keystore-cert-init
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnRtDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/sh
+          - -c
+          - |
+            set +x
+            set -e
+
+            cp /opt/tools/java/lib/security/cacerts /opt/wildfly/netreveal/configuration/server.jks
+            keytool -storepasswd -new $KEYSTORE_PASS -keystore /opt/wildfly/netreveal/configuration/server.jks -storepass changeit
+
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/nr-ui.jks -srcalias 1 -destkeystore /opt/wildfly/netreveal/configuration/server.jks -destalias nrui -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/wlm-pn-rt.jks -srcalias 1 -destkeystore /opt/wildfly/netreveal/configuration/server.jks -destalias wlm24procrt -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+{{- include "definition.external.certificates" (list $ . "wlm-pn-rt") | indent 12 }}
+            echo "Certificate import finished."
+        env:
+        - name: KEYSTORE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-jks-password
+              key: password
+        volumeMounts:
+        - name: {{ .Release.Name }}-nr-ui-server-jks
+          mountPath: /tmp/nr-ui.jks
+          subPath: nr-ui.jks
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-jks
+          mountPath: /tmp/wlm-pn-rt.jks
+          subPath: wlm-pn-rt.jks
+        - name: {{ .Release.Name }}-wlm-merged-keystore
+          mountPath: /opt/wildfly/netreveal/configuration
+{{- include "secret-volume-mounts.external.certificates" . | indent 8 }}
+
+{{- include "init-container.kafka.jks" (merge (dict "solution" $solution) . ) | nindent 6 }}
+      - name: wait-for-nr-ui
+        imagePullPolicy: IfNotPresent
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnRtDockerImage }}"
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            /wait-for-it/wait-for-it.sh {{ .Release.Name }}-nr-ui.{{ .Values.global.namespace }}.svc.cluster.local:8443 --timeout=1100
+      - name: init-wlm-pn-rt
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnRtDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          {{- if .Values.global.useRootAccountForInit }}
+          runAsUser: 0
+          {{- end }}
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          {{- if not .Values.global.useRootAccountForInit }}
+          runAsNonRoot: true
+          {{- end }}
+        volumeMounts:
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-logs") | quote }}
+            mountPath: /opt/netreveal/uiHome/logs
+          - name: {{ .Release.Name }}-wlm-pn-rt-java-tmp
+            mountPath: /opt/java/tmp
+          - name: {{ .Release.Name }}-wlm-pn-rt-temp-reports
+            mountPath: /opt/netreveal/uiHome/temp/reports
+          - name: {{ .Release.Name }}-wlm-pn-rt-app-server-tmp
+            mountPath: /opt/wildfly-tmp
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-app-server-logs") | quote }}
+            mountPath: /opt/server-logs
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-deployments
+            mountPath: /opt/deployments
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-configuration-history
+            mountPath: /opt/wildfly/netreveal/configuration/standalone_xml_history
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-hsqldb") | quote }}
+            mountPath: /opt/netreveal/uiHome/hsqldb
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-conf-wlm") | quote }}
+            mountPath: /opt/netreveal/uiHome/conf/wlm
+          - name: {{ .Release.Name }}-wlm-indexes
+            mountPath: /opt/WLM
+          {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnRt .Values.global.override.chartEnable.wlmPnRtVersions.configuration) }}
+          - name: {{ .Release.Name }}-wlm-pn-rt-conf-override
+            mountPath: /opt/conf-override
+          {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+
+            if [ -f /opt/netreveal/uiHome/logs/wlm/applicationWLM.log ]; then
+              echo "Remove existing wlm/applicationWLM.log file."
+              rm -f /opt/netreveal/uiHome/logs/wlm/applicationWLM.log
+            fi
+
+            {{- if .Values.global.useRootAccountForInit }}
+            echo "Enable 'chown' for the standalone container."
+            export RUN_CHOWN="true"
+            {{- else }}
+            echo "Disable 'chown' for the standalone container."
+            export RUN_CHOWN="false"
+            {{- end }}
+            echo "Run the init script."
+            /opt/docker/initApplication.sh
+            {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnRt .Values.global.override.chartEnable.wlmPnRtVersions.configuration) }}
+            echo "Prepare override 'conf' directory."
+            cp -r /opt/netreveal/uiHome/conf/. /opt/conf-override
+
+            if [ ! -f /opt/netreveal/uiHome/logs/overrideList.txt ]; then
+              echo "Create /opt/netreveal/uiHome/logs/overrideList.txt"
+              touch /opt/netreveal/uiHome/logs/overrideList.txt
+            fi
+
+            echo "Processed versions:"
+            echo ">>>>>"
+            cat /opt/netreveal/uiHome/logs/overrideList.txt
+            echo "<<<<<"
+
+            if [ -f /opt/netreveal/uiHome/logs/imageVersion.properties ]; then
+              echo "Check if the Docker Image is present in /opt/netreveal/uiHome/logs/overrideImage.properties."
+              if [ "$(cat /opt/netreveal/uiHome/logs/imageVersion.properties)" != "${IMAGE_VERSION}" ]; then
+                if [ -f /opt/netreveal/uiHome/logs/overrideList.txt ]; then
+                  echo "Remove the overrideList.txt file."
+                  echo -n "" > /opt/netreveal/uiHome/logs/overrideList.txt
+                fi
+              fi
+            else
+              if [ -f /opt/netreveal/uiHome/logs/overrideList.txt ]; then
+                echo "Remove the overrideList.txt file."
+                echo -n "" > /opt/netreveal/uiHome/logs/overrideList.txt
+              fi
+            fi
+            if [ -f /opt/netreveal/uiHome/logs/overrideImage.properties ]; then
+              echo "Check if the override Docker Image is present in /opt/netreveal/uiHome/logs/overrideImage.properties."
+              if [ "$(cat /opt/netreveal/uiHome/logs/overrideImage.properties)" != "${OVERRIDE_IMAGE_VERSION}" ]; then
+                if [ -f /opt/netreveal/uiHome/logs/overrideList.txt ]; then
+                  echo "Remove the overrideList.txt file."
+                  echo -n "" > /opt/netreveal/uiHome/logs/overrideList.txt
+                fi
+              fi
+            else
+              if [ -f /opt/netreveal/uiHome/logs/overrideList.txt ]; then
+                echo "Remove the overrideList.txt file."
+                echo -n "" > /opt/netreveal/uiHome/logs/overrideList.txt
+              fi
+            fi
+
+            {{- if .Values.global.useRootAccountForInit }}
+            echo "Change the owner of the 'logs' directory."
+            chown -R 200:200 /opt/netreveal/uiHome/logs
+            echo "Change the owner of the '/opt/conf-override' directory."
+            chown -R 200:200 /opt/conf-override
+            {{- end }}
+            {{- end }}
+        env:
+        - name: IMAGE_VERSION
+          value: "{{ .Values.pod.wlmPnRtDockerImage }}"
+        - name: OVERRIDE_IMAGE_VERSION
+          value: "{{ .Values.global.override.overrideDockerImageName }}"
+
+      ##############################
+      # NROD OVERRIDE
+      ##############################
+      {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnRt .Values.global.override.chartEnable.wlmPnRtVersions.configuration) }}
+      - name: nrod-override
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        volumeMounts:
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-conf-wlm") | quote }}
+            mountPath: /opt/netreveal/uiHome/conf/wlm
+          - name: {{ .Release.Name }}-wlm-pn-rt-conf-override
+            mountPath: /opt/conf-override
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-logs") | quote }}
+            mountPath: /opt/netreveal/uiHome/logs
+          - name: {{ .Release.Name }}-wlm-pn-rt-conf-import-export
+            mountPath: /opt/netreveal/uiHome/conf/importexport
+          - name: {{ .Release.Name }}-wlm-pn-rt-import-export
+            mountPath: /opt/netreveal/uiHome/importExport
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-deployments
+            mountPath: /opt/deployments
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            if [ -f /opt/override/override_version.properties ]; then
+              echo "Copy override_version.properties to /opt/conf-override."
+              echo ">>>>>"
+              cat /opt/override/override_version.properties
+              echo "<<<<<"
+              cp /opt/override/override_version.properties /opt/conf-override
+            else
+              echo "/opt/override/override_version.properties does not exist."
+            fi
+
+            if [ -d /opt/override/conf/wlm-pn-rt ]; then
+              echo "Copy /opt/override/conf/wlm-pn-rt to /opt/conf-override."
+              echo ">>>>>"
+              find /opt/override/conf/wlm-pn-rt/.
+              echo "<<<<<"
+              cp -r /opt/override/conf/wlm-pn-rt/. /opt/conf-override
+            else
+              echo "/opt/override/conf/wlm-pn-rt does not exist."
+            fi
+
+            if [ -d /opt/override/conf/wlm-pn-rt/wlm ]; then
+              echo "Copy /opt/override/conf/wlm-pn-rt/wlm to /opt/netreveal/uiHome/conf/wlm."
+              echo ">>>>>"
+              find /opt/override/conf/wlm-pn-rt/wlm/.
+              echo "<<<<<"
+              cp -r /opt/override/conf/wlm-pn-rt/wlm/. /opt/netreveal/uiHome/conf/wlm
+            else
+              echo "/opt/override/conf/wlm-pn-rt/wlm does not exist."
+            fi
+
+            # base_config.properties cannot be overwritten.
+            if [ -f /opt/conf-override/base_config.properties ]; then
+              echo "Override 'base_config.properties' file exists. Remove it."
+              rm -f /opt/conf-override/base_config.properties
+            fi
+
+            {{- if gt (len .Values.global.override.chartEnable.wlmPnRtVersions.configuration) 0 }}
+            echo "Remove overrideImport.lst and overridePostImport.lst files."
+            rm -f /opt/netreveal/uiHome/conf/importexport/overrideImport.lst 2>/dev/null
+            rm -f /opt/netreveal/uiHome/conf/importexport/overridePostImport.lst 2>/dev/null
+
+            echo "Initialise import configuration."
+            {{- range $item := .Values.global.override.chartEnable.wlmPnRtVersions.configuration }}
+            fullVersion={{ $item }}
+            echo "====>Processing: ${fullVersion}"
+            version=${fullVersion%:*}
+            reInstall=${fullVersion#*:}
+            echo "version: ${version}"
+            echo "reInstall: ${reInstall}"
+            processVersion="false"
+
+            if [ "${version}" != "${reInstall}" -a "${reInstall}" == "reinstall" ]; then
+              echo "Version is defined with 'reinstall' adding it to the runOverrideConfiguration.flag file."
+              if ! grep -q "configuration#${version}#" /opt/netreveal/uiHome/logs/overrideList.txt; then
+                echo "Version was not processed before. Add it to the list."
+                echo "configuration#${version}#" >> /opt/netreveal/uiHome/logs/overrideList.txt
+              fi
+              echo "configuration#${version}#" >> /opt/netreveal/uiHome/logs/overrideList.txt
+              processVersion="true"
+            else
+              if ! grep -q "configuration#${version}#" /opt/netreveal/uiHome/logs/overrideList.txt; then
+                echo "Version was not processed before. Add it to the list."
+                echo "configuration#${version}#" >> /opt/netreveal/uiHome/logs/overrideList.txt
+                processVersion="true"
+              else
+                echo "Version was processed before. Skip it."
+              fi
+            fi
+
+            if [ "${processVersion}" == "true" ]; then
+              if [ -d /opt/override/configuration/wlm-pn-rt/${version} ]; then
+                echo "Copy /opt/override/configuration/wlm-pn-rt/${version} to /opt/netreveal/uiHome/importExport/${version}."
+                echo ">>>>>"
+                find /opt/override/configuration/wlm-pn-rt/${version}/.
+                echo "<<<<<"
+                cp -r /opt/override/configuration/wlm-pn-rt/${version}/. /opt/netreveal/uiHome/importExport/${version}/
+              else
+                echo "/opt/override/configuration/wlm-pn-rt/${version} does not exist."
+              fi
+              if [ -f /opt/override/configuration/wlm-pn-rt/${version}/import.lst ]; then
+                echo "Copy /opt/override/configuration/wlm-pn-rt/${version}/import.lst to /opt/netreveal/uiHome/conf/importexport/overrideImport.lst."
+                echo ">>>>>"
+                cat /opt/override/configuration/wlm-pn-rt/${version}/import.lst
+                echo "<<<<<"
+                cat /opt/override/configuration/wlm-pn-rt/${version}/import.lst >> /opt/netreveal/uiHome/conf/importexport/overrideImport.lst
+                echo "" >> /opt/netreveal/uiHome/conf/importexport/overrideImport.lst
+                cat /opt/override/configuration/wlm-pn-rt/${version}/import.lst >> /opt/netreveal/uiHome/conf/importexport/overrideImport.lst
+              else
+                echo "/opt/override/configuration/wlm-pn-rt/${version}/import.lst does not exist."
+              fi
+              if [ -f /opt/override/configuration/wlm-pn-rt/${version}/postImport.lst ]; then
+                echo "Copy /opt/override/configuration/wlm-pn-rt/${version}/postImport.lst to /opt/netreveal/uiHome/conf/importexport/overridePostImport.lst."
+                echo ">>>>>"
+                cat /opt/override/configuration/wlm-pn-rt/${version}/postImport.lst
+                echo "<<<<<"
+                cat /opt/override/configuration/wlm-pn-rt/${version}/postImport.lst >> /opt/netreveal/uiHome/conf/importexport/overridePostImport.lst
+                echo "" >> /opt/netreveal/uiHome/conf/importexport/overridePostImport.lst
+                cat /opt/override/configuration/wlm-pn-rt/${version}/postImport.lst >> /opt/netreveal/uiHome/conf/importexport/overridePostImport.lst
+              else
+                echo "/opt/override/configuration/wlm-pn-rt/${version}/postImport.lst does not exist."
+              fi
+            fi
+            {{- end }}
+
+            # Custom code override
+            if [ -d /opt/override/customcode/common/lib ]; then
+              countFiles=$(find /opt/override/customcode/common/lib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/common/lib to /opt/deployments/application.ear/lib"
+                cp -r /opt/override/customcode/common/lib/* /opt/deployments/application.ear/lib
+                echo ">>>>>"
+                find /opt/override/customcode/common/lib -type f ! -name ".*"
+                echo "<<<<<"
+              else
+                echo "No files found in /opt/override/customcode/common/lib"
+              fi
+            else
+              echo "No /opt/override/customcode/common/lib found."
+            fi
+
+            if [ -d /opt/override/customcode/common/earlib ]; then
+              countFiles=$(find /opt/override/customcode/common/earlib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/common/earlib to /opt/deployments/application.ear"
+                cp -r /opt/override/customcode/common/earlib/* /opt/deployments/application.ear
+                echo ">>>>>"
+                find /opt/override/customcode/common/earlib -type f ! -name ".*"
+                echo "<<<<<"
+              else
+                echo "No files found in /opt/override/customcode/common/earlib"
+              fi
+            else
+              echo "No /opt/override/customcode/common/earlib found."
+            fi
+
+            if [ -d /opt/override/customcode/wlm-pn-rt/lib ]; then
+              countFiles=$(find /opt/override/customcode/wlm-pn-rt/lib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/wlm-pn-rt/lib to /opt/deployments/application.ear/lib"
+                cp -r /opt/override/customcode/wlm-pn-rt/lib/* /opt/deployments/application.ear/lib
+                echo ">>>>>"
+                find /opt/override/customcode/wlm-pn-rt/lib -type f ! -name ".*"
+                echo "<<<<<"
+              else
+                echo "No files found in /opt/override/customcode/wlm-pn-rt/lib"
+              fi
+            else
+              echo "No /opt/override/customcode/wlm-pn-rt/lib found."
+            fi
+
+            if [ -d /opt/override/customcode/wlm-pn-rt/earlib ]; then
+              countFiles=$(find /opt/override/customcode/wlm-pn-rt/earlib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/wlm-pn-rt/earlib to /opt/deployments/application.ear"
+                cp -r /opt/override/customcode/wlm-pn-rt/earlib/* /opt/deployments/application.ear
+                echo ">>>>>"
+                find /opt/override/customcode/wlm-pn-rt/earlib -type f ! -name ".*"
+                echo "<<<<<"
+              else
+                echo "No files found in /opt/override/customcode/wlm-pn-rt/earlib"
+              fi
+            else
+              echo "No /opt/override/customcode/wlm-pn-rt/earlib found."
+            fi
+            {{- end }}
+      {{- end }}
+
+      {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnRt .Values.global.override.chartEnable.wlmPnRtVersions.configuration) }}
+      - name: nrod-import-configuration
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnRtDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        volumeMounts:
+          - name: {{ .Release.Name }}-wlm-pn-rt-conf-import-export
+            mountPath: /opt/netreveal/uiHome/conf/importexport
+          - name: {{ .Release.Name }}-wlm-pn-rt-import-export
+            mountPath: /opt/netreveal/uiHome/importExport
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-logs") | quote }}
+            mountPath: /opt/netreveal/uiHome/logs
+          - name: {{ .Release.Name }}-wlm-pn-rt-java-tmp
+            mountPath: /opt/java/tmp
+          - name: {{ .Release.Name }}-wlm-pn-rt-temp-reports
+            mountPath: /opt/netreveal/uiHome/temp/reports
+          - name: {{ .Release.Name }}-wlm-pn-rt-conf-temp
+            mountPath: /opt/netreveal/uiHome/conf/temp
+          - name: {{ .Release.Name }}-wlm-pn-rt-app-server-tmp
+            mountPath: /opt/wildfly-tmp
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-app-server-logs") | quote }}
+            mountPath: /opt/server-logs
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-deployments
+            mountPath: /opt/deployments
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-configuration-history
+            mountPath: /opt/wildfly/netreveal/configuration/standalone_xml_history
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-conf-log-prop
+            mountPath: /opt/wildfly/netreveal/configuration/logging.properties
+            subPath: logging.properties
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-hsqldb") | quote }}
+            mountPath: /opt/netreveal/uiHome/hsqldb
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-conf-wlm") | quote }}
+            mountPath: /opt/netreveal/uiHome/conf/wlm
+          - name: {{ .Release.Name }}-wlm-pn-rt-import-base-config-property
+            mountPath: /opt/netreveal/uiHome/conf/base_config.properties
+            subPath: base_config.properties
+          - name: {{ .Release.Name }}-wlm-indexes
+            mountPath: /opt/WLM
+          - name: {{ .Release.Name }}-wlm-merged-keystore
+            mountPath: /opt/wildfly/netreveal/configuration/server.jks
+            subPath: server.jks
+            readOnly: true
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            importError="false"
+            echo "" > /opt/netreveal/uiHome/logs/importexport.log
+
+            echo "Importing configuration files."
+            if [ -f /opt/netreveal/uiHome/conf/importexport/overrideImport.lst -o -f /opt/netreveal/uiHome/conf/importexport/overridePostImport.lst ]; then
+              echo "Starting the application."
+              /opt/wildfly/netreveal/startApplication.sh >/dev/null 2>&1 &
+
+              if [ -f /opt/netreveal/uiHome/conf/importexport/overrideImport.lst ]; then
+                echo "Importing overrideImport.lst."
+                echo ">>>>>"
+                cat /opt/netreveal/uiHome/conf/importexport/overrideImport.lst
+                echo "<<<<<"
+                touch /opt/netreveal/uiHome/conf/importexport/overrideImport.lst.flag
+                timeout 600s bash -c 'while ! grep -E "overrideImport.lst processed successfully|ERROR" /opt/netreveal/uiHome/logs/importexport.log ; do echo "Waiting for overrideImport.lst import processed"; sleep 5; done'
+                if grep 'ERROR' /opt/netreveal/uiHome/logs/importexport.log; then
+                  echo "ERROR: ************ Importing overrideImport.lst failed."
+                  cat /opt/netreveal/uiHome/logs/importexport.log
+                  rm /opt/netreveal/uiHome/logs/importexport.log
+                  importError="true"
+                fi
+              else
+                echo "overrideImport.lst does not exist."
+              fi
+
+              if [ -f /opt/netreveal/uiHome/conf/importexport/overridePostImport.lst -a "${importError}" == "false" ]; then
+                echo "Importing overridePostImport.lst."
+                echo ">>>>>"
+                cat /opt/netreveal/uiHome/conf/importexport/overridePostImport.lst
+                echo "<<<<<"
+                touch /opt/netreveal/uiHome/conf/importexport/overridePostImport.lst.flag
+                timeout 600s bash -c 'while ! grep -E "overridePostImport.lst processed successfully|ERROR" /opt/netreveal/uiHome/logs/importexport.log ; do echo "Waiting for overridePostImport.lst import processed"; sleep 5; done'
+                if grep 'ERROR' /opt/netreveal/uiHome/logs/importexport.log; then
+                  echo "ERROR: ************ Importing overridePostImport.lst failed."
+                  cat /opt/netreveal/uiHome/logs/importexport.log
+                  rm /opt/netreveal/uiHome/logs/importexport.log
+                  importError="true"
+                fi
+              else
+                echo "overridePostImport.lst does not exist."
+              fi
+              cat /opt/netreveal/uiHome/logs/importexport.log
+              rm /opt/netreveal/uiHome/logs/importexport.log
+              sleep 5
+              JAVA_HOME=/opt/tools/java
+              PATH=$JAVA_HOME/bin:$PATH
+              echo "Shutting down the application."
+              /opt/wildfly/bin/jboss-cli.sh -c --commands=":shutdown"
+            else
+              echo "No configuration files to import."
+            fi
+            echo "${IMAGE_VERSION}" > /opt/netreveal/uiHome/logs/imageVersion.properties
+            echo "${OVERRIDE_IMAGE_VERSION}" > /opt/netreveal/uiHome/logs/overrideImage.properties
+        env:
+        - name: IMPORT_EXPORT_HEAP_MAX
+          value: {{ .Values.pod.java.importExportHeapMax }}
+        - name: IMPORT_EXPORT_HEAP_MIN
+          value: {{ .Values.pod.java.importExportHeapMin }}
+        - name: JAVA_OPTS
+          value: " -Djava.io.tmpdir=/opt/netreveal/uiHome/java/tmpWlmPnRtImp "
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: IMAGE_VERSION
+          value: "{{ .Values.pod.wlmPnRtDockerImage }}"
+        - name: OVERRIDE_IMAGE_VERSION
+          value: "{{ .Values.global.override.overrideDockerImageName }}"
+      {{- end }}
+
+      ##############################
+      # TOKEN GENERATION
+      ##############################
+
+      - name: nrod-token-gen
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnRtDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        volumeMounts:
+          {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnRt .Values.global.override.chartEnable.wlmPnRtVersions.configuration) }}
+          - name: {{ .Release.Name }}-wlm-pn-rt-conf-override
+            mountPath: /opt/netreveal/uiHome/conf
+          {{- end }}
+          - name: {{ .Release.Name }}-wlm-pn-rt-tmp-logs
+            mountPath: /opt/netreveal/uiHome/logs
+          - name: {{ .Release.Name }}-wlm-pn-rt-java-tmp
+            mountPath: /opt/java/tmp
+          - name: {{ .Release.Name }}-wlm-pn-rt-temp-reports
+            mountPath: /opt/netreveal/uiHome/temp/reports
+          - name: {{ .Release.Name }}-wlm-pn-rt-conf-temp
+            mountPath: /opt/netreveal/uiHome/conf/temp
+          - name: {{ .Release.Name }}-wlm-pn-rt-app-server-tmp
+            mountPath: /opt/wildfly-tmp
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-app-server-logs") | quote }}
+            mountPath: /opt/server-logs
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-deployments
+            mountPath: /opt/deployments
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-configuration-history
+            mountPath: /opt/wildfly/netreveal/configuration/standalone_xml_history
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-conf-log-prop
+            mountPath: /opt/wildfly/netreveal/configuration/logging.properties
+            subPath: logging.properties
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-hsqldb") | quote }}
+            mountPath: /opt/netreveal/uiHome/hsqldb
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-conf-wlm") | quote }}
+            mountPath: /opt/netreveal/uiHome/conf/wlm
+          - name: {{ .Release.Name }}-wlm-pn-rt-import-base-config-property
+            mountPath: /opt/netreveal/uiHome/conf/base_config.properties
+            subPath: base_config.properties
+          - name: {{ .Release.Name }}-wlm-indexes
+            mountPath: /opt/WLM
+          - name: {{ .Release.Name }}-wlm-merged-keystore
+            mountPath: /opt/wildfly/netreveal/configuration/server.jks
+            subPath: server.jks
+            readOnly: true
+          - name: "{{ .Release.Name }}-wlm-pn-rt-token-script"
+            mountPath: /tmp/token
+
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+
+            /tmp/token/tokenGen.sh
+
+        env:
+        - name: IMPORT_EXPORT_HEAP_MAX
+          value: {{ .Values.pod.java.importExportHeapMax }}
+        - name: IMPORT_EXPORT_HEAP_MIN
+          value: {{ .Values.pod.java.importExportHeapMin }}
+        - name: JAVA_OPTS
+          value: " -Djava.io.tmpdir=/opt/netreveal/uiHome/java/tmpWlmPnRtImp "
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+
+
+      - name: wlm-pn-rt-config-merge
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnRtDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/bash
+          - -c
+          - |
+            set -e
+            cp /opt/netreveal/uiHome/conf/base_config.properties /tmp/wlm-pn-rt-conf/base_config.properties
+            REPLICA_NUMBER=$(hostname | grep -o '[^-]*$')
+            if [ "$REPLICA_NUMBER" -gt 0 ]; then
+                sed -i "s/filtering.24x7.processing.node.swift.mt.linking.job.enable=true/filtering.24x7.processing.node.swift.mt.linking.job.enable=false/g" /tmp/wlm-pn-rt-conf/base_config.properties
+            fi
+
+            echo "Configuration merge completed."
+        volumeMounts:
+        - name: {{ .Release.Name }}-wlm-pn-rt-merged-config
+          mountPath: /tmp/wlm-pn-rt-conf
+        - name: {{ .Release.Name }}-wlm-pn-rt-base-config
+          mountPath: /opt/netreveal/uiHome/conf/base_config.properties
+          subPath: base_config.properties
+
+{{- include "image.pull.secrets" . | nindent 6 }}
+
+      containers:
+      - name: wlm-pn-rt
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.wlmPnRtDockerImage }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        {{- if eq .Values.global.useResourceConstraints "true" }}
+        resources:
+          requests:
+            memory: {{ .Values.pod.resources.requests.memory }}
+            cpu: {{ .Values.pod.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.pod.resources.limits.memory }}
+            cpu: {{ .Values.pod.resources.limits.cpu }}
+        {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            export JAVA_OPTS="${JAVA_OPTS} {{ .Values.pod.java.extraJavaOpts }} -XX:MaxRAM={{ .Values.pod.java.wlmpnrtMaxRam }} "
+            export JAVA_OPTS="${JAVA_OPTS} -Djboss.modules.system.pkgs=com.sun.crypto.provider -Djavax.net.ssl.trustStore=/opt/wildfly/netreveal/configuration/server.jks -Djavax.net.ssl.trustStorePassword=${KEYSTORE_PASS} -Djavax.net.ssl.trustStoreType=JKS "
+            export JAVA_OPTS="${JAVA_OPTS} {{- include "jdk17.java.opts" . -}} "
+            /opt/wildfly/netreveal/startApplication.sh
+        env:
+        - name: KEYSTORE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-jks-password
+              key: password
+        - name: MAX_HEAP
+          value: "{{ .Values.pod.java.wlmpnrtMaxHeap }}"
+        - name: MIN_HEAP
+          value: "{{ .Values.pod.java.wlmpnrtMinHeap }}"
+        - name: DB_MIN_POOL_SIZE
+          value: "{{ .Values.pod.dbPoolSize.min }}"
+        - name: DB_MAX_POOL_SIZE
+          value: "{{ .Values.pod.dbPoolSize.max }}"
+        - name: HTTPS_LISTENER_MAX_PARAMETERS
+          value: "{{ .Values.pod.wildfly.httpsListener.maxParameters }}"
+        - name: HTTPS_LISTENER_MAX_POST_SIZE
+          value: "{{ .Values.pod.wildfly.httpsListener.maxPostSize }}"
+        - name: THREAD_POOL_MAX_THREADS
+          value: "{{ .Values.pod.wildfly.threadPool.maxThreads }}"
+        {{- if eq .Values.pod.java.wlmpnrtSwitchOnDebug true }}
+        - name: EXTRA_JAVA_OPTS
+          value: " -Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=0.0.0.0:8787 "
+        {{- end }}
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        ports:
+          - containerPort: 8443
+        volumeMounts:
+          {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnRt .Values.global.override.chartEnable.wlmPnRtVersions.configuration) }}
+          - name: {{ .Release.Name }}-wlm-pn-rt-conf-override
+            mountPath: /opt/netreveal/uiHome/conf
+          {{- end }}
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-logs") | quote }}
+            mountPath: /opt/netreveal/uiHome/logs
+          - name: {{ .Release.Name }}-wlm-pn-rt-java-tmp
+            mountPath: /opt/java/tmp
+          - name: {{ .Release.Name }}-wlm-pn-rt-temp-reports
+            mountPath: /opt/netreveal/uiHome/temp/reports
+          - name: {{ .Release.Name }}-wlm-pn-rt-conf-temp
+            mountPath: /opt/netreveal/uiHome/conf/temp
+          - name: {{ .Release.Name }}-wlm-pn-rt-app-server-tmp
+            mountPath: /opt/wildfly-tmp
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-app-server-logs") | quote }}
+            mountPath: /opt/server-logs
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-deployments
+            mountPath: /opt/deployments
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-configuration-history
+            mountPath: /opt/wildfly/netreveal/configuration/standalone_xml_history
+          - name: {{ .Release.Name }}-wlm-pn-rt-server-conf-log-prop
+            mountPath: /opt/wildfly/netreveal/configuration/logging.properties
+            subPath: logging.properties
+         
+          {{- include "wlm.pn.rt.log4j2.volume.mount" . | indent 10 }}
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-hsqldb") | quote }}
+            mountPath: /opt/netreveal/uiHome/hsqldb
+          - name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-conf-wlm") | quote }}
+            mountPath: /opt/netreveal/uiHome/conf/wlm
+          - name: {{ .Release.Name }}-wlm-indexes
+            mountPath: /opt/WLM
+          - name: {{ .Release.Name }}-wlm-merged-keystore
+            mountPath: /opt/wildfly/netreveal/configuration/server.jks
+            subPath: server.jks
+            readOnly: true
+          - name: {{ .Release.Name }}-wlm-pn-rt-merged-config
+            mountPath: /opt/netreveal/uiHome/conf/base_config.properties
+            subPath: base_config.properties
+          {{- if ne $.Values.global.baseConfigProperties.kafka.securityProtocol "PLAINTEXT" }}
+          - name: {{ .Release.Name }}-kafka-wlm-pn-rt-jks-volume
+            mountPath: /opt/netreveal/uiHome/conf/keys/kafka.keystore.jks
+            subPath: kafka.keystore.jks
+            readOnly: true
+          - name: {{ .Release.Name }}-kafka-wlm-pn-rt-jks-volume
+            mountPath: /opt/netreveal/uiHome/conf/keys/kafka.truststore.jks
+            subPath: kafka.truststore.jks
+            readOnly: true
+            {{- if .Values.global.kafka.externalKafkaCertificates }}
+              {{- if gt (len .Values.global.kafka.externalKafkaCertificates) 0 }}
+                {{- range $key, $value := .Values.global.kafka.externalKafkaCertificates }}
+          - name: {{ $.Release.Name }}-kafka-wlm-pn-rt-jks-volume
+            mountPath: /opt/netreveal/uiHome/conf/keys/{{ $key }}.kafka.truststore.jks
+            subPath: {{ $key }}.kafka.truststore.jks
+            readOnly: true
+          - name: {{ $.Release.Name }}-kafka-wlm-pn-rt-jks-volume
+            mountPath: /opt/netreveal/uiHome/conf/keys/{{ $key }}.kafka.keystore.jks
+            subPath: {{ $key }}.kafka.keystore.jks
+            readOnly: true
+                {{- end }}
+              {{- end }}
+            {{- end }}
+          {{- end }}
+        {{- if .Values.pod.startupProbe }}
+        startupProbe:
+          exec:
+            command:
+              - /bin/bash
+              - '-c'
+              - |
+                LOG_FILE="/opt/netreveal/uiHome/logs/wlm/applicationWLM.log"
+                if [ ! -f "$LOG_FILE" ]; then
+                  echo "Log file does not exist yet"
+                  exit 1
+                fi
+                if grep -q "Action = ACTION_REGISTER_AND_REFRESH_WLMMODEL" "$LOG_FILE" && \
+                   grep -q "RegistrationStatus = Success" "$LOG_FILE" && \
+                   grep -q "IndexTopic = WLM_ALL_INDEXES" "$LOG_FILE"; then
+                  echo "WLM Processing Node registration successful"
+                  exit 0
+                else
+                  echo "Registration not yet complete"
+                  exit 1
+                fi
+          {{- toYaml .Values.pod.startupProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.readinessProbe }}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9990
+            scheme: HTTP
+          {{- toYaml .Values.pod.readinessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.livenessProbe }}
+        livenessProbe:
+          httpGet:
+            path: /netreveal/login.do
+            port: 8443
+            scheme: HTTPS
+          {{- toYaml .Values.pod.livenessProbe | nindent 10 }}
+        {{- end }}
+      volumes:
+        {{ include "secret-volumes.kafka.jks" (merge (dict "solution" $solution ) . ) | nindent 8 }}
+        {{ include "secret-volumes.external.certificates" . | nindent 8 }}
+        - name: {{ .Release.Name }}-wlm-pn-rt-java-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-rt-temp-reports
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-rt-conf-temp
+          emptyDir: {}
+        {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.wlmPnRt .Values.global.override.chartEnable.wlmPnRtVersions.configuration) }}
+        - name: {{ .Release.Name }}-wlm-pn-rt-conf-override
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-rt-conf-import-export
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-rt-import-export
+          emptyDir: {}
+        {{- end }}
+        - name: {{ .Release.Name }}-wlm-pn-rt-tmp-logs
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-rt-app-server-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-deployments
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-configuration-history
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-indexes
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-conf-log-prop
+          secret:
+            secretName: {{ .Release.Name }}-wlm-pn-rt-logging-property
+            items:
+            - key: logging.properties
+              path: logging.properties
+        {{- include "wlm.pn.rt.log4j2.volume" . | indent 8 }}
+        - name: {{ .Release.Name }}-wlm-pn-rt-import-base-config-property
+          configMap:
+            name: {{ .Release.Name }}-wlm-pn-rt-import-base-config-property
+            items:
+            - key: base_config.properties
+              path: base_config.properties
+        - name: "{{ .Release.Name }}-wlm-pn-rt-token-script"
+          configMap:
+            name: "{{ .Release.Name }}-wlm-pn-rt-token-script"
+            defaultMode: 488
+        - name: {{ .Release.Name }}-nr-ui-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-nr-ui
+            items:
+            - key: keystore.p12
+              path: nr-ui.jks
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-wlm-pn-rt
+            items:
+            - key: keystore.p12
+              path: wlm-pn-rt.jks
+        - name: {{ .Release.Name }}-wlm-merged-keystore
+          emptyDir: {}
+        - name:  {{ .Release.Name }}-wlm-pn-rt-merged-config
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-pn-rt-base-config
+          configMap:
+            name: {{ .Release.Name }}-wlm-pn-rt-base-config-property
+            items:
+            - key: base_config.properties
+              path: base_config.properties
+      restartPolicy: Always
+  volumeClaimTemplates:
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-app-server-logs") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "wlmPnRt.pvcServerLogsStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-logs") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "wlmPnRt.pvcApplicationLogsStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-conf-wlm") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "wlmPnRt.pvcConfWlmStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "wlm-pn-rt-hsqldb") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "wlmPnRt.pvcHsqldbStorage" . }}

@@ -1,0 +1,78 @@
+{{- if not .Values.postgres.existingSecret.name }}
+{{- $cluster := include "cpr.pg.clusterName" . -}}
+# ── Serving store: a CloudNativePG-managed Postgres Cluster ────────────────────────────────────────
+# Replaces the earlier single-pod postgres:16 Deployment (one Postgres path minikube→AKS, "demo ==
+# target"). The CNPG operator (subchart, postgresOperator.install) reconciles this CR: it provisions
+# the instance(s) with a separate WAL volume, runs streaming replication + automatic failover when
+# instances > 1, and MANAGES the credential Secrets — emitting a `<cluster>-app` Secret (username /
+# password / dbname / uri) the api + backfill read via secretKeyRef. So no password is rendered into
+# values.yaml or the helm-release history. Shape mirrors the NetReveal ER product infra
+# (ia-helm-charts/er-db/postgres) — see deploy/DECISIONS.md ADR-002.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $cluster }}
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+spec:
+  imageName: {{ .Values.postgres.cnpg.imageName | quote }}
+  instances: {{ .Values.postgres.cnpg.instances }}
+  logLevel: info
+  # unsupervised ⇒ the operator performs primary switchover/rolling updates without manual approval.
+  primaryUpdateStrategy: {{ .Values.postgres.cnpg.primaryUpdateStrategy | quote }}
+  storage:
+    size: {{ .Values.postgres.cnpg.storage.size | quote }}
+    {{- with .Values.postgres.cnpg.storage.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+  {{- if .Values.postgres.cnpg.walStorage.enabled }}
+  walStorage:
+    size: {{ .Values.postgres.cnpg.walStorage.size | quote }}
+    {{- with .Values.postgres.cnpg.walStorage.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  resources: {{- toYaml .Values.postgres.cnpg.resources | nindent 4 }}
+  {{- with .Values.postgres.cnpg.parameters }}
+  # Server tuning. Surfaced first-class rather than left to extraSpec because it is load-bearing for
+  # BUILD throughput, not just query latency: a backfill bulk-loads every table and then rebuilds each
+  # table's secondary indexes, and an index build is bounded by maintenance_work_mem (starved, it
+  # spills to an external merge sort). Raising the pod's resource limits alone changes nothing —
+  # Postgres only uses what these parameters permit.
+  postgresql:
+    parameters: {{- toYaml . | nindent 6 }}
+  {{- end }}
+  # CNPG generates + rotates the superuser secret (<cluster>-superuser); the app never uses it.
+  enableSuperuserAccess: {{ .Values.postgres.cnpg.enableSuperuserAccess }}
+  bootstrap:
+    initdb:
+      # Creates database `cpr` owned by role `cpr`; CNPG generates the <cluster>-app Secret for it.
+      # schema.sql (plain CREATE TABLE, no privileged DDL) is applied by the app/export path as this
+      # owner role, so no superuser or postInitApplicationSQLRefs bootstrap is required here.
+      database: {{ .Values.postgres.cnpg.database | quote }}
+      owner: {{ .Values.postgres.cnpg.owner | quote }}
+  {{- with .Values.postgres.cnpg.extraSpec }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+{{- if .Values.postgres.nodePort.enabled }}
+---
+# Host access for the LOCAL demo only (e.g. DBeaver): CNPG's own Services are ClusterIP, so this
+# NodePort targets the primary via the same selector CNPG's `<cluster>-rw` Service uses. Demo-grade —
+# it exposes Postgres on the node; the AKS overlay disables it (keep the store in-cluster).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ printf "%s-nodeport" $cluster }}
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+spec:
+  type: NodePort
+  selector:
+    cnpg.io/cluster: {{ $cluster }}
+    cnpg.io/instanceRole: primary
+  ports:
+    - port: {{ .Values.postgres.service.port }}
+      targetPort: 5432
+      {{- with .Values.postgres.nodePort.port }}
+      nodePort: {{ . }}
+      {{- end }}
+{{- end }}
+{{- end }}

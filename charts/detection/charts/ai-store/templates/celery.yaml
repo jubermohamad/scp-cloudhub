@@ -1,0 +1,318 @@
+{{- if .Values.celery.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "model-store.componentName" (list . "celery") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: celery
+    {{- include "model-store.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.celery.replicaCount }}
+  selector:
+    matchLabels:
+      app: celery
+  template:
+    metadata:
+      labels:
+        app: celery
+        monitoring.modelhub.io/scrape: "true"
+        {{- include "model-store.labels" . | nindent 8 }}
+      {{- $roll := include "model-store.helmRolloutPodAnnotations" . | trim }}
+      {{- if $roll }}
+      annotations:
+        {{- $roll | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: modelhub-deployer
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      containers:
+        - name: dind
+          image: {{ .Values.celery.dind.image }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          securityContext:
+            privileged: true
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+          volumeMounts:
+            - name: docker-graph-storage
+              mountPath: /var/lib/docker
+            {{- if default false .Values.internalServices.zot.enabled }}
+            - name: dind-daemon-json
+              mountPath: /etc/docker/daemon.json
+              subPath: daemon.json
+            {{- end }}
+          resources:
+            {{- toYaml .Values.celery.dind.resources | nindent 12 }}
+        - name: celery
+          image: "{{ .Values.celery.image.repository }}:{{ .Values.celery.image.tag }}"
+          imagePullPolicy: {{ .Values.celery.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - celery
+            - -A
+            - tasks.worker
+            - worker
+            - --loglevel=info
+            - --concurrency={{ .Values.celery.workerConcurrency }}
+            - -E
+          env:
+            - name: DOCKER_HOST
+              value: tcp://localhost:2375
+            - name: DOCKER_API_VERSION
+              value: "1.43"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: database-url
+            - name: ENVIRONMENT
+              value: {{ .Values.backend.env.environment | default "prod" | quote }}
+            - name: REDIS_URL
+              value: {{ include "model-store.redisUrl" . }}
+            - name: CELERY_BROKER_URL
+              value: {{ include "model-store.redisUrl" . }}
+            - name: CELERY_RESULT_BACKEND
+              value: {{ include "model-store.redisUrl" . }}
+            - name: CELERY_WORKER_SEND_TASK_EVENTS
+              value: "true"
+            - name: CELERY_TASK_SEND_SENT_EVENT
+              value: "true"
+            {{- if eq (toString .Values.backend.env.globalStoreEnabled) "true" }}
+            - name: AZURE_SUBSCRIPTION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: azure-subscription-id
+            - name: AZURE_RESOURCE_GROUP
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: azure-resource-group
+            - name: AZURE_WORKSPACE_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: azure-workspace-name
+            - name: AZURE_REGISTRY_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: azure-registry-name
+            - name: AZURE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: azure-client-id
+            - name: AZURE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: azure-client-secret
+            - name: AZURE_TENANT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: azure-tenant-id
+            {{- end }}
+            - name: ACR_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: acr-url
+            - name: ACR_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: acr-username
+            - name: ACR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: acr-password
+            - name: PROD_DEPLOYMENT_TYPE
+              value: {{ .Values.backend.env.prodDeploymentType | quote }}
+            - name: AKS_CLUSTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: aks-cluster-name
+            - name: AKS_CONTEXT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: aks-context
+            - name: AKS_INGRESS_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: aks-ingress-base-url
+            - name: AKS_INGRESS_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: aks-ingress-host
+            - name: MCP_ROOT_DOMAIN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: mcp-root-domain
+            - name: MCP_TLS_SECRET_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: mcp-tls-secret-name
+            - name: MCP_SERVER_URL
+              value: {{ (printf "http://%s:8081" (include "model-store.componentName" (list . "mcp-server"))) | quote }}
+            - name: MODEL_STORE_PROVIDER
+              value: {{ .Values.backend.env.modelStoreProvider | quote }}
+            {{- if default false .Values.internalServices.zot.enabled }}
+            - name: ZOT_REGISTRY_URL
+              value: {{ include "model-store.zotRegistryHost" . | quote }}
+            {{- if .Values.zot.auth.enabled }}
+            - name: ZOT_REGISTRY_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "model-store.zotAuthSecretName" . }}
+                  key: ZOT_REGISTRY_USERNAME
+            - name: ZOT_REGISTRY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "model-store.zotAuthSecretName" . }}
+                  key: ZOT_REGISTRY_PASSWORD
+            {{- end }}
+            {{- end }}
+            - name: DEPLOYMENT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: deployment-api-key
+            - name: DEPLOYMENT_NAME_PREFIX
+              value: {{ default "" .Values.namePrefix | quote }}
+            - name: SINGLE_NAMESPACE_MODE
+              value: {{ .Values.singleNamespace.enabled | quote }}
+            - name: DEFAULT_NAMESPACE
+              value: {{ include "model-store.defaultNamespace" . | quote }}
+            - name: MODELS_NAMESPACE
+              value: {{ include "model-store.defaultNamespace" . | quote }}
+            - name: MCP_NAMESPACE
+              value: {{ include "model-store.defaultNamespace" . | quote }}
+            - name: AGENTS_NAMESPACE
+              value: {{ include "model-store.defaultNamespace" . | quote }}
+            - name: INGRESS_WHITELIST_SOURCE_RANGE
+              value: {{ .Values.ingress.whitelistSourceRange | quote }}
+            - name: INGRESS_LIMIT_RPS
+              value: {{ .Values.ingress.limitRps | quote }}
+            - name: INGRESS_LIMIT_CONNECTIONS
+              value: {{ .Values.ingress.limitConnections | quote }}
+            - name: INGRESS_LIMIT_BURST_MULTIPLIER
+              value: {{ .Values.ingress.limitBurstMultiplier | quote }}
+            - name: INGRESS_LIMIT_WHITELIST
+              value: {{ .Values.ingress.limitWhitelist | quote }}
+            - name: INGRESS_PROXY_BODY_SIZE
+              value: {{ .Values.ingress.proxyBodySize | quote }}
+            - name: HPA_ENABLED
+              value: {{ .Values.hpa.enabled | quote }}
+            - name: HPA_MIN_REPLICAS
+              value: {{ .Values.hpa.minReplicas | quote }}
+            - name: HPA_MAX_REPLICAS
+              value: {{ .Values.hpa.maxReplicas | quote }}
+            - name: HPA_TARGET_CPU_UTILIZATION
+              value: {{ .Values.hpa.targetCpuUtilization | quote }}
+            - name: MLFLOW_TRACKING_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: mlflow-tracking-uri
+                  optional: true
+            - name: MLFLOW_TRACKING_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: mlflow-tracking-username
+                  optional: true
+            - name: MLFLOW_TRACKING_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: mlflow-tracking-password
+                  optional: true
+            - name: MLFLOW_S3_ENDPOINT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: mlflow-s3-endpoint-url
+                  optional: true
+            - name: MLFLOW_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: mlflow-database-url
+                  optional: true
+            - name: AZURE_STORAGE_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: azure-storage-connection-string
+                  optional: true
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: aws-access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: aws-secret-access-key
+                  optional: true
+            - name: MLFLOW_EXTERNAL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: mlflow-external-url
+                  optional: true
+          resources:
+            {{- toYaml .Values.celery.resources | nindent 12 }}
+        {{- if .Values.celery.exporter.enabled }}
+        - name: celery-exporter
+          image: {{ .Values.celery.exporter.image }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          args:
+            - --broker-url={{ include "model-store.redisUrl" . }}
+            - --port=9808
+          ports:
+            - containerPort: 9808
+              name: http-metrics
+        {{- end }}
+      volumes:
+        - name: docker-graph-storage
+          emptyDir: {}
+        {{- if default false .Values.internalServices.zot.enabled }}
+        - name: dind-daemon-json
+          configMap:
+            name: {{ include "model-store.componentName" (list . "celery") }}-dind-daemon
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "model-store.componentName" (list . "celery") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: celery
+    monitoring.modelhub.io/scrape: "true"
+    {{- include "model-store.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9808
+      targetPort: 9808
+      name: http-metrics
+  selector:
+    app: celery
+{{- end }}

@@ -1,0 +1,148 @@
+{{- if .Values.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "model-training-tool.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "model-training-tool.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "model-training-tool.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    {{- $g := index .Values "global" | default dict }}
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "model-training-tool.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        modelhub.dev/training-entrypoint: venv-python
+        {{- range $k, $v := (.Values.podAnnotations | default dict) }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+        {{- if $g.rolloutOnHelmUpgrade }}
+        modelhub.dev/helm-release-revision: {{ .Release.Revision | quote }}
+        modelhub.dev/helm-release-name: {{ .Release.Name | quote }}
+        {{- end }}
+    spec:
+      {{- with $g.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      {{- end }}
+      serviceAccountName: {{ include "model-training-tool.serviceAccountName" . }}
+      initContainers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          command: ["/app/.venv/bin/alembic", "upgrade", "head"]
+          env:
+            # alembic/env.py imports Settings(); API_KEY required when APP_ENV!=dev (image default prod).
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: {{ .Values.secretKeys.apiKey }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: {{ .Values.secretKeys.databaseUrl }}
+      containers:
+        - name: model-training-tool
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          # Always use the training-api image venv; do not rely on image CMD (often `python -m ...` -> /usr/local/bin/python).
+          command:
+            - "/app/.venv/bin/python"
+            - "-m"
+            - "src.run_api_mcp"
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.httpPort }}
+            - name: mcp
+              containerPort: {{ .Values.service.mcpPort }}
+          env:
+            - name: UV_PROJECT_ENVIRONMENT
+              value: {{ .Values.uvProjectEnvironment | default "/app/.venv" | quote }}
+            # Child processes may invoke `python` without a full path; prefer venv before /usr/local/bin.
+            - name: PATH
+              value: "/app/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+            - name: VIRTUAL_ENV
+              value: {{ .Values.uvProjectEnvironment | default "/app/.venv" | quote }}
+            - name: K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: APP_PORT
+              value: {{ .Values.service.httpPort | quote }}
+            - name: MODEL_TRAINING_SERVER_PORT
+              value: {{ .Values.service.mcpPort | quote }}
+            - name: API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: {{ .Values.secretKeys.apiKey }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: {{ .Values.secretKeys.databaseUrl }}
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: {{ .Values.secretKeys.minioAccessKey }}
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: {{ .Values.secretKeys.minioSecretKey }}
+            - name: MLFLOW_TRACKING_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: {{ .Values.secretKeys.mlflowTrackingUsername }}
+            - name: MLFLOW_TRACKING_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: {{ .Values.secretKeys.mlflowTrackingPassword }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: {{ .Values.secretKeys.awsAccessKeyId }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: {{ .Values.secretKeys.awsSecretAccessKey }}
+            - name: TRAINING_WORKER_IMAGE
+              value: "{{ .Values.workerImage.repository }}:{{ .Values.workerImage.tag }}"
+            - name: AISTORE_CONTROL_PLANE_URL
+              value: {{ include "model-training-tool.aistoreControlPlaneUrl" . | quote }}
+            - name: AISTORE_SYNC_TIMEOUT_SECONDS
+              value: "60"
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 45
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}

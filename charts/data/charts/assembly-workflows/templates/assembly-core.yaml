@@ -1,0 +1,227 @@
+{{/*
+  documentExtractionConcurrency reaches the app as a string and is parsed with
+  int(), so a typo or a 0 is not a misconfiguration you find out about at render
+  time: a non-integer raises at import and CrashLoopBackOffs the replica, and a 0
+  makes every document read wait out the slot timeout and fail. Fail the render
+  instead -- it is the last point where the operator is still looking.
+*/}}
+{{- $concurrency := .Values.userProject.documentExtractionConcurrency -}}
+{{- if not (regexMatch "^[0-9]+$" (printf "%v" $concurrency)) -}}
+{{- fail (printf "userProject.documentExtractionConcurrency must be a whole number, got %v" $concurrency) -}}
+{{- end -}}
+{{- if lt (int $concurrency) 1 -}}
+{{- fail (printf "userProject.documentExtractionConcurrency must be at least 1, got %v -- 0 would make every document read fail on the slot timeout" $concurrency) -}}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-core
+  labels:
+    app: assembly-core
+    tier: backend
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.userProject.replicas }}
+  revisionHistoryLimit: 3
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-core
+  template:
+    metadata:
+      labels:
+        app: assembly-core
+        tier: backend
+        {{- include "aw.labels" . | nindent 8 }}
+      annotations:
+        # Forces a rollout whenever platform-secrets changes -- secretKeyRef env
+        # vars are read once at container start, so without this a secret rotation
+        # never reaches already-running pods (#1325). Secrets are deterministic now
+        # (no randAlphaNum/lookup), so we hash the rendered Secret directly: it
+        # changes iff the actual content changes (incl. database-url, derived from
+        # the pg password) -- no spurious rollout on values-structure changes, and
+        # no need to fold in infra.postgres/externalInfra.
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+    spec:
+      # This workload does not call the Kubernetes API.
+      automountServiceAccountToken: false
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.scheduling" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: assembly-core
+                topologyKey: kubernetes.io/hostname
+      {{- if .Values.userProject.migration.enabled }}
+      {{/*
+        #1299: this used to be a per-pod initContainer running `alembic upgrade
+        head` directly. Every replica ran its own migration independently, so a
+        truly fresh DB raced -- the second replica's `CREATE TABLE` hit
+        DuplicateTableError before the first had committed. Migration now runs
+        exactly once as a normal Job (assembly-core-migrate-job.yaml, same
+        pattern as temporal-split.yaml's schema-migrate Job); this init
+        container only gates pod readiness on that Job having applied at least
+        one migration, mirroring temporal-split.yaml's wait-schema containers.
+        Scoped to in-cluster postgres (infra.enabled) -- external-infra
+        installs skip the wait (no regression: they never had this ordering
+        gate either) but still get the concurrency-race fix from the Job.
+      */}}
+      {{- if .Values.infra.enabled }}
+      initContainers:
+        - name: wait-migrate
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.infra.postgres.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: PGHOST
+              value: {{ include "aw.pgHost" . | quote }}
+            - name: PGUSER
+              value: assembly
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.postgresSecretName" . }}
+                  key: password
+            - name: PGDATABASE
+              value: {{ include "aw.pgDatabase" . | quote }}
+          # assembly-core uses a per-service alembic version_table (multiple
+          # services share workflows_db) -- see
+          # services/assembly-core/migrations/env.py:52, NOT the SQLAlchemy
+          # default "alembic_version". NOTE: this only proves the table has
+          # SOME row, not that it's at head -- same trade-off as
+          # temporal-split.yaml's wait-schema (acceptable while migrations
+          # stay fast; on an upgrade this pod can start slightly before a new
+          # migration in the same release finishes applying). A precise
+          # head-match/Job-completion gate would need RBAC + a kubectl image
+          # this chart doesn't otherwise use -- tracked as a follow-up, not
+          # done here to keep this fix's blast radius to the concurrency race
+          # it's actually meant to close (#1299).
+          command: ['/bin/sh', '-c', 'until psql -Atqc "select 1 from alembic_version_assembly_core limit 1" 2>/dev/null | grep -q 1; do echo "Waiting for assembly-core schema migration..."; sleep 5; done']
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 64Mi, cpu: 100m }
+      {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ include "aw.prefix" . }}-core
+          image: {{ include "aw.image" (dict "registry" .Values.image.registry "repo" .Values.userProject.image.repository "default" "assembly-workflows-core" "tag" .Values.userProject.image.tag "globalTag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: ASSEMBLY_ENGINE_URL
+              value: "http://{{ include "aw.prefix" . }}-engine:8000"
+            # workflow_scheduler.py talks to Temporal directly (create/update/
+            # remove schedules for the /{id}/schedule endpoint) but this
+            # deployment had zero TEMPORAL_* env vars, so it silently used the
+            # code default "agent-builder" for TEMPORAL_AGENT_BUILDER_NAMESPACE
+            # instead of this cluster's real namespace -- every schedule
+            # create/resume 500'd with "Namespace agent-builder is not found"
+            # on any tier whose agentBuilderNamespace isn't the default.
+            - name: TEMPORAL_HOST
+              value: {{ include "aw.temporalHost" . | quote }}
+            - name: TEMPORAL_AGENT_BUILDER_NAMESPACE
+              value: {{ .Values.externalInfra.temporal.agentBuilderNamespace | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: database-url
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: redis-url
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: jwt-secret
+            - name: AUTH_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: auth-mode
+            - name: KEYCLOAK_SERVER_URL
+              value: {{ include "aw.keycloakServerUrl" . | quote }}
+            {{- with (include "aw.keycloakExpectedIssuer" .) }}
+            - name: KEYCLOAK_EXPECTED_ISSUER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.infra.enabled }}
+            # Keycloak master-realm admin credentials so assembly-core's
+            # KeycloakAdminClient can manage users (create/update/delete/roles).
+            # Without these, KeycloakAdminClient falls back to admin/admin in
+            # non-prod and 401s against the real admin password -> admin
+            # user-management 500s out of the box. Mirrors the credentials the
+            # bundled Keycloak deployment uses (infra.yaml).
+            - name: KEYCLOAK_ADMIN_USERNAME
+              value: "admin"
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.prefix" . }}-keycloak-secret
+                  key: admin-password
+            {{- end }}
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: fernet-key
+            - name: INTERNAL_SERVICE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: internal-service-api-key
+            - name: LLM_GATEWAY_USER_KEYS_INTERNAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: assembly-llm-gateway-user-keys-internal-api-key-assembly-core
+            - name: ASSEMBLY_EDITION
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: assembly-edition
+            - name: DOCUMENT_EXTRACTION_CONCURRENCY
+              value: {{ .Values.userProject.documentExtractionConcurrency | quote }}
+            {{- with .Values.userProject.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.userProject.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-core
+  labels:
+    app: assembly-core
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+  selector:
+    app: assembly-core

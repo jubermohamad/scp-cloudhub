@@ -1,0 +1,17 @@
+# Sizing profile: medium (8-node cluster)
+agents:
+  replicas: 4
+  hpa: { minReplicas: 4, maxReplicas: 12 }
+agentsWorker:
+  replicas: 4
+agentsCodeWorker:
+  replicas: 4
+agentsSubflowWorker:
+  enabled: true
+  replicas: 2
+llmGateway:
+  replicas: 3
+sandboxExecute:
+  replicas: 4
+sandboxTrigger:
+  replicas: 3

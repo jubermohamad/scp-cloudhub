@@ -1,0 +1,306 @@
+# Default values for copilot.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+engineName: "copilot"
+
+replicaCount: 1
+
+image:
+  repository: nginx
+  # When empty, omit imagePullPolicy and use the Kubernetes default.
+  pullPolicy: ""
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets:
+  - name: "regcred"
+
+waitForDependencies:
+  enabled: false
+  image: docker.io/curlimages/curl:8.11.1
+  imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+  timeoutSeconds: 1200
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi
+  # in-tree patch: leave `service` EMPTY so the template can fall back to
+  # global.services.* (shared-service names differ per deployment — there is no
+  # plain "redis-master" Service in the SRI release). Set it here only to pin a
+  # service for this component specifically.
+  postgres:
+    enabled: false
+    service: ""
+    port: 5432
+  redis:
+    enabled: false
+    service: ""
+    port: 6379
+  terrarium:
+    enabled: false
+    # EMPTY on purpose, like postgres/redis above: the copilot chart is aliased
+    # four times, so a pinned literal here has to be corrected four times when
+    # terrarium is renamed. Empty lets the template fall back to
+    # global.services.terrarium — one key for all four (Risk #8).
+    service: ""
+    port: 8080
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  capabilities:
+    drop:
+      - ALL
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 50m
+    memory: 128Mi
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+envFromconfigMap: false
+
+# Per-engine extra config key-value pairs rendered into the engine's ConfigMap.
+# Keys are used as-is for env var names. Non-empty, non-sensitive values only.
+config: {}
+
+calicoNetworkPolicy:
+  enabled: false
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source: {}
+      destination:
+        ports:
+          - 8001
+  egress:
+    - action: Allow
+
+service:
+  type: ClusterIP
+  port: 8001
+  targetPort: 8001
+  portName: engine-port
+
+command:
+  - sh
+  - -c
+  - uvicorn application:app --host 0.0.0.0 --port 8001
+
+global:
+  imagePullPolicy: Always   # platform default; the umbrella global overrides it
+  copilot:
+    AML_DETECTIONS_INITIALSUMMARY_FILTER_ROWS: "100"
+    AML_DETECTIONS_FILTER_ROWS: "100"
+    DISABLE_CALLBACKS: "False"
+    LLM_SERVICE: "AZURE_OPENAI"
+    LLM_SERVICE_MAPPER: >-
+      {"AZURE_OPENAI": ["gpt4_32k", "gpt35_16k", "gpt4", "gpt4o",
+      "gpt4o_mini"], "APIM_LLMGATEWAY": ["mistral-small"],
+      "AZURE_MISTRAL": ["mistral"], "AZURE_LLAMA": ["llama"],
+      "AZURE_COHERE": ["cohere"]}
+    COMPONENT_LLM_MAPPING: '{"PLANNER": "gpt4o","FOLLOW_UP": "gpt4o"}'
+    LLM_TOOLS_MAPPING: >-
+      {'TransactionFilteringDataRetrieval': ['gpt4o'],
+      'InitialSummaryDataRetrieval': ['gpt4o'],
+      'FinalNarrativeDataRetrieval': ['gpt4o'], 'Summary': ['gpt4o_mini'],
+      'Responder': ['gpt4o'], 'NarrativeGeneration': ['gpt4o'],
+      'WebSeekerDataRetrieval': ['gpt4o'],
+      'Summarize_and_classify': ['gpt4o_mini'],
+      'StructuringPatternAnalysisTool': ['gpt4o'],
+      'UnusualHoursDataRetrieval': ['gpt4o'],
+      'TransactionObfuscationAnalyzer': ['gpt4o'],
+      'AskBackForMoreInformation': ['gpt4o'],
+      'AMLDetectionsDataRetrieval': ['gpt4o'],
+      'SubjectDataRetrieval': ['gpt4o'], 'AccountsDataRetrieval': ['gpt4o'],
+      'TransactionsDataRetrieval': ['gpt4o'],
+      'ComplexQueryResponder': ['gpt4o'],
+      'LatestCDDRiskScoreDataRetrieval': ['gpt4o'],
+      'CDDRiskScoreHistoryDataRetrieval': ['gpt4o'],
+      'CustomerScreeningDataRetrieval': ['gpt4o'],
+      'PaymentFraudDataRetrieval': ['gpt4o'], 'DocumentRetrieval': ['gpt4o'],
+      'DocumentSummary': ['gpt4o'], 'DefaultTool': ['gpt4o'],
+      'LatestProfileDataRetrieval': ['gpt4o'],
+      'TransactionAnalysis': ['gpt4o'], 'ChartGeneration': ['gpt4o'],
+      'SubjectRelationshipDataRetrieval': ['gpt4o'],
+      'InvestigationsAnalysis': ['gpt4o']}
+    METADATA_OVERRIDE_DIMENSIONS_TRANSACTION_TXNTYPE.INSTRUMENT_VALID_VALUES: "FORCUR,CASH,WIRE,CARD,OTHER,CHEQUE,\
+      MOBILEPAYMENT,TRANSF.PROP.ENT,COMISI. Y GTOS,TRANSF EXTRANJE,\
+      TRANSF.PROP.ENT,TRANSF.OTRA ENT,RCBS VARIOS,GIFTCARD,MARKETPLACE"
+    RBAC_ENABLED: "true"
+    AZURE_OPENAI_ENDPOINT_GPT4O_MINI: https://invhub-shared-apim-oai.azure-api.net/
+    OPENAI_API_KEY_GPT4O_MINI: ""
+    DEPLOYMENT_NAME_GPT4O_MINI: gpt-4o-mini
+    OPENAI_API_VERSION_GPT4O_MINI: 2024-02-15-preview
+    OPENAI_API_TYPE_GPT4O_MINI: azure
+    MODEL_NAME_GPT4O_MINI: gpt-4o-mini
+    AZURE_OPENAI_ENDPOINT_GPT4O: "https://invhub-shared-oai.openai.azure.com/"
+    OPENAI_API_KEY_GPT4O: ""
+    DEPLOYMENT_NAME_GPT4O: gpt-4o
+    OPENAI_API_VERSION_GPT4O: 2024-02-15-preview
+    OPENAI_API_TYPE_GPT4O: azure
+    MODEL_NAME_GPT4O: gpt-4o
+    AZURE_OPENAI_ENDPOINT_GPT4_32K: "https://invhub-shared-oai.openai.azure.com/"
+    OPENAI_API_KEY_GPT4_32K: ""
+    DEPLOYMENT_NAME_GPT4_32K: "GPT4_demo_32"
+    OPENAI_API_VERSION_GPT4_32K: 2024-02-15-preview
+    OPENAI_API_VERSION: 2024-02-15-preview
+    OPENAI_API_TYPE_GPT4_32K: azure
+    MODEL_NAME_GPT4_32K: gpt-4-32k
+    AZURE_OPENAI_ENDPOINT_GPT35_16K: "https://invhub-shared-oai.openai.azure.com/"
+    OPENAI_API_KEY_GPT35_16K: ""
+    DEPLOYMENT_NAME_GPT35_16K: gpt-35-turbo_1106
+    OPENAI_API_VERSION_GPT35_16K: 2024-02-15-preview
+    OPENAI_API_TYPE_GPT35_16K: azure
+    MODEL_NAME_GPT35_16K: gpt-35-turbo
+    AZURE_OPENAI_ENDPOINT_GPT4: "https://invhub-shared-oai.openai.azure.com/"
+    OPENAI_API_KEY_GPT4: ""
+    DEPLOYMENT_NAME_GPT4: gpt-4_1106-Preview
+    OPENAI_API_VERSION_GPT4: 2024-02-15-preview
+    OPENAI_API_TYPE_GPT4: azure
+    MODEL_NAME_GPT4: gpt-4
+    DB_TYPE: "postgresql"
+    CONTEXT_EXPIRE_TIME: "3600"
+    VERTICAL: sensa
+    PREVIOUS_CONTEXT_SIZE: "5"
+    SERPAPI_API_KEY: ""
+    EXCLUDED: '["wikipedia", "linkedin","facebook", "instagram"]'
+    TIMEOUT: 5
+    PROMPT_ENGINE_TIMEOUT: "300"
+    CONTEXT_ENGINE_TIMEOUT: "300"
+    MAX_CONTEXT_WINDOW_SIZE: "5"
+    ENABLE_DIMENSION_INJECTION: "False"
+    ENABLE_GENERIC_CACHE: "False"
+    RELEASE_VERSION: "1.7.0"
+    GQL_EMAIL: "copilotService@symphony.ai"
+    INTROSPECTION_GQL_EMAIL: "copilotService@symphony.ai"
+    AML_DETECTION_FILTER_ROWS: "100"
+    AML_DETECTION_INITIALSUMMARY_FILTER_ROWS: "100"
+    CHAT_ENGINE: "GPT4_demo_32"
+    DEFAULT_FOLLOW_UP: "HEURISTIC"
+    DELAY: "5"
+    DISABLE_CACHE: "False"
+    ENABLE_FOLLOW_UP: "True"
+    ENVIRONMENT_NAME: "sensadev"
+    INIT_CLASS: "SensaAppInitializer"
+    INIT_FILE: "genai.sensa_app_init"
+    MAX_FOLLOW_UP: "3"
+    PYTHONUNBUFFERED: "1"
+    REACT_APP_SOCKET_IO_HANDSHAKE: "/ws/Interaction_engine_sockets"
+    REDIS_DECODE_RESPONSES: "true"
+    REDIS_HOST: "redis-master"
+    REDIS_PORT: "6379"
+    RERUNS: "1"
+    RETURN_LINKS: "15"
+    RUN_ENV: "local"
+    PRODUCTION_ENV: "local"
+    SENSA_DATAADAPTER_ADDITIONAL_CONFIG: |
+      '{
+        "source_config": [
+          {
+            "source": "INITIAL_SUMMARY",
+            "services": [
+              {
+                "service_name": "AML_DETECTION_INITIALSUMMARY",
+                "output_transform": {
+                  "filter_rows": 100
+                }
+              }
+            ]
+          },
+          {
+            "source": "FINAL_NARRATIVE",
+            "services": [
+              {
+                "service_name": "AML_DETECTION",
+                "output_transform": {
+                  "filter_rows": 100
+                }
+              },
+             {
+                "service_name": "TRANSACTIONS",
+                "output_transform": {
+                  "filter_rows": 100
+                }
+              }
+            ]
+          }
+        ]
+      }'
+    SENSA_DATA_ADAPTER_CLASS: sensa_data_adapter.sensa_data_adapter.SensaDataAdapter
+    DATA_ADAPTER_CLASS: sensa_data_adapter.sensa_data_adapter.SensaDataAdapter
+    SENSA_URL_SCHEME: "http"
+    SOCKETIO_PATH: "/ws/Interaction_engine_sockets"
+    TRANSACTIONS_FILTER_ROWS: "100"
+    UI_RESPONSE_PATH: "/interaction-engine/api/ui_responses"
+    CUSTOM_PROMPTS_DIRECTORY: /app/genai/custom_prompts
+    AUTH_TYPE: ""
+    KEYCLOAK_SERVER_URL: ""
+    KEYCLOAK_REALM: ""
+    TRACELOOP_TELEMETRY: "false"
+    TRACELOOP_BASE_URL: http://tempo-distributor:4318
+    TRACELOOP_TRACE_CONTENT: "false"
+    OTEL_TRACELOOP_ENABLED: "true"
+    OTEL_TOKEN_METRICS_EXPORT_ENABLED: "true"
+    LANGFUSE_ENABLED: "false"
+    DEFAULT_API_RESULT_LIMIT: "1000000"
+    PGVECTOR_DB_USER: copilot
+    PGVECTOR_DB_PASSWORD: "{{ .Values.global.PASSWORD }}"
+    PGVECTOR_DB_NAME: copilot
+    PGVECTOR_DB_HOST: cn-postgres-copilot-rw
+    PGVECTOR_DB_PORT: 5432
+    interaction_service: invhub-interaction-engine
+    prompt_service: invhub-prompt-engine
+    context_service: invhub-context-engine
+    websearch_svc: invhub-websearch
+    PROMPT_ENGINE_URL: http://invhub-prompt-engine:8001
+    INTERACTION_ENGINE_URL: http://invhub-interaction-engine:8001
+    CONTEXT_ENGINE_URL: http://invhub-context-engine:8001
+    WEBSEARCH_URL: http://invhub-websearch:8001/api/v1/search
+    URL: http://invhub-interaction-engine:8001
+    PYTHON_SANDBOX_URL: http://terrarium:8080

@@ -1,0 +1,272 @@
+global:
+  database:
+    ssl:
+      enabled: true
+      mode: "verify-ca"
+      secretName: ""
+      secretCAName: ""
+      
+cn-postgres:
+  certificates:
+    serverCASecret: ""
+    serverTLSSecret: ""
+    clientCASecret: ""
+    replicationTLSSecret: ""
+  
+  postgresql:
+    pg_hba:
+      - hostnossl all all 0.0.0.0/0 reject
+      - hostssl all all all cert
+
+core-api:
+  ingress:
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      
+minio:
+  # certsPath: "/root/.minio/certs"
+  # trustedCertsSecret: minio-tls
+  
+  tls:
+    enabled: false
+    certSecret: ""
+    publicCrt: ""
+    privateKey: ""
+    
+  ingress:
+    annotations:
+      # nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      
+superset-postgres:
+  certificates:
+    serverCASecret: ""
+    serverTLSSecret: ""
+    clientCASecret: ""
+    replicationTLSSecret: ""
+    
+  postgresql:
+    pg_hba:
+      - hostnossl all all 0.0.0.0/0 reject
+      - hostssl all all all cert
+      
+superset:
+  extraVolumes:
+    - name: shared-data
+      emptyDir: {}
+    - name: certs
+      secret:
+        secretName: ""
+    - name: certs2
+      secret:
+        secretName: ""
+    - name: cacerts
+      secret:
+        secretName: ""
+        
+  extraVolumeMounts:
+    - name: shared-data
+      mountPath: "/shared-data"
+    - name: certs
+      mountPath: "/certificates"
+    - name: certs2
+      mountPath: "/certificates2"
+    - name: cacerts
+      mountPath: "/cacertificates"
+  
+  configOverrides:
+      mutator_setup: |  
+        def __mutate(app):
+          app.config.update(
+            SESSION_COOKIE_HTTPONLY = True,
+            SESSION_COOKIE_SECURE = True,
+            SESSION_COOKIE_SAMESITE = "None"
+          )
+          
+        FLASK_APP_MUTATOR = __mutate
+        
+      enable_ssl: |
+        WTF_CSRF_SSL_STRICT = True
+        SQLALCHEMY_DATABASE_URI = f"postgresql+psycopg2://{env('DB_USER')}:{env('DB_PASS')}@{env('DB_HOST')}:{env('DB_PORT')}/{env('DB_NAME')}?sslmode=verify-ca&sslrootcert=/cacertificates/ca.crt&sslcert=/certificates2/tls.crt&sslkey=/tmp/tls2.key"
+        
+  supersetNode:
+    initContainers:
+      - name: wait-for-postgres
+        image: "apache/superset:dockerize"
+        imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+        envFrom:
+          - secretRef:
+              name: ""
+        command:
+          - /bin/sh
+          - -c
+          - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -timeout 120s
+      - name: wait-for-superset-initdb
+        image: ghcr.io/cloudnative-pg/postgresql:16.10
+        imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+        env:
+          - name: DB_PASS
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: ""
+          - name: DB_USR
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: ""
+          - name: DB_HOST
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: ""
+        command:
+        - /bin/sh
+        - -c
+        - >
+          timeout=300;
+          elapsed=0;
+          export PGSSLMODE=verify-ca;
+          export PGSSLROOTCERT=/cacertificates/ca.crt;
+          export PGSSLCERT=/certificates/tls.crt;
+          cp /certificates/tls.key /tmp/tls.key;
+          chmod 600 /tmp/tls.key;
+          export PGSSLKEY=/tmp/tls.key;
+          export PGPASSWORD=$DB_PASS;
+          while true; do
+            status=$(psql -h $DB_HOST -U $DB_USR -t -A -c "select 1 from ab_user where id=1");
+            if [ "$status" = "1" ]; then
+              echo "Job completed";
+              break;
+            fi;
+            echo "Waiting for job to complete...";
+            if [ $elapsed -ge $timeout ]; then
+              echo "Timeout reached while waiting for superset db initialization";
+              exit 1;
+            fi
+            sleep 10;
+            elapsed=$((elapsed + 10))
+          done
+        volumeMounts:
+          - name: certs2
+            mountPath: "/certificates"
+          - name: cacerts
+            mountPath: "/cacertificates"
+      - name: wait-for-core-db
+        image: "apache/superset:dockerize"
+        imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+        env:
+          - name: DB_PORT
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: ""
+          - name: DB_HOST
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: ""
+        command:
+          - /bin/sh
+          - -c
+          - dockerize -wait "tcp://$DB_HOST:$DB_PORT" -timeout 120s
+      - name: init-superset
+        image: "symphonyfs.azurecr.io/symphonysensa/dethub-engine-configuration:main"
+        imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+        env:
+          - name: DATABASE_URL
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: ""
+          - name: DATABASE_SCHEMA
+            valueFrom:
+              secretKeyRef:
+                name: ""
+                key: ""
+        command:
+          - /bin/sh
+          - -ce
+          - |
+            {{- $dbssl := .Values.global.database.ssl | default dict }}
+            {{- if $dbssl.enabled | default false }}
+            export DATABASE_URL="${DATABASE_URL}?sslmode=verify-ca\\&sslrootcert=/cacertificates/ca.crt\\&sslcert=/certificates/tls.crt\\&sslkey=/tmp/tls.key"
+            {{- end }}
+            ./entrypoint.sh
+            cp -r SUPERSET /shared-data
+        volumeMounts:
+          - name: shared-data
+            mountPath: "/shared-data"
+        
+  ingress:
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      
+superset-updater:
+  database:
+    ssl:
+      enabled: true
+      mode: "verify-ca"
+      secretName: ""
+      secretCAName: ""
+    
+  volumes:
+    - name: certs
+      secret:
+        secretName: ""
+    - name: cacerts
+      secret:
+        secretName: ""
+        
+  initContainers:
+    - name: wait-for-import
+      image: ghcr.io/cloudnative-pg/postgresql:16.10
+      imagePullPolicy: Always   # inside a container spec emitted via toYaml — global.imagePullPolicy cannot reach it
+      env:
+        - name: DB_PASS
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: ""
+        - name: DB_USR
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: ""
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: ""
+              key: ""
+      command:
+        - /bin/sh
+        - -c
+        - >
+          timeout=300;
+          elapsed=0;
+          export PGSSLMODE=verify-ca;
+          export PGSSLROOTCERT=/cacertificates/ca.crt;
+          export PGSSLCERT=/certificates/tls.crt;
+          cp /certificates/tls.key /tmp/tls.key;
+          chmod 600 /tmp/tls.key;
+          export PGSSLKEY=/tmp/tls.key;
+          export PGPASSWORD=$DB_PASS;
+          while true; do
+            status=$(psql -h $DB_HOST -U $DB_USR -t -A -c "select 1 from dashboards where uuid='4326db5e-404c-4947-8351-bba7b2cf78d9'");
+            if [ "$status" = "1" ]; then
+              echo "Job completed";
+              break;
+            fi;
+            echo "Waiting for job to complete...";
+            if [ $elapsed -ge $timeout ]; then
+              echo "Timeout reached while waiting for superset db initialization"
+              exit 1
+            fi
+            sleep 10;
+            elapsed=$((elapsed + 10))
+          done
+      volumeMounts:
+        - name: certs
+          mountPath: "/certificates"
+        - name: cacerts
+          mountPath: "/cacertificates"

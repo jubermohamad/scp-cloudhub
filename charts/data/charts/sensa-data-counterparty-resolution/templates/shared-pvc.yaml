@@ -1,0 +1,16 @@
+# Shared workdir: mounted at the same path on the Spark driver + executors (generated messages,
+# Spark checkpoints/warehouse) and read by the api (metrics.json). RWO suffices on single-node
+# minikube (all pods co-locate); AKS uses an RWX class (values-aks.yaml).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "cpr.fullname" . }}-shared
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+spec:
+  accessModes: [{{ .Values.sharedWorkdir.persistence.accessMode | quote }}]
+  resources:
+    requests:
+      storage: {{ .Values.sharedWorkdir.persistence.size }}
+  {{- with .Values.sharedWorkdir.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}

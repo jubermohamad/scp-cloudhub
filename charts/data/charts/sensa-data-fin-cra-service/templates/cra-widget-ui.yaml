@@ -1,0 +1,49 @@
+{{- if .Values.craWidgetUi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # Renamed from the hand-applied original: platform prefix convention.
+  name: {{ include "craService.prefix" . }}-widget-ui
+  labels:
+    app: cra-widget-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cra-widget-ui
+  template:
+    metadata:
+      labels:
+        app: cra-widget-ui
+      {{- include "craService.podAnnotations" . | nindent 6 }}
+    spec:
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      containers:
+        - name: cra-widget-ui
+          image: {{ include "craService.image" (dict "root" . "name" .Values.craWidgetUi.imageName) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: {{ .Values.craWidgetUi.port }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.craWidgetUi.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # Renamed from the hand-applied original: platform prefix convention.
+  name: {{ include "craService.prefix" . }}-widget-ui
+  labels:
+    app: cra-widget-ui
+spec:
+  selector:
+    app: cra-widget-ui
+  ports:
+    - port: {{ .Values.craWidgetUi.port }}
+      targetPort: {{ .Values.craWidgetUi.port }}
+{{- end }}

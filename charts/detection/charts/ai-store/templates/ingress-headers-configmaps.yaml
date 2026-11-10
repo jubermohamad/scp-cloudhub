@@ -1,0 +1,42 @@
+{{- $rh := .Values.ingress.responseHeaders | default dict }}
+{{- if and .Values.ingress.enabled (default true $rh.enabled) }}
+{{- $base := .Values.ingress.responseHeaders.base | default dict }}
+{{- $auth := mergeOverwrite (deepCopy $base) (.Values.ingress.responseHeaders.authExtra | default dict) }}
+{{- $mcp := mergeOverwrite (deepCopy $base) (.Values.ingress.responseHeaders.mcpExtra | default dict) }}
+{{- $app := mergeOverwrite (deepCopy $base) (.Values.ingress.responseHeaders.app | default dict) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "model-store.fullname" . }}-ingress-hdr-auth
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+data:
+{{- range $k, $v := $auth }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "model-store.fullname" . }}-ingress-hdr-mcp
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+data:
+{{- range $k, $v := $mcp }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "model-store.fullname" . }}-ingress-hdr-app
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+data:
+{{- range $k, $v := $app }}
+  {{ $k }}: {{ $v | quote }}
+{{- end }}
+{{- end }}

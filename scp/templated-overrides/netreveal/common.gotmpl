@@ -1,0 +1,120 @@
+appSCPHelmPipelineRefs:
+  helmChartRepo: "{{ .Values.helm_chart_repo_forwardslash_name }}"
+  helmChartVersion: "{{ .Values.helm_chart_version }}"
+  helmChartValuesFileRef: "{{ .Values.helm_chart_values_file_ref }}"
+  projectOverlayFilesRef: "{{ .Values.project_overlay_files_ref }}"
+  deploymentDateTimeStamp: "{{ now }}"
+  deploymentFromGithubRepo: '{{ requiredEnv "GITHUB_REPOSITORY" }}'
+  deploymentGitHubAction: '{{ requiredEnv "GITHUB_ACTION" }}'
+  deploymentRepoBranch: '{{ requiredEnv "GITHUB_REF_NAME" }}'
+  deploymentByGithubTriggeringActor: '{{ requiredEnv "GITHUB_TRIGGERING_ACTOR" }}'
+  deploymentGithubRunAttempt: '{{ requiredEnv "GITHUB_RUN_ATTEMPT" }}'
+  deploymentGithubRunnerEnv: '{{ requiredEnv "RUNNER_ENVIRONMENT" }}'
+  deploymentGithubRunnerName: '{{ requiredEnv "RUNNER_NAME" }}'
+
+global:
+  useImagePullSecrets: "true"
+  dockerRegistryName: "symphonyfs.azurecr.io/symphonysensa"
+  grafanaNamespace: "{{ .Values.namespace }}"
+  {{- if eq .Values.client_facing "true" }}
+  ingressWildCardDns: "symphonyai.cloud"
+  {{- else }}
+  ingressWildCardDns: "symphonyai.dev"
+  {{- end }}
+  envType: "{{ .Values.envType }}"
+  clientSubDomain: "{{ .Values.clientSubDomain }}"
+  minio:
+    clientUser: "{{ .Values.clientSubDomain }}-{{ .Values.envType }}"
+  namespace: "{{ .Values.namespace }}"
+  prometheus:
+    release: "{{ .Values.namespace }}"
+  nrSubChartSwitches:
+    enableKeycloak: false
+    {{- if eq (requiredEnv "APP_NAME") "edb-netrevealv96" }}
+    enableAap: false # TEMPORARILY DISABLING THIS FOR AA DEPLOYMENTS AS IT DOES NOT WORK UNTIL DAREK IS ABLE TO RELEASE netrevealv96-3.1.0-a8, which may be WC June 1st 
+    {{- end }}
+  saml:
+    enabled: false
+{{- if .Values.dr_enabled }}
+  pv:
+    storageClassName: "{{ .Values.namespace }}-nfs-csi"
+    rwmStorageClassName: "{{ .Values.namespace }}-nfs-csi"
+{{- end }}
+
+{{- if .Values.dr_enabled }}
+cloudnative-postgresql:
+  storage:
+    storageClass: "{{ .Values.namespace }}-nfs-csi"
+er-init:
+  pv:
+    className: "{{ .Values.namespace }}-nfs-csi"
+minio:
+  persistence:
+    storageClass: "{{ .Values.namespace }}-nfs-csi"
+opensearch:
+  persistence:
+    storageClass: "{{ .Values.namespace }}-nfs-csi"
+{{- end }}
+
+kube-prometheus-stack:
+  namespaceOverride: "{{ .Values.namespace }}"
+  grafana:
+    namespaceOverride: "{{ .Values.namespace }}"
+  kube-state-metrics:
+    namespaceOverride: "{{ .Values.namespace }}"
+  prometheus-node-exporter:
+    namespaceOverride: "{{ .Values.namespace }}"
+
+rtde:
+  namespaceOverride: "{{ .Values.namespace }}"
+
+spark-operator:
+  podAnnotations:
+    restart-after/upgrade: {{ exec "bash" (list "-c" "uuidgen") }}
+  sparkJobNamespace: "{{ .Values.namespace }}"
+  sparkJobNamespaces:
+    - "{{ .Values.namespace }}"
+  spark:
+    jobNamespaces:
+      - "{{ .Values.namespace }}"
+
+standalone:
+  dbInit:
+    licence:
+      licenceKey: '{{ env "CLOUDHUB_STANDALONE__DBINIT__LICENCE__LICENCEKEY" }}'
+
+nrodsftp:
+  nrodsftp:
+    image:
+        repository: symphonyfs.azurecr.io/symphonysensa/nrodsftp
+  redis:
+    global:
+      security:
+        allowInsecureImages: true
+      imagePullSecrets:
+        - regcred
+      imageRegistry: "symphonyfs.azurecr.io"
+
+keycloak:
+  global:
+    security:
+      allowInsecureImages: true
+    imagePullSecrets:
+      - regcred
+    imageRegistry: "symphonyfs.azurecr.io"
+
+{{- if eq (requiredEnv "APP_NAME") "edb-netrevealv96" }}
+kafka-cluster:
+  mirrorMaker2:
+    replicas: 2
+    # Strimzi 0.45+: MM2 runs in the TARGET namespace (this deployment). spec.target resolves
+    # to the local Kafka CR. The SOURCE cluster (r2, netreveal) is configured via spec.source.
+    enabled: true
+{{- end }}
+
+cloudnative-postgresql:
+{{- if eq .Values.helm_chart_values_file_name "params-nr-nrod.yaml" }}
+  instances: 2
+{{- else }}
+  instances: 3
+{{- end }}

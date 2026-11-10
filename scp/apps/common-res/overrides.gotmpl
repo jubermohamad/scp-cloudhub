@@ -1,0 +1,17 @@
+# # # This file's purpose is to override any common-res OR ingress-nginx values if needed, for example port forwarding,
+# # # but is used only in some specific cases when Client requires SFTP instead of MinIO or we need direct DB access for simulation load testing, eg. in OAT testing.
+# # # However, usually we won't allow anyone to connect directly - instead the preference is to use HTTPS (port 443) and/or VDIs.
+
+# # # Example of usage:
+
+# # # ingress-nginx:
+# # #   tcp:
+# # #     _EXT_PORT_: "_NS_/minio:8022"
+# # #     _EXT_PORT_: "_NS_/postgresql-cluster-rw:5432"
+# # #     _EXT_PORT_: "_NS_/kafka-kafka-bootstrap:9093"
+
+# # # FOR EXAMPLE:
+# # # ingress-nginx:
+# # #   tcp:
+# # #     15432: "nr-oat/nr-oat-postgresql-cluster-rw:5432"
+# # #     15433: "nr-del/nr-del-postgresql-cluster-rw:5432"

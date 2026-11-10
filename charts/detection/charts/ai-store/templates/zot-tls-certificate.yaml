@@ -1,0 +1,21 @@
+{{- $issuerName := .Values.zot.tls.certManager.issuerRef.name | default "" | trim }}
+{{- if and (default false .Values.internalServices.zot.enabled) .Values.zot.tls.enabled .Values.zot.tls.certManager.enabled .Values.zot.tls.certManager.createCertificate (.Capabilities.APIVersions.Has "cert-manager.io/v1/Certificate") (ne $issuerName "") }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-zot-tls
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "model-store.modelhubTlsSecret" . | quote }}
+  duration: {{ .Values.zot.tls.certManager.duration | quote }}
+  renewBefore: {{ .Values.zot.tls.certManager.renewBefore | quote }}
+  privateKey:
+    rotationPolicy: Always
+  dnsNames:
+    - {{ printf "%s.%s.svc.cluster.local" (.Values.zot.fullnameOverride | default "zot") (include "model-store.namespace" .) | quote }}
+    - {{ .Values.zot.fullnameOverride | default "zot" | quote }}
+  issuerRef:
+    {{- toYaml .Values.zot.tls.certManager.issuerRef | nindent 4 }}
+{{- end }}

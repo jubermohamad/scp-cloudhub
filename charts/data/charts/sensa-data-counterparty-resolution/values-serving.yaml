@@ -1,0 +1,59 @@
+# Serving-only + on-demand builds — the PO-demo profile.
+#
+# No install-time backfill: the store starts empty and you drive builds from the Builds page
+# (POST /builds). Datasets are staged on the node under /data; each immediate subdir (e.g.
+# /data/smoke, /data/1m) becomes a selectable option in the Builds dropdown, and the build CRs
+# mount /data so any of them resolves. See deploy/README.md → "Clean serving-only demo".
+#
+# Use on a FRESH minikube (operators install by inheriting the base defaults — postgresOperator.install
+# and sparkOperator.install stay true). On a re-install into a cluster that ALREADY has CNPG /
+# spark-operator cluster-wide, add `--set postgresOperator.install=false --set sparkOperator.install=false`
+# so the shared operators aren't reinstalled (they collide).
+
+# ── Storage + query backends (R69) — the two seams. Both default to `postgres` and both are stated
+# explicitly here so the profile is self-describing: flipping to Iceberg is a one-line change in this
+# file (plus `query.backend: iceberg`, since a read backend must match where the data lives — design
+# §8), not a --set to remember. `storage.iceberg.*` in values.yaml carries the catalog/warehouse.
+storage:
+  backend: postgres
+query:
+  backend: postgres
+
+# Don't run a backfill at install time — the store is populated on demand from the UI.
+# Build (driver/executor) sizing here also applies to the on-demand build CRs (the api injects it).
+# Tuned for an 8-cpu / ~18g minikube (`--cpus=8 --memory=18g`): 1 driver core + 2 executors × 2 cores
+# = 5 cores (4-way task parallelism for 1M throughput), 2g driver + 2×4g executors ≈ 10g Spark RAM.
+# This is the proven footprint that completes the full 1M build end-to-end. Executor memory is 4g on
+# purpose: 2g executors are OOMKilled (ExitCode 137) parsing the batched 1M pacs.008 XML in stage 0
+# (the Python parse UDF is off-heap-heavy). Give the node its 8 CPUs — on a smaller node the 2-core
+# executors leave no room for a replacement to schedule during churn ("Insufficient cpu"), so scale up
+# the node rather than cutting executor cores/memory.
+backfill:
+  enabled: false
+  driver:
+    cores: 1
+    memory: 2g
+  executor:
+    instances: 2
+    cores: 2
+    memory: 4g
+  sparkConf:
+    # Size to executor cores (2×2=4), NOT a blanket 200: AQE coalesces the reduce side, but the map
+    # side still fans out at the initial count across every shuffle stage, and at a small core count
+    # that per-task overhead outweighs any parallelism gain (measured: 200 was ~1min slower than 16 on
+    # a 1M build at this footprint). Raise this on a many-core cluster where 4 cores would bottleneck.
+    # ⚠️ 16 is right for ~1-2M observations and WRONG above that: partition count decides how much
+    # data one task holds, so it scales with the DATASET, not the cluster. At 20.17M observations the
+    # same 16 gives 1.26M rows per partition and OOMKills executors — the build never completes. Rule
+    # of thumb `partitions ≈ observations / 150_000` (reproduces 16 here); see values-10m.yaml.
+    spark.sql.shuffle.partitions: "16"
+    spark.default.parallelism: "16"
+
+api:
+  builds:
+    enabled: true
+    # ONE knob: the dataset root on the node. Its subdirs are the Builds-page dataset options, and the
+    # build driver/executors mount this whole dir (mountPath + datasetRoot default to it), so any
+    # input_location under /data resolves — no PATH_NOT_FOUND from a mount/enumerate mismatch.
+    messages:
+      hostPath: /data

@@ -1,0 +1,53 @@
+{{- if and .Values.enabled .Values.scheduler.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "monitoring-tool.fullname" . }}-scheduler
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "monitoring-tool.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scheduler
+spec:
+  replicas: {{ .Values.scheduler.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "monitoring-tool.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: scheduler
+  template:
+    {{- $g := index .Values "global" | default dict }}
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "monitoring-tool.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: scheduler
+      annotations:
+        modelhub.dev/monitoring-entrypoint: venv-python
+        {{- range $k, $v := (.Values.podAnnotations | default dict) }}
+        {{ $k }}: {{ $v | quote }}
+        {{- end }}
+        {{- if $g.rolloutOnHelmUpgrade }}
+        modelhub.dev/helm-release-revision: {{ .Release.Revision | quote }}
+        modelhub.dev/helm-release-name: {{ .Release.Name | quote }}
+        {{- end }}
+    spec:
+      {{- with $g.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ .name | default . }}
+        {{- end }}
+      {{- end }}
+      serviceAccountName: {{ include "monitoring-tool.serviceAccountName" . }}
+      containers:
+        - name: monitoring-scheduler
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - "/app/.venv/bin/python"
+            - "-m"
+            - "src.run_scheduler"
+          env:
+            {{- include "monitoring-tool.containerEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+{{- end }}

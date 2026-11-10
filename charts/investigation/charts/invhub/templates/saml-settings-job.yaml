@@ -1,0 +1,187 @@
+{{- /*
+InvHub's APP-SIDE SAML settings Job — the other half of keycloak-setup-job.yaml.
+
+keycloak-setup-job.yaml provisions KEYCLOAK material (client `investigation-hub`,
+the `investigation-hub-*` realm roles, attribute mappers). It cannot make InvHub
+USE any of it. That switch lives in InvHub's own database as the `SAML_SETTINGS`
+row of `key_values`, and until it is written the login page shows the built-in
+email-verification-code form and `getSamlSettings.status` is `Empty`.
+
+WHY NOT THE `configurator` JOB: the configurator is the natural home for
+app-side settings and already holds the install-admin API key — but its script is
+baked into the prebuilt `invhub-config` image and takes its inputs from a fixed
+set of env vars, none of them SAML. It cannot be extended from this repo, so this
+is a separate, repo-owned Job.
+
+WHY NOT A SQL UPSERT INTO `key_values`: the row is not the interface. The
+`updateSamlSettings` mutation downloads and xml2js-parses the IdP metadata to
+derive `entityId` and `redirectUrl`, enforces the mandatory-field and
+admin-role-mapping rules, writes an audit log, and re-initialises the live
+samlify providers in the running process. A direct INSERT skips all of that AND
+would not take effect, because SamlService caches the providers and
+`setupProviders()` early-returns once they are set.
+
+ONE-WAY DOOR. Once `status` is `Set`, `createNewLoginCode` returns
+`samlCallbackUrl` for EVERY email unconditionally — the email-code login is gone
+for all users and every account must come from Keycloak. The UI also refuses to
+edit or deactivate users. Accepted deliberately by the platform owner on
+2026-08-13. Reversal is `deleteSamlSettings` (see docs/INVHUB-SSO.md); the
+install-admin API key keeps working throughout and is the way back in.
+*/}}
+{{- if .Values.samlSettings.enabled }}
+{{- $s := .Values.samlSettings }}
+{{- if not $s.samlMetaDataUrl }}
+{{- fail "invhub.samlSettings.enabled requires samlSettings.samlMetaDataUrl (the IN-CLUSTER realm SAML descriptor URL — the api pod fetches it server-side and has no route to the public ingress)" }}
+{{- end }}
+{{- if not $s.idpSsoUrl }}
+{{- fail "invhub.samlSettings.enabled requires samlSettings.idpSsoUrl — and it must be the IDP-INITIATED URL (.../protocol/saml/clients/<name>), not the plain realm .../protocol/saml that Keycloak's metadata advertises: this backend rejects SP-initiated login outright" }}
+{{- end }}
+{{- if not (contains "/protocol/saml/clients/" $s.idpSsoUrl) }}
+{{- fail (printf "invhub.samlSettings.idpSsoUrl must be the IDP-INITIATED SSO URL containing '/protocol/saml/clients/', got %q. The plain realm SAML URL produces a login that always fails ('SP-initiated login is not supported!')." $s.idpSsoUrl) }}
+{{- end }}
+{{- if not $s.groupMappings }}
+{{- fail "invhub.samlSettings.enabled requires at least one samlSettings.groupMappings entry whose roleIds contain the literal \"admin\", or nobody can administer InvHub after SSO is switched on" }}
+{{- end }}
+{{- $hasAdmin := false }}
+{{- range $s.groupMappings }}{{- if has "admin" .roleIds }}{{- $hasAdmin = true }}{{- end }}{{- end }}
+{{- if not $hasAdmin }}
+{{- fail "invhub.samlSettings.groupMappings must include an entry whose roleIds contain the literal \"admin\" (AdminRoleValues.ADMIN_ROLE_ID). The backend rejects the whole payload with SamlSettingsMissingAdminRoleMappingError otherwise, so this would fail at runtime instead." }}
+{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-invhub-saml-settings" .Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: invhub-saml-settings
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+  annotations:
+    # post-phase: it talks to the invhub api over the network, which does not
+    # exist until the apply phase has run.
+    helm.sh/hook: post-install,post-upgrade
+    # AFTER keycloak-setup (10) so the client and roles exist, and after the
+    # configurator (4) which seeds users — enabling SAML blocks in-app user
+    # edits, so all seeding must already have happened.
+    helm.sh/hook-weight: {{ $s.hookWeight | quote }}
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ $s.backoffLimit }}
+  {{- if $s.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ $s.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: invhub-saml-settings
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: saml-settings
+        image: "{{ $s.image.repository }}:{{ $s.image.tag }}"
+        imagePullPolicy: {{ $s.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+        env:
+        - name: API
+          value: "http://{{ include "invhub.apiService" . }}:3001"
+        - name: SETUP_EMAIL
+          value: {{ $s.setupEmail | default "setup@fseng.net" | quote }}
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: invhub-service-api-keys
+              key: investigation-hub-install-admin-user-api-key
+        - name: META_URL
+          value: {{ $s.samlMetaDataUrl | quote }}
+        - name: IDP_SSO_URL
+          value: {{ $s.idpSsoUrl | quote }}
+        - name: MAP_FIRST
+          value: {{ $s.fieldMappingFirstName | quote }}
+        - name: MAP_LAST
+          value: {{ $s.fieldMappingLastName | quote }}
+        - name: MAP_EMAIL
+          value: {{ $s.fieldMappingEmail | quote }}
+        - name: MAP_GROUP
+          value: {{ $s.fieldMappingGroup | quote }}
+        - name: GROUP_MAPPINGS
+          # rendered as JSON so the shell never has to build it
+          value: {{ $s.groupMappings | toJson | quote }}
+        command:
+        - /bin/sh
+        - -ec
+        - |
+          # ---------------------------------------------------------------
+          # Wait for the api. Its GraphQL endpoint is the contract, and
+          # getSamlSettings is deliberately unauthenticated, so it doubles as
+          # the readiness probe.
+          # ---------------------------------------------------------------
+          echo "==> waiting for invhub api at $API"
+          i=0
+          until curl -sf -o /tmp/probe -X POST "$API/graphql" \
+                  -H 'Content-Type: application/json' \
+                  -d '{"query":"{ getSamlSettings { status } }"}'; do
+            i=$((i+1))
+            if [ "$i" -ge 60 ]; then
+              echo "ERROR: invhub api did not answer GraphQL after 60 attempts" >&2
+              exit 1
+            fi
+            echo "    waiting ($i)..."
+            sleep 5
+          done
+          echo "==> current SAML status: $(cat /tmp/probe)"
+
+          # ---------------------------------------------------------------
+          # Exchange the install-admin API key for a bearer token. This path
+          # does NOT consult SAML, which is what makes it the way back in
+          # after SSO is enabled.
+          # ---------------------------------------------------------------
+          # NOTE: built with printf, not a heredoc. Inside a YAML block scalar
+          # every line carries leading spaces, and an indented heredoc
+          # terminator does not close the heredoc in POSIX sh (`<<-` strips
+          # tabs, never spaces), so the script would hang or run past its end.
+          echo "==> apiLogin as $SETUP_EMAIL"
+          printf '{"query":"mutation ApiLogin($input: ApiLoginInput!) { apiLogin(input: $input) { accessToken } }","variables":{"input":{"email":"%s","apiKey":"%s"}}}' \
+            "$SETUP_EMAIL" "$API_KEY" >/tmp/login.json
+          curl -sf -o /tmp/login.out -X POST "$API/graphql" \
+            -H 'Content-Type: application/json' --data @/tmp/login.json
+          TOKEN=$(sed -n 's/.*"accessToken":"\([^"]*\)".*/\1/p' /tmp/login.out)
+          if [ -z "$TOKEN" ]; then
+            echo "ERROR: apiLogin returned no accessToken:" >&2
+            cat /tmp/login.out >&2
+            exit 1
+          fi
+          echo "    token acquired"
+
+          # ---------------------------------------------------------------
+          # Apply the settings. Convergent: the mutation is an upsert, so
+          # re-running it on every upgrade simply reasserts the desired state.
+          # ---------------------------------------------------------------
+          # GROUP_MAPPINGS is already JSON (rendered by the chart with toJson),
+          # so it is spliced in raw with %s rather than quoted as a string.
+          echo "==> updateSamlSettings"
+          printf '{"query":"mutation U($input: SamlSettingsInput!) { updateSamlSettings(input: $input) { status entityId redirectUrl fieldMappingEmail fieldMappingGroup groupMappings { groupId roleIds } } }","variables":{"input":{"samlMetaDataUrl":"%s","idpSsoUrl":"%s","fieldMappingFirstName":"%s","fieldMappingLastName":"%s","fieldMappingEmail":"%s","fieldMappingGroup":"%s","groupMappings":%s}}}' \
+            "$META_URL" "$IDP_SSO_URL" "$MAP_FIRST" "$MAP_LAST" \
+            "$MAP_EMAIL" "$MAP_GROUP" "$GROUP_MAPPINGS" >/tmp/mut.json
+
+          HTTP=$(curl -s -o /tmp/mut.out -w '%{http_code}' -X POST "$API/graphql" \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $TOKEN" \
+            --data @/tmp/mut.json)
+          echo "    HTTP $HTTP"
+          cat /tmp/mut.out
+          echo
+          # GraphQL reports application errors inside a 200, so the status code
+          # alone is not enough — fail loudly on an `errors` array.
+          if [ "$HTTP" != "200" ] || grep -q '"errors"' /tmp/mut.out; then
+            echo "ERROR: updateSamlSettings failed" >&2
+            exit 1
+          fi
+          if ! grep -q '"status":"Set"' /tmp/mut.out; then
+            echo "ERROR: settings written but status is not 'Set' — SSO would not be active" >&2
+            exit 1
+          fi
+          echo "==> InvHub SAML settings applied; status=Set"
+        {{- with $s.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+{{- end }}

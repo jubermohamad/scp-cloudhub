@@ -1,0 +1,7 @@
+# P9: the OPERATOR now lives in `common` (charts/common/Chart.yaml). What stays
+# here is the ServiceAccount + RBAC that Spark DRIVER pods run as: the
+# SparkApplication run templates uploaded to the sparktemplates bucket name it
+# verbatim ("serviceAccount": "spark-operator-manipulator"), and a driver
+# resolves that name in its own namespace — so it must exist wherever the jobs
+# run, which is the detection namespace.
+enabled: true

@@ -1,0 +1,39 @@
+{{ $currentScope := .}}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name}}-sensaai-sanctions
+  namespace: {{ tpl .Values.namespace . }}
+spec:
+  secretName: {{ .Release.Name }}-sensaai-sanctions-cert
+  duration: {{ tpl .Values.certificate.duration . }}
+  renewBefore: {{ tpl .Values.certificate.renewBefore . }}
+  dnsNames:
+  - localhost
+  - {{ .Release.Name }}-sensaai-sanctions
+  - {{ .Release.Name }}-sensaai-sanctions.{{ tpl .Values.namespace . }}.svc
+  - {{ .Release.Name }}-sensaai-sanctions.{{ tpl .Values.namespace . }}.svc.cluster.local
+  - {{ .Release.Name }}-nr-ui.{{ tpl .Values.namespace . }}.svc.cluster.local
+  - {{ .Release.Name }}-sensaai-sanctions.{{ .Release.Name }}-sensaai-sanctions.{{ tpl .Values.namespace . }}.svc.cluster.local
+  {{- if .Values.certificate.extraDnsList }}
+    {{- range $item := .Values.certificate.extraDnsList }}
+  {{- with $currentScope }}
+  - {{ tpl $item . }}
+  {{- end }}
+    {{- end }}
+  {{- end }}
+  subject:
+    organizations: {{ .Values.certificate.subject.organizations }}
+    countries: {{ .Values.certificate.subject.countries }}
+    organizationalUnits: {{ .Values.certificate.subject.organizationalUnits }}
+    localities: {{ .Values.certificate.subject.localities }}
+    provinces: {{ .Values.certificate.subject.provinces }}
+  issuerRef:
+    name: {{ include "issuer.ca.issuerRef.name" . }}
+  keystores:
+    pkcs12:
+      create: false
+  secretTemplate:
+      annotations:
+        reloader.stakater.com/match: "true"

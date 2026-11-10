@@ -1,0 +1,159 @@
+{{- if .Values.sandboxTrigger.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-sandbox-trigger
+  labels:
+    app: assembly-sandbox-trigger
+    tier: platform
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.sandboxTrigger.replicas }}
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: assembly-sandbox-trigger
+  template:
+    metadata:
+      labels:
+        app: assembly-sandbox-trigger
+        tier: platform
+        {{- include "aw.labels" . | nindent 8 }}
+      annotations:
+        # Forces a rollout whenever platform-secrets changes -- secretKeyRef env
+        # vars are read once at container start, so without this a secret rotation
+        # never reaches already-running pods (#1325). Secrets are deterministic now
+        # (no randAlphaNum/lookup), so we hash the rendered Secret directly: it
+        # changes iff the actual content changes (incl. database-url, derived from
+        # the pg password) -- no spurious rollout on values-structure changes, and
+        # no need to fold in infra.postgres/externalInfra.
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.scheduling" . | nindent 6 }}
+      topologySpreadConstraints:
+        # Soft: this tier has not been measured as placement-sensitive the way
+        # sandbox-execute was (#2123), so the spread stays a preference rather
+        # than a scheduling gate.
+        #
+        # matchLabelKeys still matters even while soft. Without it the scheduler
+        # scores a new pod against the OUTGOING revision's placement too, so
+        # during a rollout it can "prefer" a node that is only empty of new pods
+        # while already crowded with old ones. Per-revision scoring is what makes
+        # the preference actually spread the new ReplicaSet.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app: assembly-sandbox-trigger
+      containers:
+        - name: {{ include "aw.prefix" . }}-sandbox-trigger
+          image: {{ include "aw.image" (dict "registry" .Values.image.registry "repo" .Values.sandboxTrigger.image.repository "default" "assembly-workflows-sandbox" "tag" .Values.sandboxTrigger.image.tag "globalTag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          args:
+            - python
+            - -m
+            - uvicorn
+            - app.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8003"
+            - --workers
+            - "4"
+          ports:
+            - containerPort: 8003
+          env:
+            - name: SANDBOX_APP_MODE
+              value: "trigger-only"
+            - name: SANDBOX_DOCKER_AVAILABLE
+              value: "false"
+            - name: ASSEMBLY_CORE_URL
+              value: "http://{{ include "aw.prefix" . }}-core:8000"
+            - name: ASSEMBLY_ENGINE_URL
+              value: "http://{{ include "aw.prefix" . }}-engine:8000"
+            {{- with (include "aw.keycloakExpectedIssuer" .) }}
+            - name: KEYCLOAK_EXPECTED_ISSUER
+              value: {{ . | quote }}
+            {{- end }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: database-url
+            - name: REDIS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: redis-url
+            - name: INTERNAL_SERVICE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aw.secretName" . }}
+                  key: internal-service-api-key
+            - name: ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aw.prefix" . }}-platform-config
+                  key: environment
+            # Alias resolution kill switch (docs/webhook-aliases.md). Emitted only
+            # when explicitly disabled, so the default render is unchanged.
+            # NOTE: `| default true` would be WRONG here — Helm's `default` treats
+            # false as empty, so an explicit `false` would silently read back as
+            # true and the switch would never take effect.
+            {{- if eq (toString .Values.sandboxTrigger.aliasResolutionEnabled) "false" }}
+            - name: WEBHOOK_ALIAS_RESOLUTION_ENABLED
+              value: "false"
+            {{- end }}
+            {{- with (include "aw.webhookRunAllowlist" .) }}
+            # Cross-owner webhook invoke allowlist (run delegated to the deployment
+            # owner). Derived from flowsIntegration.serviceUser + any extra subjects
+            # in sandboxTrigger.webhookRunAllowlist. Empty => omitted, fail-closed.
+            - name: WEBHOOK_RUN_ALLOWLIST
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.sandboxTrigger.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.sandboxTrigger.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/sandbox/api/v1/health
+              port: 8003
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: {{ .Values.sandboxTrigger.probes.liveness.timeoutSeconds | default 10 }}
+            failureThreshold: {{ .Values.sandboxTrigger.probes.liveness.failureThreshold | default 6 }}
+          readinessProbe:
+            httpGet:
+              path: /api/sandbox/api/v1/health
+              port: 8003
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: {{ .Values.sandboxTrigger.probes.readiness.timeoutSeconds | default 10 }}
+            failureThreshold: {{ .Values.sandboxTrigger.probes.readiness.failureThreshold | default 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-sandbox-trigger
+  labels:
+    app: assembly-sandbox-trigger
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8003
+      targetPort: 8003
+  selector:
+    app: assembly-sandbox-trigger
+{{- end }}

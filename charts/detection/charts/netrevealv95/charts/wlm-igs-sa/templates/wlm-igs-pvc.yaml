@@ -1,0 +1,76 @@
+{{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+{{ $currentScope := .}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-wlm-igs-sa-logs-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "wlmIgsSa.pvcApplicationLogsStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "wlm-igs-sa") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "wlm-igs-sa-logs" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-igs-sa-{{ $i }}/logs
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-igs-sa-{{ $i }}/logs
+  {{- end }}
+{{- end }}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-wlm-igs-sa-conf-wlm-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "wlmIgsSa.pvcConfWlmStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "wlm-igs-sa") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "wlm-igs-sa-conf-wlm" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-igs-sa-{{ $i }}/conf/wlm
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/wlm-igs-sa-{{ $i }}/conf/wlm
+  {{- end }}
+{{- end -}}
+
+{{- end }}

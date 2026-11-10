@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-zeppelin-server
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "zeppelin-server.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zeppelin-server
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        {{- include "zeppelin-server.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-zeppelin-server
+      imagePullSecrets:
+        - name: regcred
+      volumes:
+      {{- if .Values.auth.enabled }}
+        - name: {{ .Release.Name }}-zeppelin-shiro-config
+          secret:
+            secretName: {{ .Release.Name }}-zeppelin-shiro-config
+      {{- end }}
+      {{- if .Values.persistence.enabled }}
+        - name: {{ .Release.Name }}-notebook-storage
+          persistentVolumeClaim:
+            claimName: zeppelin-notebook-storage
+      {{- end }}
+      {{- if and .Values.global.nrSubChartSwitches.enableSmbd (ne (len .Values.global.nrSparkSolutionSwitches.smbd) 0) }}
+        {{- range $key := .Values.global.nrSparkSolutionSwitches.smbd }}
+        - name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s" $key "smbd-data-pvc")) | quote }}
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s" $key "smbd-data-pvc")) | quote }}
+        {{- end }}
+      {{- end }}
+      securityContext:
+        runAsUser: 200
+        runAsGroup: 200
+        fsGroup: 200
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: zeppelin-server
+          image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.image.zeppelin }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c", "$(ZEPPELIN_HOME)/bin/zeppelin.sh"]
+          securityContext:
+            #readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "ps -ef | grep org.apache.zeppelin.server.ZeppelinServer | grep -v grep | awk '{print $2}' | xargs kill"]
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: https
+              containerPort: 8443
+            - name: rpc
+              containerPort: 12320
+          resources:
+            limits:
+              cpu: {{ .Values.resources.limits.cpu }}
+              memory: {{ .Values.resources.limits.memory }}
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}
+          {{- if .Values.readinessProbe }}
+          readinessProbe:
+            {{ toYaml .Values.readinessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .Values.livenessProbe }}
+          livenessProbe:
+            {{ toYaml .Values.livenessProbe | nindent 12 }}
+          {{- end }}
+          env:
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.uid
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-zeppelin-server-conf-map
+          volumeMounts:
+          {{- if .Values.auth.enabled }}
+            - name: {{ .Release.Name }}-zeppelin-shiro-config
+              mountPath: /opt/zeppelin/conf/shiro.ini
+              subPath: shiro.ini
+          {{- end }}
+          {{- if .Values.persistence.enabled }}
+            - name: {{ .Release.Name }}-notebook-storage
+              mountPath: /opt/zeppelin/notebook
+          {{- end }}
+
+            {{- if and .Values.global.nrSubChartSwitches.enableSmbd (ne (len .Values.global.nrSparkSolutionSwitches.smbd) 0) }}
+              {{- range $key := .Values.global.nrSparkSolutionSwitches.smbd }}
+            - name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s" $key "smbd-data-pvc")) | quote }}
+              mountPath: /opt/smbd-{{ $key }}/profile_storage
+              subPath: profile_storage
+            - name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s" $key "smbd-data-pvc")) | quote }}
+              mountPath: /opt/smbd-{{ $key }}/SMID
+              subPath: SMID
+            - name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s" $key "smbd-data-pvc")) | quote }}
+              mountPath: /opt/smbd-{{ $key }}/profile_output_location
+              subPath: profile_output_location
+            - name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s" $key "smbd-data-pvc")) | quote }}
+              mountPath: /opt/smbd-{{ $key }}/mnt_profile_output_location
+              subPath: mnt_profile_output_location
+            - name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s" $key "smbd-data-pvc")) | quote }}
+              mountPath: /opt/smbd-{{ $key }}/profileRecycleBin
+              subPath: profileRecycleBin
+              {{- end }}
+            {{- end }}

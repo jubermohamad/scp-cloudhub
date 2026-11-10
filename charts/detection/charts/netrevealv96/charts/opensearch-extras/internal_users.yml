@@ -1,0 +1,9 @@
+_meta:
+  type: "internalusers"
+  config_version: 2
+admin:
+  hash: "{{ .Values.secret.hash }}"
+  reserved: true
+  backend_roles:
+    - "admin"
+  description: "Admin user with new password"

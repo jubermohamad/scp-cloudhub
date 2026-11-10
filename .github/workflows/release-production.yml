@@ -1,0 +1,315 @@
+name: 'Release (ADVANCED - Production Grade) - Chained Build/Deploy'
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_prefix:
+        description: 'Version prefix used by build workflow (beta/rc base, or GA exact version)'
+        required: true
+        default: '0.9.0-beta.13'
+        type: string
+      release_channel:
+        description: 'Release channel for version generation'
+        required: true
+        default: beta
+        type: choice
+        options:
+          - beta
+          - rc
+          - ga
+      backend_health_url:
+        description: 'Backend readiness URL used by deploy workflow checks'
+        required: true
+        default: 'https://cloudhub.symphonyai.cloud/.backstage/health/v1/readiness'
+        type: string
+      backend_startup_command:
+        description: 'Backend startup command'
+        required: true
+        default: 'node packages/backend --config app-config.yaml --config app-config.production.yaml'
+        type: string
+      configure_backend_app_settings:
+        description: 'Apply production backend app settings for Azure PostgreSQL and Entra auth'
+        required: true
+        default: true
+        type: boolean
+      strict_backend_health_check:
+        description: 'Fail release when backend readiness checks do not succeed from runner'
+        required: true
+        default: false
+        type: boolean
+      backend_db_check_url:
+        description: 'Optional backend DB check endpoint used by deploy workflow (leave empty to skip)'
+        required: false
+        default: ''
+        type: string
+      frontend_health_url:
+        description: 'Frontend URL used for deploy verification'
+        required: true
+        default: 'https://cloudhub.symphonyai.cloud/'
+        type: string
+      backend_origin:
+        description: 'Optional frontend nginx upstream for backend routing'
+        required: false
+        default: ''
+        type: string
+      require_backend_vnet_integration:
+        description: 'Fail release if backend has no VNet integration'
+        required: true
+        default: true
+        type: boolean
+      strict_postgres_preflight:
+        description: 'Fail release if runner cannot connect to PostgreSQL'
+        required: true
+        default: false
+        type: boolean
+      strict_auth_smoke_check:
+        description: 'Fail release when Microsoft auth smoke check fails or returns AADSTS500113'
+        required: true
+        default: true
+        type: boolean
+      run_db_migrations:
+        description: 'Run database migrations before deployment'
+        required: true
+        default: false
+        type: boolean
+      db_migration_command:
+        description: 'Migration command when run_db_migrations=true (example: yarn workspace backend run db:migrate)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: cloudhub-production-release
+  cancel-in-progress: false
+
+jobs:
+  quality-gates:
+    name: Quality Gates (Lint, Typecheck, Tests, Coverage)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Lint all workspaces
+        run: yarn lint:all
+
+      - name: Typecheck all workspaces
+        run: yarn tsc:full
+
+      - name: Run unit/integration tests with coverage
+        run: yarn test:all
+
+      - name: Run platform validation tests
+        run: ./tests/run.sh
+
+  resolve-version:
+    name: Resolve image version
+    runs-on: ubuntu-latest
+    needs: quality-gates
+    outputs:
+      image_version: ${{ steps.version.outputs.image_version }}
+
+    steps:
+      - name: Compute image version
+        id: version
+        env:
+          VERSION_PREFIX: ${{ inputs.version_prefix }}
+          RELEASE_CHANNEL: ${{ inputs.release_channel }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VERSION_PREFIX" ]; then
+            echo "::error::version_prefix cannot be empty"
+            exit 1
+          fi
+          case "$RELEASE_CHANNEL" in
+            beta|rc)
+              if echo "$VERSION_PREFIX" | grep -Eq '^0\.9\.0-(beta|rc)\.[0-9]+$'; then
+                image_version="$VERSION_PREFIX"
+              else
+                image_version="${VERSION_PREFIX}-${RELEASE_CHANNEL}.${GITHUB_RUN_NUMBER}"
+              fi
+              ;;
+            ga) image_version="${VERSION_PREFIX}" ;;
+            *) echo "::error::release_channel must be one of: beta, rc, ga"; exit 1 ;;
+          esac
+          echo "image_version=$image_version" >> "$GITHUB_OUTPUT"
+          echo "Resolved image version: $image_version"
+
+  build-images:
+    name: Build images via reusable workflow
+    needs: resolve-version
+    uses: ./.github/workflows/build-fe-be-prod-basic.yml
+    secrets: inherit
+    with:
+      image_tag: ${{ needs.resolve-version.outputs.image_version }}
+      versioning_mode: manual
+      push_latest: false
+      # Already enforced by the quality-gates job above.
+      run_quality_gates: false
+
+  db-migrations:
+    name: Run Database Migrations (Optional)
+    runs-on: ubuntu-latest
+    needs: quality-gates
+    if: ${{ inputs.run_db_migrations }}
+    environment: production
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Validate migration command
+        env:
+          DB_MIGRATION_COMMAND: ${{ inputs.db_migration_command }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(echo "$DB_MIGRATION_COMMAND" | tr -d '[:space:]')" ]; then
+            echo "::error::db_migration_command is required when run_db_migrations=true"
+            echo "::error::Example: yarn workspace backend run db:migrate"
+            exit 1
+          fi
+
+      - name: Run migrations
+        env:
+          DB_MIGRATION_COMMAND: ${{ inputs.db_migration_command }}
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST != '' && secrets.POSTGRES_HOST || vars.POSTGRES_HOST != '' && vars.POSTGRES_HOST || 'cloudhub-pg-sdc.postgres.database.azure.com' }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT != '' && secrets.POSTGRES_PORT || vars.POSTGRES_PORT != '' && vars.POSTGRES_PORT || '5432' }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
+          PGSSLMODE: ${{ secrets.PGSSLMODE != '' && secrets.PGSSLMODE || vars.PGSSLMODE != '' && vars.PGSSLMODE || 'require' }}
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          echo "Running DB migration command: $DB_MIGRATION_COMMAND"
+          bash -lc "$DB_MIGRATION_COMMAND"
+
+      - name: Summarize migrations
+        env:
+          DB_MIGRATION_COMMAND: ${{ inputs.db_migration_command }}
+        run: |
+          {
+            echo "Database migrations completed successfully."
+            echo "Executed command: ${DB_MIGRATION_COMMAND}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  validate-provisioning-credentials:
+    name: Validate Azure Provisioning Credentials
+    runs-on: ubuntu-latest
+    needs: quality-gates
+    environment: production
+
+    steps:
+      - name: Validate required secrets for production provisioning
+        env:
+          CLOUDHUB_TFC_TOKEN: ${{ secrets.CLOUDHUB_TFC_TOKEN }}
+          CLOUDHUB_TFC_VCS_OAUTH_TOKEN_ID: ${{ secrets.CLOUDHUB_TFC_VCS_OAUTH_TOKEN_ID }}
+          GITHUB_ACTIONS_TOKEN: ${{ secrets.GITHUB_ACTIONS_TOKEN }}
+          CLOUDHUB_NETWORKS_JSON: ${{ secrets.CLOUDHUB_NETWORKS_JSON != '' && secrets.CLOUDHUB_NETWORKS_JSON || vars.CLOUDHUB_NETWORKS_JSON }}
+          CLOUDHUB_TFC_PROJECT_ID: ${{ secrets.CLOUDHUB_TFC_PROJECT_ID != '' && secrets.CLOUDHUB_TFC_PROJECT_ID || vars.CLOUDHUB_TFC_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$CLOUDHUB_TFC_TOKEN"
+          echo "::add-mask::$GITHUB_ACTIONS_TOKEN"
+
+          required=(
+            CLOUDHUB_TFC_TOKEN
+            CLOUDHUB_TFC_VCS_OAUTH_TOKEN_ID
+            GITHUB_ACTIONS_TOKEN
+            CLOUDHUB_NETWORKS_JSON
+          )
+
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required value for ${name}"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          {
+            echo "## Azure Provisioning Credentials"
+            echo "- Required credentials for Terraform provisioning are present."
+            if [ -n "${CLOUDHUB_TFC_PROJECT_ID:-}" ]; then
+              echo "- CLOUDHUB_TFC_PROJECT_ID is configured."
+            else
+              echo "- CLOUDHUB_TFC_PROJECT_ID is not set (optional)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-appservice:
+    name: Deploy App Service via reusable workflow
+    needs:
+      - build-images
+      - db-migrations
+      - validate-provisioning-credentials
+    if: ${{ always() && needs.build-images.result == 'success' && (needs.db-migrations.result == 'success' || needs.db-migrations.result == 'skipped') && needs.validate-provisioning-credentials.result == 'success' }}
+    uses: ./.github/workflows/deploy-fe-be-prod-basic.yml
+    with:
+      image_version: ${{ needs.build-images.outputs.image_version }}
+      backend_image: ${{ needs.build-images.outputs.backend_image }}
+      frontend_image: ${{ needs.build-images.outputs.frontend_image }}
+      configure_backend_app_settings: ${{ inputs.configure_backend_app_settings }}
+      backend_startup_command: ${{ inputs.backend_startup_command }}
+      backend_health_url: ${{ inputs.backend_health_url }}
+      strict_backend_health_check: ${{ inputs.strict_backend_health_check }}
+      backend_db_check_url: ${{ inputs.backend_db_check_url }}
+      frontend_health_url: ${{ inputs.frontend_health_url }}
+      backend_origin: ${{ inputs.backend_origin }}
+      require_backend_vnet_integration: ${{ inputs.require_backend_vnet_integration }}
+      strict_postgres_preflight: ${{ inputs.strict_postgres_preflight }}
+      strict_auth_smoke_check: ${{ inputs.strict_auth_smoke_check }}
+    secrets: inherit
+
+  release-summary:
+    name: Release Summary
+    runs-on: ubuntu-latest
+    needs:
+      - build-images
+      - deploy-appservice
+    if: ${{ success() }}
+
+    steps:
+      - name: Publish summary
+        run: |
+          {
+            echo "## CloudHub Production Release"
+            echo "- Version: ${{ needs.build-images.outputs.image_version }}"
+            echo "- Backend image: ${{ needs.build-images.outputs.backend_image }}"
+            echo "- Frontend image: ${{ needs.build-images.outputs.frontend_image }}"
+            echo "- Backend health URL: ${{ inputs.backend_health_url }}"
+            echo "- Frontend URL: ${{ inputs.frontend_health_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"

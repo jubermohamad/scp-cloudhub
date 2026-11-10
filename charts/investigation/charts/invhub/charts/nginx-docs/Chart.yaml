@@ -1,0 +1,6 @@
+apiVersion: v2
+name: nginx-docs
+description: A Helm chart for Documentation
+type: application
+version: 0.27.1
+appVersion: v2026.07.1

@@ -1,0 +1,51 @@
+
+  - name: "{{ .Values.namespace }}-storage-class-nfs-csi"
+    namespace: "{{ .Values.namespace }}"
+    chart: ../../../templated-overrides/raw-yaml-charts/storage-class-nfs-csi
+    condition: anf.replication.enabled
+    values:
+      - storageClass:
+          name: "{{ .Values.namespace }}-nfs-csi"
+          server: "{{ .Values.anf.server }}"
+          share: "/{{ .Values.anf.share }}"
+
+  - name: "{{ .Values.namespace }}"
+    namespace: "{{ .Values.namespace }}"
+    chart: ""
+    condition: anf.replication.enabled
+    installed: true  # controls whether Helmfile should install (or keep installed) that release.
+    version: ""
+    hooks:
+      - events: ["prepare"]
+        command: bash
+        args:
+          - -c
+          - |
+            echo "INFO: 🔍 Check app is NOT deployed to prevent overwriting of PV and PVC manifests ..."
+            if helm status -n "{{ .Values.namespace }}" "{{ .Values.namespace }}" >/dev/null 2>&1; then
+              echo "ERROR: ❌ [{{ .Values.namespace }}] is already deployed. Aborting deployment of PV and PVC manifests to prevent overwriting."
+              exit 1
+            fi
+      - events: ["preApply"]
+        command: bash
+        args:
+          - -c
+          - |
+            set -euo pipefail
+            echo "INFO: 📁 Applying PV and PVC manifests for namespace [{{ .Values.namespace }}] ..."
+            echo "VAR: 📄 ANF Server: {{ .Values.anf.server }}"
+            echo "VAR: 📄 ANF Share: {{ .Values.anf.share }}"
+            echo "----------------------------------------"
+
+            TMP_FILE=$(mktemp)
+            echo '{{ tpl (readFile "./PV_and_PVC_MANIFEST_FILE.yaml") . }}' > "${TMP_FILE}"
+
+            if ! kubectl -n "{{ .Values.namespace }}" apply -f "${TMP_FILE}"; then
+              echo "ERROR: ❌ Failed to apply PV and PVC manifests for namespace [{{ .Values.namespace }}]."
+              rm -f "${TMP_FILE}"
+              exit 1
+            fi
+            echo "INFO: ✅ Successfully applied PV and PVC manifests for namespace [{{ .Values.namespace }}]."
+            rm -f "${TMP_FILE}"
+    needs:
+      - "{{ .Values.namespace }}-storage-class-nfs-csi"

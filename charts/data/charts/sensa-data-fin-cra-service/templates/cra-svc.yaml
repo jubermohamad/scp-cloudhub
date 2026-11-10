@@ -1,0 +1,80 @@
+{{- if .Values.craSvc.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "craService.prefix" . }}-svc
+  labels:
+    app: cra-svc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cra-svc
+  template:
+    metadata:
+      labels:
+        app: cra-svc
+      {{- include "craService.podAnnotations" . | nindent 6 }}
+    spec:
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      containers:
+        - name: {{ include "craService.prefix" . }}-svc
+          image: {{ include "craService.image" (dict "root" . "name" .Values.craSvc.imageName) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: {{ .Values.craSvc.port }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.craSvc.postgres.existingSecret }}
+          env:
+            - name: POSTGRES_HOST
+              value: {{ .Values.craSvc.postgres.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.craSvc.postgres.port | quote }}
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.craSvc.kafka.bootstrapServers | quote }}
+            # Third consumer loop: the party-score fact feed (executor party_score sink),
+            # plus the party:events write-through projection it reads back. Both new
+            # upstream on develop; without VALKEY_* the code falls back to
+            # VALKEY_HOST=redis-master, which resolves nowhere here, and the
+            # best-effort write-through silently no-ops.
+            - name: CDD_PARTY_SCORE_INGEST_TOPIC
+              value: {{ .Values.craSvc.kafka.partyScoreTopic | quote }}
+            - name: PARTY_SCORE_CONSUMER_GROUP
+              value: {{ .Values.craSvc.kafka.partyScoreConsumerGroup | quote }}
+            - name: VALKEY_HOST
+              value: {{ .Values.craSvc.valkey.host | quote }}
+            - name: VALKEY_PORT
+              value: {{ .Values.craSvc.valkey.port | quote }}
+            - name: CDD_SIGNAL_INGEST_TOPIC
+              value: {{ .Values.craSvc.kafka.signalTopic | quote }}
+            - name: SIGNAL_STORE_CONSUMER_GROUP
+              value: {{ .Values.craSvc.kafka.signalConsumerGroup | quote }}
+            - name: CDD_EVENT_INGEST_TOPIC
+              value: {{ .Values.craSvc.kafka.eventTopic | quote }}
+            - name: EVENT_STORE_CONSUMER_GROUP
+              value: {{ .Values.craSvc.kafka.eventConsumerGroup | quote }}
+            - name: HTTP_PORT
+              value: {{ .Values.craSvc.port | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.craSvc.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "craService.prefix" . }}-svc
+  labels:
+    app: cra-svc
+spec:
+  selector:
+    app: cra-svc
+  ports:
+    - port: {{ .Values.craSvc.port }}
+      targetPort: {{ .Values.craSvc.port }}
+{{- end }}

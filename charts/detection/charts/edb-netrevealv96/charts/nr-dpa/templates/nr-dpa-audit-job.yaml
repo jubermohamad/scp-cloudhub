@@ -1,0 +1,151 @@
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-nr-dpa-audit-cronjob
+  labels:
+    app.kubernetes.io/managed-by: {{.Release.Service | quote }}
+    app.kubernetes.io/instance: {{.Release.Name | quote }}
+    helm.sh/chart: "{{.Chart.Name}}-{{.Chart.Version}}"
+spec:
+  schedule: "{{ .Values.job.audit.schedule }}"
+  {{- if .Values.global.timeZone }}
+  timeZone: "{{ .Values.global.timeZone }}"
+  {{- end }}
+  startingDeadlineSeconds: {{ .Values.job.audit.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ .Values.job.audit.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.job.audit.failedJobsHistoryLimit }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: {{ .Values.job.audit.ttlSecondsAfterFinished }}
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          ##############################
+          # NROD OVERRIDE
+          ##############################
+          {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.nrDpa }}
+          initContainers:
+          - name: init-dpa-override
+            image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.dpaDockerImage }}"
+            imagePullPolicy: IfNotPresent
+
+            securityContext:
+              runAsUser: 200
+              runAsGroup: 200
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+            command:
+              - /bin/bash
+              - -exec
+              - |
+                cp -r /opt/data-privacy-agent/conf/APPS/. /opt/conf-override
+            volumeMounts:
+              - name: {{ .Release.Name }}-dpa-audit-conf-override
+                mountPath: /opt/conf-override
+          - name: dpa-override
+            image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              runAsUser: 200
+              runAsGroup: 200
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+            command:
+              - /bin/bash
+              - -exec
+              - |
+                if [ -d /opt/override/dpa ]; then
+                  cp -r /opt/override/dpa/. /opt/conf-override
+                fi
+            volumeMounts:
+              - name: {{ .Release.Name }}-dpa-audit-conf-override
+                mountPath: /opt/conf-override
+          {{- end }}
+          containers:
+          - name: dpa-job
+            image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.dpaDockerImage }}"
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              runAsUser: 200
+              runAsGroup: 200
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+            {{- if eq .Values.global.useResourceConstraints "true" }}
+            resources:
+              requests:
+                  memory: "{{ .Values.job.audit.pod.resources.requests.memory }}"
+                  cpu: "{{ .Values.job.audit.pod.resources.requests.cpu }}"
+              limits:
+                  memory: "{{ .Values.job.audit.pod.resources.limits.memory }}"
+                  cpu: "{{ .Values.job.audit.pod.resources.limits.cpu }}"
+            {{- end }}
+            command:
+            - /bin/bash
+            - -exec
+            - |
+                {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.nrDpa }}
+                set +x
+                echo "#################### CONFIGURATION FILES ####################"
+                echo ""
+                echo "#################### Archiver Report.xsl ####################"
+                cat "/opt/data-privacy-agent/conf/APPS/Archiver Report.xsl"
+                echo ""
+                echo "#################### Purging_Configuration_AuditLogs.xml ####################"
+                cat "/opt/data-privacy-agent/conf/APPS/Purging_Configuration_AuditLogs.xml"
+                set -x
+
+                {{- end }}
+
+                JAVA_OPTS="${JAVA_OPTS} -Dhelm.audit.log.retention.period.days={{ .Values.job.audit.properties.auditLogRetentionPeriodDays }} "
+                JAVA_OPTS="${JAVA_OPTS} -Dhelm.archiver.retention.period.days={{ .Values.job.audit.properties.archiverRetentionPeriodDays }} "
+                JAVA_OPTS="${JAVA_OPTS} -Dhelm.audit.log.purging.period.months={{ .Values.job.audit.properties.auditLogPurgingPeriodMonths }} "
+                JAVA_OPTS="${JAVA_OPTS} -Dhelm.AutoCreateFlag={{ .Values.job.audit.properties.autoCreateFlag }} "
+                JAVA_OPTS="${JAVA_OPTS} -Dhelm.ignoreDuplicates={{ .Values.job.audit.properties.ignoreDuplicates }} "
+
+                echo "########################################################################"
+                echo "# RUN AUDIT LOGS CLEAN UP                                              #"
+                echo "########################################################################"
+                ./archiver_Standalone.sh ${AUDITLOGS_CONF_FILE_PATH} "${AUDIT_LOG_TASKS}"
+            env:
+            - name: MAXIMUM_MEMORY
+              value: "{{ .Values.job.audit.pod.java.maxMemory }}"
+            - name: MINIMUM_MEMORY
+              value: "{{ .Values.job.audit.pod.java.minMemory }}"
+            - name: AUDIT_LOG_TASKS
+              value: "{{ .Values.job.audit.auditLogsTasks }}"
+            - name: JAVA_OPTS
+              value: " -Djava.io.tmpdir=/opt/data-privacy-agent/java/temp {{- include "jdk17.java.opts" . -}} "
+
+            volumeMounts:
+            {{ include "postgres.server.secret-mount" . | nindent 12 }}
+            - name: {{ .Release.Name }}-nr-dpa-audit-java-tmp
+              mountPath: /opt/data-privacy-agent/java/temp
+            - name: {{ .Release.Name }}-nr-dpa-audit-logs
+              mountPath: /opt/data-privacy-agent/logs
+            - name: {{ .Release.Name }}-nr-dpa-audit-base-config-property
+              mountPath: /opt/data-privacy-agent/conf/base_config.properties
+              subPath: base_config.properties
+            {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.nrDpa }}
+            - name: {{ .Release.Name }}-dpa-audit-conf-override
+              mountPath: /opt/data-privacy-agent/conf/APPS
+            {{- end }}
+
+{{- include "image.pull.secrets" . | nindent 10 }}
+
+          volumes:
+              {{ include "postgres.server.secret-volume" . | nindent 14 }}
+              - name: {{ .Release.Name }}-nr-dpa-audit-java-tmp
+                emptyDir: {}
+              - name: {{ .Release.Name }}-nr-dpa-audit-logs
+                emptyDir: {}
+              - name: {{ .Release.Name }}-nr-dpa-audit-base-config-property
+                configMap:
+                  name: {{ .Release.Name }}-nr-dpa-base-config-property
+                  items:
+                  - key: base_config.properties
+                    path: base_config.properties
+              - name: {{ .Release.Name }}-dpa-audit-conf-override
+                emptyDir: {}

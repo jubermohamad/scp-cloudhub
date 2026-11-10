@@ -1,0 +1,6 @@
+apiVersion: v2
+name: sri-micro-frontend
+description: fs-common-ui-svc — platform home page + Command Centre (Next.js)
+type: application
+version: 0.7.2
+appVersion: "1.0.0"

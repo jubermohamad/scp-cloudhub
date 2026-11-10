@@ -1,0 +1,295 @@
+{{- if or .Values.api.enabled (index .Values.tags "separate-api-responsibilities") -}}
+{{- $m := .Values.migrations -}}
+{{- $repo := include "invhub.migrations.imageRepository" . -}}
+{{- $tag  := include "invhub.migrations.imageTag"        . -}}
+{{- $pull := include "invhub.migrations.imagePullPolicy" . -}}
+{{- $dbCert    := include "invhub.migrations.dbCertName"    . -}}
+{{- $kafkaCert := include "invhub.migrations.kafkaCertName" . -}}
+{{- $osCert    := include "invhub.migrations.osCertName"    . -}}
+{{- $dbCertMount    := include "invhub.migrations.dbCertMount"    . -}}
+{{- $kafkaCertMount := include "invhub.migrations.kafkaCertMount" . -}}
+{{- $osCertMount    := include "invhub.migrations.osCertMount"    . -}}
+{{- $needTls  := and $m.waitForTlsSecrets.enabled (or (ne $dbCert "") (ne $kafkaCert "") (and .Values.global.INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH (ne $osCert ""))) -}}
+{{- $dep := $m.waitForDependencies -}}
+{{- $needDeps := and $dep.enabled (or $dep.postgres.enabled $dep.kafka.enabled $dep.opensearch.enabled $dep.minio.enabled $dep.redis.enabled) -}}
+{{- $pgSvc  := $dep.postgres.service   | default .Values.global.services.postgresRw   | default (include "invhub.postgresRwService"    .) -}}
+{{- $pgPort := $dep.postgres.port      | default .Values.global.services.postgresPort  | default 5432 -}}
+{{- $kSvc   := $dep.kafka.service      | default .Values.global.services.kafkaBootstrap | default (include "invhub.kafkaBootstrapService" .) -}}
+{{- $kPort  := $dep.kafka.port         | default .Values.global.services.kafkaPort      | default 9093 -}}
+{{- $kc := index .Values "kafka-cluster" | default dict -}}
+{{- $kafkaName := index $kc "name" | default "invhub" -}}
+{{- /* the Kafka CR's namespace: second label of the bootstrap FQDN when it is
+     namespace-qualified, else our own */ -}}
+{{- $kafkaHost := first (splitList ":" (.Values.global.SENSA_KAFKA_BOOTSTRAP | default ($kSvc | toString))) -}}
+{{- $kafkaLabels := splitList "." $kafkaHost -}}
+{{- if gt (len $kafkaLabels) 1 -}}
+{{- $kafkaName = printf "%s@%s" $kafkaName (index $kafkaLabels 1) -}}
+{{- end -}}
+{{- $osSvc  := $dep.opensearch.service | default .Values.global.services.opensearchMaster | default (include "invhub.opensearchMasterService" .) -}}
+{{- $osPort := $dep.opensearch.port    | default .Values.global.services.opensearchPort | default 9200 -}}
+{{- $mSvc   := $dep.minio.service      | default .Values.global.services.minio          | default (include "invhub.minioTenantService"    .) -}}
+{{- $mPort  := $dep.minio.port         | default .Values.global.services.minioPort      | default 9000 -}}
+{{- $rSvc   := $dep.redis.service      | default .Values.global.services.redisMaster    | default (include "invhub.redisMasterService"    .) -}}
+{{- $rPort  := $dep.redis.port         | default .Values.global.services.redisPort      | default 6379 -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "invhub.migrationJobName" . }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: migrations
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  backoffLimit: {{ $m.backoffLimit | default 3 }}
+  activeDeadlineSeconds: {{ $m.timeout | default 600 }}
+  ttlSecondsAfterFinished: {{ $m.ttlSecondsAfterFinished | default 86400 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: migrations
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      restartPolicy: OnFailure
+      {{- with $m.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ .Release.Name }}-api-migrations
+      securityContext:
+        {{- toYaml $m.podSecurityContext | nindent 8 }}
+      initContainers:
+        {{- if $needDeps }}
+        - name: wait-dependencies
+          image: {{ $dep.image | quote }}
+          imagePullPolicy: {{ $dep.imagePullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml $dep.resources | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+              TIMEOUT={{ $dep.timeoutSeconds }}
+              deadline=$(($(date +%s) + TIMEOUT))
+
+              wait_for_endpoint() {
+                local name="$1" host="$2" port="$3"
+                # accept both a bare service name and a namespace-qualified FQDN
+                # (<svc>.<ns>.svc.cluster.local): the EndpointSlice lookup needs the
+                # service NAME and its namespace separately.
+                local svc ns
+                svc="${host%%.*}"
+                ns="$NS"
+                case "$host" in *.*) ns="$(echo "${host#*.}" | cut -d. -f1)" ;; esac
+                local api="https://kubernetes.default.svc"
+                local token cacert
+                token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+                cacert="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+                while [ "$(date +%s)" -lt "$deadline" ]; do
+                  code=$(curl -sS -o /tmp/ep.json -w "%{http_code}" --connect-timeout 5 --max-time 15 \
+                    --cacert "$cacert" -H "Authorization: Bearer $token" \
+                    "$api/apis/discovery.k8s.io/v1/namespaces/$ns/endpointslices?labelSelector=kubernetes.io%2Fservice-name%3D$svc") || code=000
+                  if [ "$code" = "200" ] && \
+                     grep -qE '"ready"[[:space:]]*:[[:space:]]*true' /tmp/ep.json; then
+                    echo "$name ($host:$port) is ready"
+                    return 0
+                  fi
+                  echo "waiting for $name ($host:$port) to be ready (HTTP $code)..."
+                  sleep 5
+                done
+                echo "timeout waiting for $name ($host:$port)" >&2
+                exit 1
+              }
+
+              wait_for_kafka_ready() {
+                # in-tree patch: the Kafka CR may live in ANOTHER namespace (the
+                # platform cluster is rendered by detectionhub). Accept
+                # "<name>@<namespace>" and default to our own namespace. The
+                # matching wait_for_endpoint already splits service+namespace;
+                # this probe reads a CR, so it needs the same treatment.
+                local kafka_name="${1%%@*}"
+                local kafka_ns="$NS"
+                case "$1" in *@*) kafka_ns="${1#*@}" ;; esac
+                local api="https://kubernetes.default.svc"
+                local token cacert
+                token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+                cacert="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+                while [ "$(date +%s)" -lt "$deadline" ]; do
+                  code=$(curl -sS -o /tmp/kafka.json -w "%{http_code}" --connect-timeout 5 --max-time 15 \
+                    --cacert "$cacert" -H "Authorization: Bearer $token" \
+                    "$api/apis/kafka.strimzi.io/v1beta2/namespaces/$kafka_ns/kafkas/$kafka_name") || code=000
+                  if [ "$code" = "200" ] && \
+                     grep -q '"type"[[:space:]]*:[[:space:]]*"Ready"' /tmp/kafka.json && \
+                     grep -q '"status"[[:space:]]*:[[:space:]]*"True"' /tmp/kafka.json; then
+                    echo "Kafka cluster $kafka_ns/$kafka_name is ready"
+                    return 0
+                  fi
+                  echo "waiting for Kafka cluster $kafka_ns/$kafka_name to be ready (HTTP $code)..."
+                  sleep 5
+                done
+                echo "timeout waiting for Kafka cluster $kafka_ns/$kafka_name" >&2
+                exit 1
+              }
+
+              {{- if $dep.redis.enabled }}
+              wait_for_endpoint redis {{ $rSvc | quote }} {{ $rPort }}
+              {{- end }}
+              {{- if $dep.opensearch.enabled }}
+              wait_for_endpoint opensearch {{ $osSvc | quote }} {{ $osPort }}
+              {{- end }}
+              {{- if $dep.minio.enabled }}
+              wait_for_endpoint minio {{ $mSvc | quote }} {{ $mPort }}
+              {{- end }}
+              {{- if $dep.postgres.enabled }}
+              wait_for_endpoint postgres {{ $pgSvc | quote }} {{ $pgPort }}
+              {{- end }}
+              {{- if $dep.kafka.enabled }}
+              wait_for_kafka_ready {{ $kafkaName | quote }}
+              {{- end }}
+              echo "all dependencies ready"
+        {{- end }}
+        {{- if $needTls }}
+        - name: wait-tls-secrets
+          image: {{ $m.waitForTlsSecrets.image | quote }}
+          imagePullPolicy: {{ $m.waitForTlsSecrets.imagePullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            {{- toYaml $m.waitForTlsSecrets.resources | nindent 12 }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              TOKEN="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+              CACERT="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+              NS="$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)"
+              API="https://kubernetes.default.svc"
+              TIMEOUT={{ $m.waitForTlsSecrets.timeoutSeconds }}
+              deadline=$(($(date +%s) + TIMEOUT))
+              wait_one() {
+                sec="$1"
+                while [ "$(date +%s)" -lt "$deadline" ]; do
+                  code=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 15 \
+                    --cacert "$CACERT" -H "Authorization: Bearer $TOKEN" \
+                    "$API/api/v1/namespaces/$NS/secrets/$sec") || code=000
+                  if [ "$code" = "200" ]; then
+                    echo "secret $sec is ready"
+                    return 0
+                  fi
+                  if [ "$code" = "403" ]; then
+                    echo "permission denied waiting for secret $sec — check RBAC" >&2
+                    exit 1
+                  fi
+                  echo "waiting for secret $sec (HTTP $code)..."
+                  sleep 3
+                done
+                echo "timeout after ${TIMEOUT}s waiting for secret $sec" >&2
+                exit 1
+              }
+              {{- if ne $dbCert "" }}
+              wait_one "{{ $dbCert }}"
+              {{- end }}
+              {{- if ne $kafkaCert "" }}
+              wait_one "{{ $kafkaCert }}"
+              {{- end }}
+              {{- if and .Values.global.INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH (ne $osCert "") }}
+              wait_one "{{ $osCert }}"
+              {{- end }}
+              echo "all TLS CA secrets present"
+        {{- end }}
+      containers:
+      - name: migrations
+        securityContext:
+          {{- toYaml $m.securityContext | nindent 12 }}
+        image: "{{ $repo }}:{{ $tag }}"
+        imagePullPolicy: {{ $pull | default $.Values.global.imagePullPolicy | default "Always" }}
+        command:
+          - dumb-init
+          - task
+          - api:run:production:init
+        volumeMounts:
+          - name: tmp
+            mountPath: /tmp
+          - name: sensasecrets-volume
+            mountPath: /sensasecrets-volume
+          {{- if ne $dbCert "" }}
+          - name: db-root-cert
+            mountPath: {{ $dbCertMount }}
+          {{- end }}
+          {{- if ne $kafkaCert "" }}
+          - name: kafka-root-cert
+            mountPath: {{ $kafkaCertMount }}
+          {{- end }}
+          {{- if and .Values.global.INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH (ne $osCert "") }}
+          - name: os-ca-cert
+            mountPath: {{ $osCertMount }}
+          {{- end }}
+        resources:
+          {{- toYaml $m.resources | nindent 12 }}
+        envFrom:
+          - configMapRef:
+              name: {{ $m.flowsConfigMapName }}
+              optional: true
+          - secretRef:
+              name: {{ $m.flowsSecretName }}
+              optional: true
+        env:
+          {{- include "api.containerEnv" . | nindent 12 }}
+            - name: SKIP_INIT
+              value: "true"
+            - name: SKIP_MIGRATIONS
+              value: "true"
+            - name: SKIP_APP_SERVER
+              value: "true"
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: sensasecrets-volume
+          secret:
+            secretName: sensa-global-secrets
+        {{- if ne $dbCert "" }}
+        - name: db-root-cert
+          secret:
+            secretName: {{ $dbCert }}
+            items:
+              - key: {{ $m.dbRootCert.key }}
+                path: {{ $m.dbRootCert.key }}
+        {{- end }}
+        {{- if ne $kafkaCert "" }}
+        - name: kafka-root-cert
+          secret:
+            secretName: {{ $kafkaCert }}
+            items:
+              - key: {{ $m.kafkaRootCert.key }}
+                path: {{ $m.kafkaRootCert.key }}
+        {{- end }}
+        {{- if and .Values.global.INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH (ne $osCert "") }}
+        - name: os-ca-cert
+          secret:
+            secretName: {{ $osCert }}
+            items:
+              - key: {{ $m.osRootCert.key }}
+                path: {{ $m.osRootCert.key }}
+        {{- end }}
+      {{- with $m.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $m.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

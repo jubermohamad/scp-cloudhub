@@ -1,0 +1,13 @@
+databaseAccess: []
+#   - podSelector:
+#       matchLabels:
+#         "app.kubernetes.io/name": "api"
+#     namespaceSelector:
+#       matchLabels:
+#         "kubernetes.io/metadata.name": "ih-cms-test"
+#   - podSelector:
+#       matchLabels:
+#         "app.kubernetes.io/name": "kafka-connect"
+#     namespaceSelector:
+#       matchLabels:
+#         "kubernetes.io/metadata.name": "ih-cms-test"

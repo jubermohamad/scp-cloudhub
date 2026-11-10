@@ -1,0 +1,7 @@
+# secret for authenticating with backups destination
+# for MinIO and Postgre backups
+azureStorageAccountSecret:
+  enabled: false
+  secretName: backup-creds
+  storageAccountName: "storage-account-name"
+  storageAccountKey: "storage-account-key"

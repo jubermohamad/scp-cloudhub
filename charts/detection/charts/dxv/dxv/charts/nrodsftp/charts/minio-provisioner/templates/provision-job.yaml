@@ -1,0 +1,701 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-provisioner
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "helm.sh/hook-weight": "-9"
+spec:
+  template:
+    spec:
+      containers:
+        - name: minio-client
+          image: "{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+          command:
+            - /bin/bash
+            - -exec
+            - |
+              set +x
+              max_attempts=30
+              wait_time=20
+              echo "Wait for MINIO to be ready..."
+              timeout 300 bash -c '
+                until mc --quiet alias set minio {{ include "minio.url" . }} "${MINIO_USER}" "${MINIO_PASSWORD}" > /dev/null 2>&1
+                do
+                  echo "Trying to connect to {{ include "minio.url" . }} server..."
+                  sleep 10
+                done
+              '
+              echo "Creating users."
+              mc --quiet --no-color admin user add minio "${CLIENT_USER}" "${CLIENT_PASSWORD}"
+              mc --quiet --no-color admin user add minio "${PSQL_USER}" "${PSQL_PASSWORD}"
+              {{- if .Values.global.nrOrgUnits }}
+                {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+                  {{- range $key, $value := .Values.global.nrOrgUnits }}
+              mc --quiet --no-color admin user add minio $USR_{{ $value.orgUnitCode | upper | replace "-" "_" }}_NAME $USR_{{ $value.orgUnitCode | upper | replace "-" "_" }}_PASSWORD
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+
+              echo "Cleaning up notification webhooks."
+              restartMinio="false"
+              webhookList=$(mc --quiet --no-color admin config get minio/ notify_webhook)
+              if [[ $webhookList == *"incomming"* ]]; then
+                echo "incomming webhook is defined. Resetting it."
+                mc --quiet --no-color admin config reset minio/ notify_webhook:incomming
+                restartMinio="true"
+              else
+                echo "incomming webhook is not defined."
+              fi
+              if [[ $webhookList == *"outgoing"* ]]; then
+                echo "outgoing webhook is defined. Resetting it."
+                mc --quiet --no-color admin config reset minio/ notify_webhook:outgoing
+                restartMinio="true"
+              else
+                echo "outgoing webhook is not defined."
+              fi
+              if [[ $restartMinio == "true" ]]; then
+                echo "Restarting minio service..."
+                mc --quiet --json --no-color admin service restart minio
+                echo "Waiting for minio to restart..."
+                attempt=0
+                set +e
+                while [ $attempt -lt $max_attempts ]; do
+                  STATUS=$(mc --quiet --no-color admin info minio 2>&1)
+                  if [[ $? -eq 0 ]]; then
+                    echo "Minio is running."
+                    echo "${STATUS}"
+                    attempt=0
+                    break
+                  else
+                    echo "Minio is not running. Retrying..."
+                  fi
+                  attempt=$((attempt+1))
+                  sleep $wait_time
+                done
+                if [ $attempt -eq $max_attempts ]; then
+                  echo "Unable to restart minio."
+                  exit 1
+                fi
+              fi
+              set -e
+
+              echo "Creating buckets."
+              mc --quiet --no-color mb --ignore-existing minio/backup
+              mc --quiet --no-color mb --ignore-existing minio/keys
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket
+              mc --quiet --no-color mb --ignore-existing minio/archive-bucket
+
+              echo "Creating folders in public-bucket."
+              # Public Bucket
+              # orgUnits Acquisition
+              {{- if .Values.global.nrOrgUnits }}
+                {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+                  {{- range $key, $value := .Values.global.nrOrgUnits }}
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition{{ $value.orgUnitCode }}
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition{{ $value.orgUnitCode }}/feedback
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition{{ $value.orgUnitCode }}/feedback/amlopt
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition{{ $value.orgUnitCode }}/feedback/reporting
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition{{ $value.orgUnitCode }}/feedback/historical_data
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition{{ $value.orgUnitCode }}/waiting
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+              #Acquisition
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition/feedback
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition/feedback/amlopt
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition/feedback/reporting
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition/feedback/historical_data
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/acquisition/waiting
+              # List Import
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/listImport
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/BOEEngland@BOE-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/DJ LPTS List@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/EU Country list@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/EU list@Eu-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/EU list@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/EUList@Eu-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/FinCEN 314a Business@FINCEN314ABUSINESS'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/FinCEN 314a Individual@FINCEN314AINDIVIDUAL'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/Flagged Country List@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/HM Treasury list@HMT-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/HMT Country List@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/OFAC Country list@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/OFAC list@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/OFAC_SDN@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/UN Country List@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/UN List@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/UN1267@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/UN1988@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/listImport/WC EU Instant Payments Sanctions List@XML-list'
+              # Factiva
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/fpfa
+              # WorldCheck
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/worldcheck
+              # Batchwatch
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/batchwatch
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/batchwatch/SWIFT@SWIFT'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/batchwatch/Subject@GSV'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/batchwatch/SWIFT@SWIFT_FLTS'
+              mc --quiet --no-color mb --ignore-existing 'minio/public-bucket/landing/batchwatch/GenericTransaction@SWIFT_FLTS_MX'
+              # orgUnits SMBD AMLOPT
+              {{- if .Values.global.nrOrgUnits }}
+                {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+                  {{- range $key, $value := .Values.global.nrOrgUnits }}
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/amlopt{{ $value.orgUnitCode }}
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/amlopt{{ $value.orgUnitCode }}/data
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+              # SMBD AMLOPT
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/amlopt
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/amlopt/data
+              # Schema import data
+              mc --quiet --no-color mb --ignore-existing minio/public-bucket/landing/historical_data
+
+              echo "Creating folders in private-bucket."
+              # Private Bucket
+              # orgUnits Acquisition
+              {{- if .Values.global.nrOrgUnits }}
+                {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+                  {{- range $key, $value := .Values.global.nrOrgUnits }}
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition{{ $value.orgUnitCode }}
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition{{ $value.orgUnitCode }}/feedback
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition{{ $value.orgUnitCode }}/feedback/amlopt
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition{{ $value.orgUnitCode }}/feedback/reporting
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition{{ $value.orgUnitCode }}/feedback/historical_data
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition{{ $value.orgUnitCode }}/waiting
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+              # Acquisition
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition/feedback
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition/feedback/amlopt
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition/feedback/reporting
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition/feedback/historical_data
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/acquisition/waiting
+              # List Import
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/listImport
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/BOEEngland@BOE-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/DJ LPTS List@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/EU Country list@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/EU list@Eu-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/EU list@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/EUList@Eu-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/FinCEN 314a Business@FINCEN314ABUSINESS'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/FinCEN 314a Individual@FINCEN314AINDIVIDUAL'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/Flagged Country List@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/HM Treasury list@HMT-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/HMT Country List@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/OFAC Country list@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/OFAC list@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/OFAC_SDN@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/UN Country List@default'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/UN List@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/UN1267@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/UN1988@XML-list'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/listImport/WC EU Instant Payments Sanctions List@XML-list'
+              # Factiva
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/fpfa
+              # WorldCheck
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/worldcheck
+              # BatchWatch
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/batchwatch
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/batchwatch/SWIFT@SWIFT'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/batchwatch/Subject@GSV'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/batchwatch/SWIFT@SWIFT_FLTS'
+              mc --quiet --no-color mb --ignore-existing 'minio/private-bucket/landing/batchwatch/GenericTransaction@SWIFT_FLTS_MX'
+              # orgUnits SMBD AMLOPT
+              {{- if .Values.global.nrOrgUnits }}
+                {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+                  {{- range $key, $value := .Values.global.nrOrgUnits }}
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/amlopt{{ $value.orgUnitCode }}
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/amlopt{{ $value.orgUnitCode }}/data
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+              # SMBD AMLOPT
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/amlopt
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/amlopt/data
+              # Schema import data
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/historical_data
+              # S4S
+              mc --quiet --no-color mb --ignore-existing minio/s4s-bucket/landing/s4s_dynamic_resources/dynamic
+              # Replication buckets - application
+              mc --quiet --no-color mb --ignore-existing minio/service-replica-bucket
+              mc --quiet --no-color mb --ignore-existing minio/service-replica-bucket/landing/factiva
+              mc --quiet --no-color mb --ignore-existing minio/service-replica-bucket/landing/overlay
+              mc --quiet --no-color mb --ignore-existing minio/service-replica-bucket/landing/wlm-pn-rt
+              mc --quiet --no-color mb --ignore-existing minio/service-replica-bucket/landing/worldcheck
+              # Replication bucket - ER
+              mc --quiet --no-color mb --ignore-existing minio/er-replica-bucket
+              mc --quiet --no-color mb --ignore-existing minio/er-replica-bucket/landing/er
+
+              echo "Setting up notification webhooks."
+              attempt=0
+              set +e
+              while [ $attempt -lt $max_attempts ]; do
+                echo "Attempt $attempt to set up notification webhooks."
+                command="mc --quiet --no-color admin config set minio/ notify_webhook:incomming endpoint=\"http://nrodsftp-node:3000/nrod/incomming\" queue_dir=\"{{ .Values.notifyWebhook.queueDir }}\" queue_limit=\"{{ .Values.notifyWebhook.queueLimit }}\""
+                output=$(eval $command 2>&1)
+                if [[ "$output" == *"ERROR"* ]]; then
+                  echo "Unable to create notify_webhook:incomming. Retrying..."
+                else
+                  command="mc --quiet --no-color admin config set minio/ notify_webhook:outgoing endpoint=\"http://nrodsftp-node:3000/nrod/outgoing\" queue_dir=\"{{ .Values.notifyWebhook.queueDir }}\" queue_limit=\"{{ .Values.notifyWebhook.queueLimit }}\""
+                  output=$(eval $command 2>&1)
+                  if [[ "$output" == *"ERROR"* ]]; then
+                    echo "Unable to create notify_webhook:outgoing. Retrying..."
+                  else
+                    attempt=0
+                    break
+                  fi
+                fi
+                attempt=$((attempt+1))
+                sleep $wait_time
+              done
+              if [ $attempt -eq $max_attempts ]; then
+                echo "Unable to set up notification webhooks."
+                exit 1
+              fi
+
+              set -e
+              mc --quiet --json --no-color admin service restart minio
+              echo "Waiting for minio to restart..."
+              attempt=0
+              set +e
+              while [ $attempt -lt $max_attempts ]; do
+                STATUS=$(mc --quiet --no-color admin info minio 2>&1)
+                if [[ $? -eq 0 ]]; then
+                  echo "Minio is running."
+                  echo "${STATUS}"
+                  attempt=0
+                  break
+                else
+                  echo "Minio is not running. Retrying..."
+                fi
+                attempt=$((attempt+1))
+                sleep $wait_time
+              done
+              if [ $attempt -eq $max_attempts ]; then
+                echo "Unable to restart minio."
+                exit 1
+              fi
+
+              attempt=0
+              echo "Creating events."
+              set +e
+              while [ $attempt -lt $max_attempts ]; do
+                echo "Attempt $attempt to create incomming event."
+                command="mc --quiet --no-color event add --ignore-existing minio/public-bucket arn:minio:sqs::incomming:webhook --event put"
+                output=$(eval $command 2>&1)
+                if [[ "$output" == *"ERROR"* ]]; then
+                  echo "Unable to create event for incomming webhook. Retrying..."
+                else
+                  echo "incomming event created."
+                  attempt=0
+                  break
+                fi
+                attempt=$((attempt+1))
+                sleep $wait_time
+              done
+              if [ $attempt -eq $max_attempts ]; then
+                echo "Unable to create event for incomming webhook."
+                exit 1
+              fi
+
+              attempt=0
+              while [ $attempt -lt $max_attempts ]; do
+                echo "Attempt $attempt to create outgoing event."
+                command="mc --quiet --no-color event add --ignore-existing minio/private-bucket arn:minio:sqs::outgoing:webhook --event put"
+                output=$(eval $command 2>&1)
+                if [[ "$output" == *"ERROR"* ]]; then
+                  echo "Unable to create event for outgoing webhook. Retrying..."
+                else
+                  echo "outgoing event created."
+                  attempt=0
+                  break
+                fi
+                attempt=$((attempt+1))
+                sleep $wait_time
+              done
+              if [ $attempt -eq $max_attempts ]; then
+                echo "Unable to create event for outgoing webhook."
+                exit 1
+              fi
+
+              set -e
+              echo "Creating policies."
+              policyList=$(mc --quiet --no-color admin policy list minio)
+              if [[ $policyList == *"customerpolicy"* ]]; then
+                echo "'customerpolicy' is defined. Checking if it is assigned to the user."
+                policyCheck=$(mc --quiet --no-color admin policy entities minio --policy customerpolicy 2>&1)
+                if [[ $policyCheck == *"{{ .Values.global.minio.clientUser }}"* ]]; then
+                  echo "'customerpolicy' is already assigned to {{ .Values.global.minio.clientUser }}."
+                else
+                  echo "Assigning 'customerpolicy' to {{ .Values.global.minio.clientUser }}."
+                  attempt=0
+                  set +e
+                  while [ $attempt -lt $max_attempts ]; do
+                    command="mc --quiet --no-color admin policy attach minio customerpolicy --user {{ .Values.global.minio.clientUser }}"
+                    output=$(eval $command 2>&1)
+                    if [[ "$output" == *"ERROR"* ]]; then
+                      echo "Unable to assign customerpolicy. Retrying..."
+                    else
+                      echo "customerpolicy assigned."
+                      attempt=0
+                      break
+                    fi
+                    attempt=$((attempt+1))
+                    sleep $wait_time
+                  done
+                  if [ $attempt -eq $max_attempts ]; then
+                    echo "Unable to assign customerpolicy after $max_attempts attempts."
+                    exit 1
+                  fi
+                  set -e
+                fi
+              else
+                set +e
+                attempt=0
+                while [ $attempt -lt $max_attempts ]; do
+                  echo "Attempt $attempt to create customerpolicy."
+                  command="mc --quiet --no-color admin policy create minio customerpolicy /tmp/customer.policy.json"
+                  output=$(eval $command 2>&1)
+                  command="mc --quiet --no-color admin policy attach minio customerpolicy --user {{ .Values.global.minio.clientUser }}"
+                  output2=$(eval $command 2>&1)
+                  if [[ "$output" == *"ERROR"* || "$output2" == *"ERROR"* ]]; then
+                    echo "Unable to create customerpolicy. Retrying..."
+                  else
+                    echo "customerpolicy created."
+                    attempt=0
+                    break
+                  fi
+                  attempt=$((attempt+1))
+                  sleep $wait_time
+                done
+                set -e
+              fi
+              if [ $attempt -eq $max_attempts ]; then
+                echo "Unable to create customerpolicy."
+                exit 1
+              fi
+
+              if [[ $policyList == *"psqlpolicy"* ]]; then
+                echo "'psqlpolicy' is defined. Checking if it is assigned to the user."
+                policyCheck=$(mc --quiet --no-color admin policy entities minio --policy psqlpolicy 2>&1)
+                if [[ $policyCheck == *"{{ .Values.global.minio.psqlUser }}"* ]]; then
+                  echo "'psqlpolicy' is already assigned to {{ .Values.global.minio.psqlUser }}."
+                else
+                  echo "Assigning 'psqlpolicy' to {{ .Values.global.minio.psqlUser }}."
+                  attempt=0
+                  set +e
+                  while [ $attempt -lt $max_attempts ]; do
+                    command="mc --quiet --no-color admin policy attach minio psqlpolicy --user {{ .Values.global.minio.psqlUser }}"
+                    output=$(eval $command 2>&1)
+                    if [[ "$output" == *"ERROR"* ]]; then
+                      echo "Unable to assign psqlpolicy. Retrying..."
+                    else
+                      echo "psqlpolicy assigned."
+                      attempt=0
+                      break
+                    fi
+                    attempt=$((attempt+1))
+                    sleep $wait_time
+                  done
+                  if [ $attempt -eq $max_attempts ]; then
+                    echo "Unable to assign psqlpolicy after $max_attempts attempts."
+                    exit 1
+                  fi
+                  set -e
+                fi
+              else
+                attempt=0
+                set +e
+                while [ $attempt -lt $max_attempts ]; do
+                  echo "Attempt $attempt to create psqlpolicy."
+                  command="mc --quiet --no-color admin policy create minio psqlpolicy /tmp/psql.policy.json"
+                  output=$(eval $command 2>&1)
+                  command="mc --quiet --no-color admin policy attach minio psqlpolicy --user {{ .Values.global.minio.psqlUser }}"
+                  output2=$(eval $command 2>&1)
+                  if [[ "$output" == *"ERROR"* || "$output2" == *"ERROR"* ]]; then
+                    echo "Unable to create psqlpolicy. Retrying..."
+                  else
+                    echo "psqlpolicy created."
+                    attempt=0
+                    break
+                  fi
+                  attempt=$((attempt+1))
+                  sleep $wait_time
+                done
+                if [ $attempt -eq $max_attempts ]; then
+                  echo "Unable to create psqlpolicy."
+                  exit 1
+                fi
+                set -e
+              fi
+
+              {{- if .Values.global.nrOrgUnits }}
+                {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+                  {{- range $key, $value := .Values.global.nrOrgUnits }}
+              if [[ $policyList == *"s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy"* ]]; then
+                echo "'s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy' is defined. No need to generate it."
+              else
+                attempt=0
+                set +e
+                while [ $attempt -lt $max_attempts ]; do
+                  echo "Attempt $attempt to create s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy."
+                  command="mc --quiet --no-color admin policy create minio s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy /tmp/s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy.json"
+                  output=$(eval $command 2>&1)
+                  command="mc --quiet --no-color admin policy attach minio s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy --user $USR_{{ $value.orgUnitCode | upper | replace "-" "_" }}_NAME"
+                  output2=$(eval $command 2>&1)
+                  if [[ "$output" == *"ERROR"* || "$output2" == *"ERROR"* ]]; then
+                    echo "Unable to create s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy. Retrying..."
+                  else
+                    echo "s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy created."
+                    attempt=0
+                    break
+                  fi
+                  attempt=$((attempt+1))
+                  sleep $wait_time
+                done
+                if [ $attempt -eq $max_attempts ]; then
+                  echo "Unable to create s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy."
+                  exit 1
+                fi
+                set -e
+              fi
+                  {{- end }}
+                {{- end }}
+              {{- end }}
+
+              echo "Creating folders in sys_bucket."
+              # Connection status flag
+              attempt=0
+              set +e
+              while [ $attempt -lt $max_attempts ]; do
+                echo "Attempt $attempt to set up sys_bucket."
+                command="mc --quiet --no-color mb --ignore-existing minio/private-bucket/sys_bucket"
+                output=$(eval $command 2>&1)
+                if [ ! -f s3_mount_status.txt ]; then
+                  touch s3_mount_status.txt
+                  echo "s3 mount status" > s3_mount_status.txt
+                fi
+                command="mc cp s3_mount_status.txt minio/private-bucket/sys_bucket"
+                output2=$(eval $command 2>&1)
+                if [[ "$output" == *"ERROR"* || "$output2" == *"ERROR"* ]]; then
+                  echo "Unable to create sys_bucket. Retrying..."
+                else
+                  attempt=0
+                  break
+                fi
+                attempt=$((attempt+1))
+                sleep $wait_time
+              done
+              if [ $attempt -eq $max_attempts ]; then
+                echo "Unable to create sys_bucket."
+                exit 1
+              fi
+              echo "sys_bucket is ready."
+              set -e
+
+              {{- if and .Values.minio.bucketsWithVersioning (ne (len .Values.minio.bucketsWithVersioning) 0) }}
+              echo "Enabling versioning for specified buckets..."
+                {{- range .Values.minio.bucketsWithVersioning }}
+              echo "Enabling versioning for bucket: {{ . }}"
+              versionStatus=$(mc --quiet --no-color version info minio/{{ . }})
+              if [[ $versionStatus == *"un-versioned"* ]]; then
+                mc --quiet --no-color version enable minio/{{ . }}
+              fi
+                {{- end }}
+              {{- end }}
+
+              {{- if .Values.minio.replication.enabled }}
+              echo "Setting up replication between source and target buckets..."
+                {{- if .Values.minio.replication.buckets }}
+                  {{- range .Values.minio.replication.buckets }}
+                    {{- if .enabled }}
+                echo "Verifying replication configuration for bucket: {{ .bucket }}"
+                replicationStatus=$(mc --quiet --no-color replicate status minio/{{ .bucket }} 2>&1 || true)
+
+                if [[ $replicationStatus == *"The replication configuration was not found."* ]]; then
+                  # Create replication
+                  echo "Configuring replication for bucket: {{ .bucket }}"
+                  attempt=0
+                  set +e
+                  while [ $attempt -lt $max_attempts ]; do
+                    command="mc replicate add minio/{{ .bucket }} \
+                      --remote-bucket \"{{ .endpoint }}/{{ .bucket }}\" \
+                        {{- if and .priority (ne .priority 0) }}
+                      --priority {{ .priority }} \
+                        {{- end }}
+                        {{- if and .extraOptions (ne .extraOptions "") }}
+                      {{ .extraOptions }} \
+                        {{- end }}
+                      --replicate \"{{ .replicateOptions }}\""
+                    output=$(eval $command 2>&1)
+                    if [[ "$output" == *"ERROR"* ]]; then
+                      echo "Unable to create bucket replication. Retrying..."
+                    else
+                      attempt=0
+                      break
+                    fi
+                    attempt=$((attempt+1))
+                    sleep $wait_time
+                  done
+                  if [ $attempt -eq $max_attempts ]; then
+                    echo "Unable to create bucket replication."
+                    exit 1
+                  fi
+                  echo "bucket replication is ready."
+                  set -e
+                else
+                  # Update replication
+                  echo "Replication is already configured for bucket: {{ .bucket }}"
+                  echo "Extracting existing replication rule ID..."
+                  attempt=0
+                  set +e
+                  while [ $attempt -lt $max_attempts ]; do
+                    ls_output=$(mc --quiet --no-color replicate ls minio/{{ .bucket }} 2>&1)
+                    ruleId=""
+                    if [[ $ls_output == *'Rule ID:'* ]]; then
+                      remaining="$ls_output"
+                      temp="${remaining#*Rule ID:}"
+                      temp="${temp##[[:space:]]}"
+                      ruleId="${temp%%[[:space:]]*}"
+                    fi
+                    if [ -n "$ruleId" ]; then
+                      echo "Found replication rule ID: $ruleId"
+                      command="mc replicate update --id \"$ruleId\" minio/{{ .bucket }} \
+                        --remote-bucket \"{{ .endpoint }}/{{ .bucket }}\" \
+                          {{- if and .priority (ne .priority 0) }}
+                        --priority {{ .priority }} \
+                          {{- end }}
+                          {{- if and .extraOptions (ne .extraOptions "") }}
+                        {{ .extraOptions }} \
+                          {{- end }}
+                        --replicate \"{{ .replicateOptions }}\""
+                      output=$(eval "$command" 2>&1)
+                      if [[ "$output" == *"ERROR"* ]]; then
+                        echo "Unable to update replication rule. Retrying..."
+                      else
+                        echo "Replication rule updated successfully."
+                        attempt=0
+                        break
+                      fi
+                    else
+                      echo "Could not extract replication rule ID for bucket: {{ .bucket }}. Retrying..."
+                    fi
+                    attempt=$((attempt+1))
+                    sleep $wait_time
+                  done
+                  if [ $attempt -eq $max_attempts ]; then
+                    echo "Unable to update replication rule for bucket: {{ .bucket }}"
+                    exit 1
+                  fi
+                  set -e
+                fi
+                    {{- else }}
+                echo "Skipping replication for bucket: {{ .bucket }} (enabled=false)"
+                echo "Verifying replication configuration for bucket: {{ .bucket }}"
+                replicationStatus=$(mc --quiet --no-color replicate status minio/{{ .bucket }} 2>&1 || true)
+                if [[ $replicationStatus == *"The replication configuration was not found."* ]]; then
+                  echo "Replication is not configured for bucket: {{ .bucket }}"
+                else
+                  echo "Replication is configured for bucket: {{ .bucket }}, but 'enabled' is set to false. Removing replication configuration."
+                  attempt=0
+                  set +e
+                  while [ $attempt -lt $max_attempts ]; do
+                    # Get the replication rule ID using mc replicate ls
+                    command=$(mc --quiet --no-color replicate rm --all --force minio/{{ .bucket }} 2>&1)
+                    output=$(eval $command 2>&1)
+                    if [[ "$output" == *"ERROR"* ]]; then
+                      echo "Unable to remove bucket replication. Retrying..."
+                    else
+                      attempt=0
+                      break
+                    fi
+                    attempt=$((attempt+1))
+                    sleep $wait_time
+                  done
+                  if [ $attempt -eq $max_attempts ]; then
+                    echo "Unable to remove bucket replication."
+                    exit 1
+                  fi
+                  echo "bucket replication removal is complete."
+                  set -e
+                fi
+                    {{- end }}
+                  {{- end }}
+                {{- end }}
+              {{- else }}
+                echo "Replication is disabled. Skipping all replication configurations."
+                echo "Removing replication from all buckets..."
+                mc ls minio | while read -r line; do
+                  bucket_name="${line##* }"
+                  bucket_name="${bucket_name%/}"
+                  if [ -n "$bucket_name" ]; then
+                    echo "Removing replication from bucket: $bucket_name"
+                    mc replicate rm --all --force minio/$bucket_name 2>/dev/null || echo "No replication configured for $bucket_name or unable to remove."
+                  fi
+                done
+                echo "Replication removal complete."
+              {{- end }}
+
+          envFrom:
+            - secretRef:
+                name: "{{ include "secret.s3.private.bucket.name" . }}"
+            {{- if .Values.global.nrOrgUnits }}
+              {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+            - secretRef:
+                name: org-units-sftp-creds
+                {{- end }}
+            {{- end }}
+          volumeMounts:
+          - name: {{ .Release.Name }}-minio-customer-policy
+            mountPath: /tmp/customer.policy.json
+            subPath: customer.policy.json
+          - name: {{ .Release.Name }}-minio-psql-policy
+            mountPath: /tmp/psql.policy.json
+            subPath: psql.policy.json
+          {{- if .Values.global.nrOrgUnits }}
+            {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+              {{- range $key, $value := .Values.global.nrOrgUnits }}
+          - name: "{{ $.Release.Name }}-s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy"
+            mountPath: /tmp/s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy.json
+            subPath: s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy.json
+              {{- end }}
+            {{- end }}
+          {{- end }}
+      volumes:
+        - name: {{ .Release.Name }}-minio-customer-policy
+          configMap:
+            name: {{ .Release.Name }}-minio-customer-policy
+            items:
+            - key: customer.policy.json
+              path: customer.policy.json
+        - name: {{ .Release.Name }}-minio-psql-policy
+          configMap:
+            name: {{ .Release.Name }}-minio-psql-policy
+            items:
+            - key: psql.policy.json
+              path: psql.policy.json
+
+        {{- if .Values.global.nrOrgUnits }}
+          {{- if ne (len .Values.global.nrOrgUnits) 0 }}
+            {{- range $key, $value := .Values.global.nrOrgUnits }}
+        - name: "{{ $.Release.Name }}-s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy"
+          configMap:
+            name: "{{ $.Release.Name }}-s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy"
+            items:
+            - key: s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy.json
+              path: s3-{{ $value.orgUnitCode | lower | replace "_" "-" }}-policy.json
+            {{- end }}
+          {{- end }}
+        {{- end }}
+{{- include "image.pull.secrets" . | nindent 6 }}
+      restartPolicy: Never
+  backoffLimit: 5

@@ -1,0 +1,358 @@
+kafkaConnect:
+  name: cdc
+  version: 3.9.0
+  replicas: 1
+  bootstrapServers: invhub-kafka-bootstrap:9093
+  trustedCertificateSecretName: invhub-cluster-ca-cert
+  image:
+    repository: symphonyfs.azurecr.io/symphonysensa/invhub-cdc
+    tag: ""
+  config:
+    {}
+    # maxRequestSize: 10485880
+    # producerMaxRequestSize: 10485880
+    # consumerMaxRequestSize: 10485880
+  logging:
+    level: INFO
+  template:
+    pod:
+      imagePullSecrets:
+        - name: regcred
+
+# Global database configuration - only one type supported at a time
+global:
+  {}
+  # remoteDataDbType: "oracle" # oracle or postgres
+  # remoteDataDbHost: "10.232.36.4"
+  # remoteDataDbName: "XE"
+  # remoteDataDbPort: "1521"
+  # remoteDataDbUsername: "APPS_EIM"
+  # remoteDataDbPassword: ""
+
+# Universal connector definitions with database-agnostic keys
+connectors:
+  # Subject updates connector
+  subjectUpdatesJdbcConnector:
+    enabled: false
+    tasksMax: 1
+    state: stopped  # running or paused or stopped
+    autoRestart:
+      enabled: false
+    config:
+      # Topic configuration
+      topicPrefix: "subject-updates"
+
+      # Query and timestamp configuration
+      query: "select * from V_IH_SUBJECT_UPDATED_EVENTS"
+      mode: "timestamp"
+
+      # Database-specific configurations (will be templated)
+      timestampColumnName:
+        oracle: "UPDATE_TIMESTAMP"
+        postgres: "update_timestamp"
+
+      schemaPattern:
+        oracle: "APPS_EIM"
+        postgres: "public"
+
+      # Transform configurations (database-specific field names)
+      transforms:
+        keyField:
+          oracle: "CUSTOMER_ID"
+          postgres: "customer_id"
+        payloadField:
+          oracle: "PAYLOAD"
+          postgres: "payload"
+
+      # Polling and batch configuration
+      pollIntervalMs: 300000
+      batchMaxRows: 10000
+      dbTimezone: "UTC"
+
+      # Topic creation settings
+      topicCreation:
+        enable: false
+        defaultReplicationFactor: 3
+        defaultPartitions: 6
+        defaultCleanupPolicy: "compact"
+        defaultCompressionType: "producer"
+        defaultDeleteRetentionMs: 7776000000
+
+      # Converter settings
+      valueConverter: "org.apache.kafka.connect.storage.StringConverter"
+      valueConverterSchemasEnable: false
+      keyConverter: "org.apache.kafka.connect.storage.StringConverter"
+      keyConverterSchemasEnable: false
+
+  # Unusual activities connector
+  unusualActivitiesJdbcConnector:
+    enabled: false
+    tasksMax: 1
+    state: stopped  # running or paused or stopped
+    autoRestart:
+      enabled: false
+    config:
+      # Topic configuration
+      topicPrefix: "detections"
+
+      # Query and timestamp configuration
+      query: "select * from V_IH_UNUSUAL_ACTIVITY_EVENTS"
+      mode: "timestamp"
+
+      # Database-specific configurations
+      timestampColumnName:
+        oracle: "CREATION_TIMESTAMP"
+        postgres: "creation_timestamp"
+
+      schemaPattern:
+        oracle: "APPS_EIM"
+        postgres: "public"
+
+      # Transform configurations
+      transforms:
+        keyField:
+          oracle: "CUSTOMER_ID"
+          postgres: "customer_id"
+        payloadField:
+          oracle: "PAYLOAD"
+          postgres: "payload"
+
+      # Polling and batch configuration
+      pollIntervalMs: 300000
+      batchMaxRows: 10000
+      dbTimezone: "UTC"
+
+      # Topic creation settings
+      topicCreation:
+        enable: false
+        defaultReplicationFactor: 3
+        defaultPartitions: 6
+        defaultCleanupPolicy: "compact"
+        defaultCompressionType: "producer"
+        defaultDeleteRetentionMs: 7776000000
+
+      # Converter settings
+      valueConverter: "org.apache.kafka.connect.storage.StringConverter"
+      valueConverterSchemasEnable: false
+      keyConverter: "org.apache.kafka.connect.storage.StringConverter"
+      keyConverterSchemasEnable: false
+
+  # Payment fraud connector
+  paymentFraudJdbcConnector:
+    enabled: false
+    tasksMax: 1
+    state: stopped  # running or paused or stopped
+    autoRestart:
+      enabled: false
+    config:
+      # Topic configuration
+      topicPrefix: "detections"
+
+      # Query and timestamp configuration
+      query: "select * from V_IH_PAYMENT_FRAUD_EVENTS"
+      mode: "timestamp"
+
+      # Database-specific configurations
+      timestampColumnName:
+        oracle: "CREATION_TIMESTAMP"
+        postgres: "creation_timestamp"
+
+      schemaPattern:
+        oracle: "APPS_EIM"
+        postgres: "public"
+
+      # Transform configurations
+      transforms:
+        keyField:
+          oracle: "CUSTOMER_ID"
+          postgres: "customer_id"
+        payloadField:
+          oracle: "PAYLOAD"
+          postgres: "payload"
+
+      # Polling and batch configuration - faster for payment fraud
+      pollIntervalMs: 60000
+      batchMaxRows: 10000
+      dbTimezone: "UTC"
+
+      # Topic creation settings
+      topicCreation:
+        enable: false
+        defaultReplicationFactor: 3
+        defaultPartitions: 6
+        defaultCleanupPolicy: "compact"
+        defaultCompressionType: "producer"
+        defaultDeleteRetentionMs: 7776000000
+
+      # Converter settings
+      valueConverter: "org.apache.kafka.connect.storage.StringConverter"
+      valueConverterSchemasEnable: false
+      keyConverter: "org.apache.kafka.connect.storage.StringConverter"
+      keyConverterSchemasEnable: false
+
+  # Customer screening connector
+  customersScreeningWmlJdbcConnector:
+    enabled: false
+    tasksMax: 1
+    state: stopped  # running or paused or stopped
+    autoRestart:
+      enabled: false
+    config:
+      # Topic configuration
+      topicPrefix: "detections"
+
+      # Query and timestamp configuration
+      query: "select * from V_IH_WLM_CUSTOMER_SCREENING_EVENTS"
+      mode: "timestamp"
+
+      # Database-specific configurations
+      timestampColumnName:
+        oracle: "CREATION_TIMESTAMP"
+        postgres: "creation_timestamp"
+
+      schemaPattern:
+        oracle: "APPS_EIM"
+        postgres: "public"
+
+      # Transform configurations
+      transforms:
+        keyField:
+          oracle: "CUSTOMER_ID"
+          postgres: "customer_id"
+        payloadField:
+          oracle: "PAYLOAD"
+          postgres: "payload"
+
+      # Polling and batch configuration
+      pollIntervalMs: 300000
+      batchMaxRows: 10000
+      dbTimezone: "UTC"
+
+      # Additional config for postgres
+      tableTypes:
+        postgres: "VIEW"
+
+      # Topic creation settings
+      topicCreation:
+        enable: false
+        defaultReplicationFactor: 3
+        defaultPartitions: 6
+        defaultCleanupPolicy: "compact"
+        defaultCompressionType: "producer"
+        defaultDeleteRetentionMs: 7776000000
+
+      # Converter settings
+      valueConverter: "org.apache.kafka.connect.storage.StringConverter"
+      valueConverterSchemasEnable: false
+      keyConverter: "org.apache.kafka.connect.storage.StringConverter"
+      keyConverterSchemasEnable: false
+
+  # Subject scored connector
+  subjectScoredJdbcConnector:
+    enabled: false
+    tasksMax: 1
+    state: stopped  # running or paused or stopped
+    autoRestart:
+      enabled: false
+    config:
+      # Topic configuration
+      topicPrefix: "detections"
+
+      # Query and timestamp configuration
+      query: "select * from V_IH_SUBJECT_SCORED_EVENTS"
+      mode: "timestamp"
+
+      # Database-specific configurations
+      timestampColumnName:
+        oracle: "UPDATE_TIMESTAMP"
+        postgres: "update_timestamp"
+
+      schemaPattern:
+        oracle: "APPS_EIM"
+        postgres: "public"
+
+      # Transform configurations
+      transforms:
+        keyField:
+          oracle: "CUSTOMER_ID"
+          postgres: "customer_id"
+        payloadField:
+          oracle: "PAYLOAD"
+          postgres: "payload"
+
+      # Polling and batch configuration
+      pollIntervalMs: 300000
+      batchMaxRows: 10000
+      dbTimezone: "UTC"
+
+      # Additional config for postgres
+      tableTypes:
+        postgres: "VIEW"
+
+      # Topic creation settings
+      topicCreation:
+        enable: false
+        defaultReplicationFactor: 3
+        defaultPartitions: 6
+        defaultCleanupPolicy: "compact"
+        defaultCompressionType: "producer"
+        defaultDeleteRetentionMs: 7776000000
+
+      # Converter settings
+      valueConverter: "org.apache.kafka.connect.storage.StringConverter"
+      valueConverterSchemasEnable: false
+      keyConverter: "org.apache.kafka.connect.storage.StringConverter"
+      keyConverterSchemasEnable: false
+
+  # Transaction screening connector
+  transactionScreeningJdbcConnector:
+    enabled: false
+    tasksMax: 1
+    state: stopped  # running or paused or stopped
+    autoRestart:
+      enabled: false
+    config:
+      # Topic configuration
+      topicPrefix: "detections"
+
+      # Query and timestamp configuration
+      query: "select * from V_IH_WLM_TRANSACTION_SCREENING_EVENTS"
+      mode: "timestamp"
+
+      # Database-specific configurations
+      timestampColumnName:
+        oracle: "CREATION_TIMESTAMP"
+        postgres: "creation_timestamp"
+
+      schemaPattern:
+        oracle: "APPS_EIM"
+        postgres: "public"
+
+      # Transform configurations
+      transforms:
+        keyField:
+          oracle: "CUSTOMER_ID"
+          postgres: "customer_id"
+        payloadField:
+          oracle: "PAYLOAD"
+          postgres: "payload"
+
+      # Polling and batch configuration
+      pollIntervalMs: 300000
+      batchMaxRows: 10000
+      dbTimezone: "UTC"
+
+      # Topic creation settings
+      topicCreation:
+        enable: false
+        defaultReplicationFactor: 3
+        defaultPartitions: 6
+        defaultCleanupPolicy: "compact"
+        defaultCompressionType: "producer"
+        defaultDeleteRetentionMs: 7776000000
+
+      # Converter settings
+      valueConverter: "org.apache.kafka.connect.storage.StringConverter"
+      valueConverterSchemasEnable: false
+      keyConverter: "org.apache.kafka.connect.storage.StringConverter"
+      keyConverterSchemasEnable: false

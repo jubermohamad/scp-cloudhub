@@ -1,0 +1,5 @@
+apiVersion: v2
+name: istio-service-entry
+description: Helm chart to deploy Istio ServiceEntries
+type: application
+version: 1.0.0

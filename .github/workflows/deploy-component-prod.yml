@@ -1,0 +1,80 @@
+name: Deploy Single Component (Frontend OR Backend)
+
+# Thin entry point over deploy-fe-be-prod-basic.yml for deploying one App Service
+# at a specific existing ACR tag. Deploy both at once with that workflow instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: 'Component to deploy'
+        required: true
+        default: frontend
+        type: choice
+        options:
+          - frontend
+          - backend
+      image_tag:
+        description: 'Existing ACR tag to deploy (for example 0.9.0-beta.13)'
+        required: true
+        type: string
+      configure_backend_app_settings:
+        description: 'Apply Azure PostgreSQL + Microsoft auth app settings (backend only)'
+        required: true
+        default: true
+        type: boolean
+      backend_health_url:
+        description: 'Backend readiness URL (backend only)'
+        required: true
+        default: 'https://cloudhub.symphonyai.cloud/.backstage/health/v1/readiness'
+        type: string
+      strict_backend_health_check:
+        description: 'Fail deployment when backend readiness checks do not succeed from the runner'
+        required: true
+        default: false
+        type: boolean
+      frontend_health_url:
+        description: 'Frontend URL used for verification (frontend only)'
+        required: true
+        default: 'https://cloudhub.symphonyai.cloud/'
+        type: string
+      backend_origin:
+        description: 'Frontend nginx upstream origin for backend routing (frontend only)'
+        required: false
+        default: ''
+        type: string
+      require_backend_vnet_integration:
+        description: 'Fail deployment if backend has no VNet integration'
+        required: true
+        default: true
+        type: boolean
+      strict_postgres_preflight:
+        description: 'Fail deployment when the runner cannot connect to PostgreSQL'
+        required: true
+        default: false
+        type: boolean
+      strict_auth_smoke_check:
+        description: 'Fail deployment when the Microsoft auth smoke check fails'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.component }}
+    uses: ./.github/workflows/deploy-fe-be-prod-basic.yml
+    with:
+      deploy_component: ${{ inputs.component }}
+      image_tag: ${{ inputs.image_tag }}
+      configure_backend_app_settings: ${{ inputs.configure_backend_app_settings }}
+      backend_health_url: ${{ inputs.backend_health_url }}
+      strict_backend_health_check: ${{ inputs.strict_backend_health_check }}
+      frontend_health_url: ${{ inputs.frontend_health_url }}
+      backend_origin: ${{ inputs.backend_origin }}
+      require_backend_vnet_integration: ${{ inputs.require_backend_vnet_integration }}
+      strict_postgres_preflight: ${{ inputs.strict_postgres_preflight }}
+      strict_auth_smoke_check: ${{ inputs.strict_auth_smoke_check }}
+    secrets: inherit

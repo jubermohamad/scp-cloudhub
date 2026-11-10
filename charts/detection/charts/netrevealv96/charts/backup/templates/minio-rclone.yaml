@@ -1,0 +1,69 @@
+{{- $minioCredentials := .Values.minio.minioCredentials -}}
+{{- $azureCredentials := .Values.minio.azureCredentials -}}
+{{- $image := .Values.minio.image -}}
+{{- $schedule := .Values.minio.schedule -}}
+{{ $root := .Values }}
+{{- range .Values.minio.buckets }}
+{{ $name := printf "rclone-%s-to-%s" .source .destination }}
+{{- if $root.minio.restore }}
+{{ $name = printf "rclone-%s-to-%s-restore"  .destination .source }}
+{{- end }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+spec:
+  schedule: {{ $schedule | quote }}
+  {{- if .Values.global.timeZone }}
+  timeZone: "{{ .Values.global.timeZone }}"
+  {{- end }}
+  failedJobsHistoryLimit: {{ $root.minio.failedJobsHistoryLimit | default 1 | }}
+  successfulJobsHistoryLimit: {{ $root.minio.successfulJobsHistoryLimit | default 1 }}
+  concurrencyPolicy: {{ $root.minio.concurrencyPolicy | default "Forbid" | quote }}
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: rclone
+            image: {{ $image }}
+            env:
+            - name: RCLONE_CONFIG_IHMINIO_TYPE
+              value: "s3"
+            - name: RCLONE_CONFIG_IHMINIO_ENDPOINT
+              value: {{ $minioCredentials.endpoint | quote }}
+            - name: RCLONE_CONFIG_IHMINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioCredentials.secretName }}
+                  key: {{ $minioCredentials.accessKeyName }}
+            - name: RCLONE_CONFIG_IHMINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $minioCredentials.secretName }}
+                  key: {{ $minioCredentials.secretKeyName }}
+            {{- if eq .destination "azure" }} # Add aws support
+            - name: RCLONE_CONFIG_AZURE_TYPE
+              value: "azureblob"
+            - name: RCLONE_CONFIG_AZURE_ACCOUNT
+              value: {{ $azureCredentials.account | quote }}
+            - name: RCLONE_CONFIG_AZURE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $azureCredentials.secretName }}
+                  key: {{ $azureCredentials.secretKeyName }}
+            {{- end }}
+            args:
+            - "sync"
+            - "--verbose"
+            {{- if $root.minio.restore }}
+            - "{{ .destination }}:{{ .destinationBucket }}"
+            - "ihminio:{{ .source }}"
+            {{- else }}
+            - "ihminio:{{ .source }}"
+            - "{{ .destination }}:{{ .destinationBucket }}"
+            {{- end }}
+{{- include "image.pull.secrets" . | nindent 10 }}
+          restartPolicy: OnFailure
+{{- end }}

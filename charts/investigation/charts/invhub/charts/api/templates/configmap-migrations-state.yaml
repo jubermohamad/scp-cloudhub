@@ -1,0 +1,14 @@
+{{- if and (include "api.waitMigrationsNeeded" . | trim) .Values.waitForMigrations.createStateConfigMap }}
+{{- if not (lookup "v1" "ConfigMap" .Release.Namespace (include "api.migrationStateConfigMapName" .)) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "api.migrationStateConfigMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "api.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/resource-policy": "keep"
+data: {}
+{{- end }}
+{{- end }}

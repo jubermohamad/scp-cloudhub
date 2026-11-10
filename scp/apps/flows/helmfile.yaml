@@ -1,0 +1,50 @@
+# username is retrieved from the environment with the format SYMPHONYFS_USERNAME
+# password is retrieved from the environment with the format SYMPHONYFS_PASSWORD
+repositories:
+  - name: eurekaflows
+    url: eurekaflows.azurecr.io
+    oci: true
+    username: '{{ env "CLOUDHUB_USERNAME" }}'
+    password: '{{ env "CLOUDHUB_PASSWORD" }}'
+  - name: k8s-as-helm
+    url: https://ameijer.github.io/k8s-as-helm/
+
+helmDefaults:
+  timeout: 1800
+  wait: false  # 'true' will cause deadlock for NR with helm waiting for override-volume-claim indefinitely
+               # more: https://netreveal.atlassian.net/browse/FCENGX-3005
+  kubeContext: <UPDATE>
+
+---
+
+# The environments section to define the reusable variables
+environments:
+  default:
+    values:
+      - owners: "CloudDevOps"
+      - client_facing: "<UPDATE>"
+      - domain_name_cloud_or_dev: "<UPDATE>"
+      - dr_enabled: false
+      - applicationPrefix: "flows"
+      - clientSubDomain: "<UPDATE>"
+      - envType: "<UPDATE>"
+      - overlayRepoName: "nrod-overlay-{{ .Values.clientSubDomain }}"
+      - namespace: '{{ requiredEnv "INSTANCE_NAME" }}'
+      - appName: '{{ requiredEnv "APP_NAME" }}'
+      - helm_chart_repo_forwardslash_name: "oci://eurekaflows.azurecr.io/helm/workflows"
+      - helm_chart_version: '{{ env "CLOUDHUB__UPDATE___HELM_CHART_VERSION" }}'
+      - project_overlay_files_ref: '{{ env "CLOUDHUB__UPDATE___PROJECT_OVERLAY_FILES_REF" }}'
+
+---
+
+releases:
+
+  - name: "{{ .Values.namespace }}"
+    namespace: "{{ .Values.namespace }}"
+    chart: "{{ .Values.helm_chart_repo_forwardslash_name }}"
+    version: "{{ .Values.helm_chart_version }}"
+    values:
+      - ../../templated-overrides/{{ .Values.appName }}/common.gotmpl
+      - {{ .Values.appName }}/{{ .Values.namespace }}/namespace.overrides.gotmpl
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/common/project.overrides.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/project.overrides.gotmpl?ref={{ .Values.project_overlay_files_ref }}

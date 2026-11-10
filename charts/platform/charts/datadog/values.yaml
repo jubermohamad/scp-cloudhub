@@ -1,0 +1,21 @@
+# CloudHub Native defaults for the Datadog agent deployment.
+# Secrets (apiKey/appKey) are injected at deploy time from the platform
+# external-secrets store (Azure Key Vault backed) — never committed here.
+datadog:
+  enabled: true
+  datadog:
+    site: datadoghq.eu
+    apiKeyExistingSecret: datadog-secret
+    appKeyExistingSecret: datadog-secret
+    logs:
+      enabled: true
+      containerCollectAll: true
+    apm:
+      portEnabled: true
+    processAgent:
+      enabled: true
+    clusterName: ""
+  clusterAgent:
+    enabled: true
+    metricsProvider:
+      enabled: false

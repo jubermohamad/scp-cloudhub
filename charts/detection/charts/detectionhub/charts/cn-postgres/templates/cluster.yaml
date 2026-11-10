@@ -1,0 +1,48 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "cn-postgres.fullname" . }}
+  labels:
+    {{- include "cn-postgres.labels" . | nindent 4 }}
+    {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- include "detectionhub.imagePullSecrets" . | indent 2 }}
+  inheritedMetadata:
+    labels:
+      {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 6 }}
+  {{- $config := include "cn-postgres.config" . | fromYaml }}
+  instances: {{ .Values.instances }}
+  {{- if .Values.certificates }}
+  certificates:
+    {{- toYaml .Values.certificates | nindent 4 }}
+  {{- end }}
+  primaryUpdateStrategy: {{ .Values.primaryUpdateStrategy }}
+  imageName: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+  storage:
+    size: {{ .Values.storage.size }}
+  resources:
+    {{- toYaml .Values.resources | nindent 4 }}
+  postgresql:
+    {{- toYaml .Values.postgresql | nindent 4 }}
+  {{- if .Values.monitoring.enabled }}
+  monitoring:
+    {{- toYaml .Values.monitoring | nindent 4 }}
+  {{- end }}
+  {{- if .Values.backup.enabled }}
+  backup:
+    retentionPolicy: {{ .Values.backup.retentionPolicy }}
+    {{- with .Values.backup.barmanObjectStore }}
+    barmanObjectStore:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- end }}
+  bootstrap:
+    {{- toYaml $config.bootstrap | nindent 4 }}
+  {{- with .Values.managed }}
+  managed:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}

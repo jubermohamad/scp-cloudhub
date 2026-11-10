@@ -1,0 +1,6 @@
+apiVersion: v2
+name: data-explorer-frontend
+description: Data Explorer micro-frontend — standalone SPA and the Module Federation remote hosts mount
+type: application
+version: 0.1.1
+appVersion: "0.0.1"

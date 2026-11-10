@@ -1,0 +1,12 @@
+dependencies:
+- name: network-policies
+  repository: file://./charts/network-policies
+  version: 3.1.1
+- name: nrodsftp
+  repository: file://./charts/nrodsftp
+  version: 3.1.0
+- name: minio
+  repository: file://./charts/minio
+  version: 5.4.0
+digest: sha256:73d12dbab0e988fc34189e214559dd19433f601853391986ad8ce38df52259e2
+generated: "2026-05-01T12:05:09.0117582+01:00"

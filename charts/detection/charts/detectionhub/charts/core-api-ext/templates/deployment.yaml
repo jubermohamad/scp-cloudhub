@@ -1,0 +1,167 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "core-api-ext.fullname" . }}
+  labels:
+    {{- include "core-api-ext.labels" . | nindent 4 }}
+    {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "core-api-ext.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "core-api-ext.selectorLabels" . | nindent 8 }}
+        {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 8 }}
+    spec:
+      {{- include "detectionhub.imagePullSecrets" . | indent 6 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              keytool -importcert -file /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -cacerts -noprompt -storepass changeit
+              exec java -jar app.jar
+          env:
+            {{- $modelhub := include "detectionhub.modelHub" . | fromYaml }}
+            {{- $trainingtool := include "detectionhub.trainingTool" . | fromYaml }}
+            - name: SERVER_PORT
+              value: {{ .Values.service.port | quote }}
+            - name: MINIO_ENDPOINT
+              value: {{ .Values.minio.endpoint | quote }}
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.existingSecret }}
+                  key: {{ .Values.minio.secretKey | default "rootUser" }}
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.minio.existingSecret }}
+                  key: {{ .Values.minio.secretPass | default "rootPassword" }}
+            - name: MINIO_BUCKET_NAME
+              value: {{ .Values.minio.templatesBucketName }}
+            - name: K8S_SPARK_API_URL
+              value: {{ .Values.sparkOperatorEndpoint }}
+            - name: CONFIG_REPOSITORY_PATH
+              value: {{ .Values.minio.configBucketName }}
+            - name: API_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ index (default dict .Values.apiJWT) "existingSecretName" | default (printf "%s-core-api-ext-secrets" .Release.Name) }}
+                  key: {{ index (default dict .Values.apiJWT) "existingSecretKey" | default "jwt.api" }}
+            - name: CORE_API_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ index (default dict .Values.extApi) "existingSecretName"  | default (printf "%s-core-api-secrets" .Release.Name) }}
+                  key: {{ index (default dict .Values.extApi) "existingSecretKey" | default "jwt.api" }}
+            - name: CORE_API_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ index (default dict .Values.extApi) "existingSecretName"  | default (printf "%s-core-api-secrets" .Release.Name) }}
+                  key: {{ index (default dict .Values.extApi) "existingSecretUrl" | default "internal.url" }}
+            {{- if .Values.iceberg }}
+            - name: ICEBERG_ACCOUNT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.iceberg.existingSecretName }}
+                  key: {{ .Values.iceberg.accountId }}
+            - name: ICEBERG_ACCOUNT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.iceberg.existingSecretName }}
+                  key: {{ .Values.iceberg.accountKey }}
+            {{- end }}
+            {{- if $modelhub.enabled }}
+            - name: MODEL_HUB_SECRET
+              value: {{ $modelhub.existingSecretName }}
+            - name: MODEL_HUB_URL
+              value: {{ $modelhub.existingSecretUrl }}
+            - name: MODEL_HUB_API_KEY
+              value: {{ $modelhub.existingSecretKey }}
+            {{- end }}
+            {{- if $trainingtool.enabled }}
+            - name: TRAINING_TOOL_SECRET
+              value: {{ $trainingtool.existingSecretName }}
+            - name: TRAINING_TOOL_MINIO_ID
+              value: {{ $trainingtool.existingSecretMinioId }}
+            - name: TRAINING_TOOL_MINIO_KEY
+              value: {{ $trainingtool.existingSecretMinioKey }}
+            - name: TRAINING_TOOL_MINIO_URL
+              value: {{ $trainingtool.existingSecretMinioUrl }}
+            {{- end }}
+            - name: NOTIFY_DEFAULT_SELECTOR
+              value: {{ .Values.notification.defaults.selector | default "bulk" | quote }}
+            - name: NOTIFY_DEFAULT_RUN_TEMPLATE
+              value: {{ .Values.notification.defaults.runTemplate | default "small_bulk_info-template" | quote }}
+            - name: NOTIFY_DEFAULT_PROCESS_NAME
+              value: {{ .Values.notification.defaults.processName | default "ProcessingAndTagging" | quote }}
+            - name: NOTIFY_DEFAULT_APP_CONFIG_FILE
+              value: {{ .Values.notification.defaults.appConfigFile | default "REST" | quote }}
+            - name: NOTIFY_SCHEDULER_MAX_CORES
+              value: {{ .Values.notification.defaults.maxCores | default "5" | quote }}
+            - name: NOTIFY_SCHEDULER_MAX_MEMORY_MB
+              value: {{ .Values.notification.defaults.maxMemory | default "20480" | quote }}
+            - name: NOTIFY_SCHEDULER_PARALLEL_RUN
+              value: {{ .Values.notification.defaults.parallelRun | default "N" | quote }}
+            - name: NOTIFY_SCHEDULER_INTERVAL_MS
+              value: {{ .Values.notification.defaults.intervalMs | default "60000" | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          {{- if .Values.probes.startup.enabled }}
+          startupProbe:
+            {{- if eq (.Values.probes.startup.type | default "http") "tcp" }}
+            tcpSocket:
+              port: http
+            {{- else }}
+            httpGet:
+              path: {{ .Values.probes.startup.httpPath | default .Values.probes.startup.path | default "/" }}
+              port: http
+            {{- end }}
+            initialDelaySeconds: {{ .Values.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold | default 30 }}
+            successThreshold: {{ .Values.probes.startup.successThreshold | default 1 }}
+          {{- end }}
+          {{- if .Values.probes.liveness.enabled }}
+          livenessProbe:
+            {{- if eq (.Values.probes.liveness.type | default "http") "tcp" }}
+            tcpSocket:
+              port: http
+            {{- else }}
+            httpGet:
+              path: {{ .Values.probes.liveness.httpPath | default .Values.probes.liveness.path | default "/" }}
+              port: http
+            {{- end }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold | default 3 }}
+            successThreshold: {{ .Values.probes.liveness.successThreshold | default 1 }}
+          {{- end }}
+          {{- if .Values.probes.readiness.enabled }}
+          readinessProbe:
+            {{- if eq (.Values.probes.readiness.type | default "http") "tcp" }}
+            tcpSocket:
+              port: http
+            {{- else }}
+            httpGet:
+              path: {{ .Values.probes.readiness.httpPath | default .Values.probes.readiness.path | default "/" }}
+              port: http
+            {{- end }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold | default 3 }}
+            successThreshold: {{ .Values.probes.readiness.successThreshold | default 1 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

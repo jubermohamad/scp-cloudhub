@@ -1,0 +1,16 @@
+clusterName: "opensearch-cluster"
+nodeGroup: "master"
+
+certificates:
+  ca:
+    duration: 87600h # 10 years
+    renewBefore: 17520h # 2 years
+  nodes:
+    duration: 17520h # 2 years
+    renewBefore: 2190h # 3 months
+  admin:
+    duration: 8760h # 1 year
+    renewBefore: 720h # 30 days
+  dashboard:
+    duration: 8760h # 1 year
+    renewBefore: 720h # 30 days

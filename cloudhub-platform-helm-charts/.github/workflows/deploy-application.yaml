@@ -1,0 +1,117 @@
+name: deploy-application
+
+on:
+  workflow_dispatch:
+    inputs:
+      applicationName: { required: true, description: 'Application name' }
+      businessUnit: { required: true, description: 'Business unit' }
+      environment: { required: true, description: 'dev|qa|prod' }
+      targetCluster:
+        {
+          required: true,
+          description: 'AKS cluster name (e.g. aks-retail-prod)',
+        }
+      namespace: { required: true, description: 'Target namespace' }
+      image: { required: true, description: 'Container image (repo:tag)' }
+      replicas: { required: false, default: '2' }
+      cpuRequest: { required: false, default: '100m' }
+      memoryRequest: { required: false, default: '128Mi' }
+      ingressEnabled: { required: false, default: 'false' }
+      ingressHost: { required: false, default: '' }
+      owner: { required: true, description: 'Team email' }
+      costCenter: { required: true, description: 'Finance cost center' }
+  repository_dispatch:
+    types: [deploy-application]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || github.event.client_payload.environment }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve inputs
+        id: vars
+        run: |
+          src='${{ toJson(github.event.inputs) }}'
+          if [ "$src" = "null" ]; then src='${{ toJson(github.event.client_payload) }}'; fi
+          echo "$src" > inputs.json
+          for k in applicationName businessUnit environment targetCluster namespace image replicas cpuRequest memoryRequest ingressEnabled ingressHost owner costCenter; do
+            v=$(jq -r --arg k "$k" '.[$k] // ""' inputs.json)
+            echo "$k=$v" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Authenticate to AKS
+        run: |
+          rg=$(az aks list --query "[?name=='${{ steps.vars.outputs.targetCluster }}'].resourceGroup | [0]" -o tsv)
+          az aks get-credentials -g "$rg" -n "${{ steps.vars.outputs.targetCluster }}" --overwrite-existing
+          kubelogin convert-kubeconfig -l azurecli
+
+      - uses: azure/setup-helm@v4
+        with: { version: v3.14.4 }
+
+      - name: Check namespace existence
+        id: ns
+        run: |
+          if kubectl get ns "${{ steps.vars.outputs.namespace }}" >/dev/null 2>&1; then
+            echo "exists=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install/upgrade namespace-bootstrap
+        # Always run helm upgrade --install (idempotent); never use kubectl create namespace.
+        run: |
+          helm upgrade --install "ns-${{ steps.vars.outputs.namespace }}" \
+            ./charts/namespace-bootstrap \
+            --namespace "${{ steps.vars.outputs.namespace }}" \
+            --create-namespace \
+            --set namespace="${{ steps.vars.outputs.namespace }}" \
+            --set application="${{ steps.vars.outputs.applicationName }}" \
+            --set businessUnit="${{ steps.vars.outputs.businessUnit }}" \
+            --set environment="${{ steps.vars.outputs.environment }}" \
+            --set owner="${{ steps.vars.outputs.owner }}" \
+            --set costCenter="${{ steps.vars.outputs.costCenter }}" \
+            --wait --timeout 5m
+
+      - name: Install/upgrade app-bootstrap
+        run: |
+          helm upgrade --install "${{ steps.vars.outputs.applicationName }}" \
+            ./charts/app-bootstrap \
+            --namespace "${{ steps.vars.outputs.namespace }}" \
+            --set application="${{ steps.vars.outputs.applicationName }}" \
+            --set namespace="${{ steps.vars.outputs.namespace }}" \
+            --set businessUnit="${{ steps.vars.outputs.businessUnit }}" \
+            --set environment="${{ steps.vars.outputs.environment }}" \
+            --set owner="${{ steps.vars.outputs.owner }}" \
+            --set costCenter="${{ steps.vars.outputs.costCenter }}" \
+            --set image.repository="$(echo '${{ steps.vars.outputs.image }}' | cut -d: -f1)" \
+            --set image.tag="$(echo '${{ steps.vars.outputs.image }}' | cut -d: -f2-)" \
+            --set replicas="${{ steps.vars.outputs.replicas }}" \
+            --set resources.requests.cpu="${{ steps.vars.outputs.cpuRequest }}" \
+            --set resources.requests.memory="${{ steps.vars.outputs.memoryRequest }}" \
+            --set ingress.enabled="${{ steps.vars.outputs.ingressEnabled }}" \
+            --set ingress.host="${{ steps.vars.outputs.ingressHost }}" \
+            --wait --timeout 10m
+
+      - name: Validate rollout
+        run: |
+          kubectl -n "${{ steps.vars.outputs.namespace }}" \
+            rollout status deploy/"${{ steps.vars.outputs.applicationName }}" --timeout=5m
+          kubectl -n "${{ steps.vars.outputs.namespace }}" get all

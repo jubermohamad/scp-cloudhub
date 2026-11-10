@@ -1,0 +1,27 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Values.postgres.clusterName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform-services.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.postgres.instances }}
+  imageName: {{ .Values.postgres.image }}
+  primaryUpdateStrategy: {{ .Values.postgres.primaryUpdateStrategy }}
+  enableSuperuserAccess: {{ .Values.postgres.enableSuperuserAccess }}
+  storage:
+    size: {{ .Values.postgres.storage.size }}
+    {{- with .Values.postgres.storage.storageClass }}
+    storageClass: {{ . }}
+    {{- end }}
+  resources:
+    {{- toYaml .Values.postgres.resources | nindent 4 }}
+  postgresql:
+    parameters:
+      {{- toYaml .Values.postgres.parameters | nindent 6 }}
+  # No bootstrap block: CNPG's default initdb creates the throwaway "app"
+  # database; the real per-product databases are created by the ensure-db-*
+  # hook Jobs (one per database).
+{{- end }}

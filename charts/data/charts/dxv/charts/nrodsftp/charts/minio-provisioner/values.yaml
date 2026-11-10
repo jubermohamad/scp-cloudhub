@@ -1,0 +1,63 @@
+# Naming-migration seam (docs/NAMING-MIGRATION.md Step 2): this chart's Job
+# had no override mechanism at all. Defaults to today's bare name
+# (render-neutral); the env-prefixed name
+# (sri-<env>-data-dxv-minio-provisioner) is a deploy-values override only —
+# see templates/provision-job.yaml.
+fullnameOverride: "minio-provisioner"
+
+imageRepository: quay.io/minio/mc
+imageTag: RELEASE.2025-08-13T08-35-41Z
+
+notifyWebhook:
+  # Store-and-forward directory for undelivered webhook events. `/export` is the
+  # bundled MinIO's DATA ROOT, so in filesystem-backed standalone mode this
+  # directory surfaced as a phantom bucket named `events` in `mc ls` — that is
+  # what the ninth "bucket" in dxv's listing actually was, not a real bucket.
+  #
+  # It MUST be empty when targeting a DISTRIBUTED (erasure-coded) store: there
+  # `/export` is the erasure drive itself and MinIO owns its layout exclusively,
+  # so writing a queue directory inside it is corruption-adjacent, not merely
+  # untidy. Empty disables store-and-forward: events are delivered synchronously
+  # and are DROPPED if the receiver is down (see queueDir note in the deploy
+  # values for the durability trade-off this accepts).
+  queueDir: "/export/events"
+  queueLimit: "10000"
+
+# MinIO Site Replication Configuration (Active-Active)
+# Enables bi-directional replication between two MinIO deployments
+minio:
+  # Buckets this product owns. Scopes the replication-removal loop, which
+  # previously ran across EVERY bucket on the server — fine for a dedicated
+  # MinIO, destructive on a shared one.
+  ownedBuckets:
+    - public-bucket
+    - private-bucket
+    - archive-bucket
+    - s4s-bucket
+    - er-replica-bucket
+    - service-replica-bucket
+    - keys
+    - backup
+  # All replication buckets must have versioning enabled. On both sites, ensure that versioning is
+  # enabled for the buckets listed in `bucketsWithVersioning`.
+  bucketsWithVersioning: []
+    # - "private-bucket"
+    # - "public-bucket"
+  replication:
+    enabled: false
+    buckets: []
+      # - bucket: "private-bucket"
+      #   # The endpoint has to be defined with ${MINIO_USER}:${MINIO_PASSWORD} for authentication
+      #   endpoint: "http://${MINIO_USER}:${MINIO_PASSWORD}@minio.netreveal.svc.cluster.local:9000"
+      #   # Specify the integer priority of the replication rule. The value must be unique among all other rules on the source bucket. Higher values imply a higher priority than all other rules.
+      #   priority: 0
+      #   enabled: true
+      #   extraOptions: ""
+      #   replicateOptions: "delete,delete-marker,existing-objects,metadata-sync"
+      # - bucket: "public-bucket"
+      #   # The endpoint has to be defined with ${MINIO_USER}:${MINIO_PASSWORD} for authentication
+      #   endpoint: "http://${MINIO_USER}:${MINIO_PASSWORD}@minio.netreveal.svc.cluster.local:9000"
+      #   priority: 0
+      #   enabled: true
+      #   extraOptions: "--healthcheck-seconds 60 "
+      #   replicateOptions: "delete,delete-marker,existing-objects,metadata-sync"

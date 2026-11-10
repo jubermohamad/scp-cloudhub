@@ -1,0 +1,109 @@
+name: provision-cluster
+
+# Auto-runs on PRs touching tfvars: plans every changed file.
+# Auto-runs on push to main: applies every changed file (with environment gating).
+
+on:
+  pull_request:
+    paths:
+      - "azure-kubernetes-service/values/*.tfvars"
+      - "azure-kubernetes-service/**.tf"
+  push:
+    branches: [main]
+    paths:
+      - "azure-kubernetes-service/values/*.tfvars"
+      - "azure-kubernetes-service/**.tf"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      workspaces: ${{ steps.set.outputs.workspaces }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: set
+        run: |
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          changed=$(git diff --name-only "$base" HEAD \
+            | grep -E '^azure-kubernetes-service/values/.+\.tfvars$' \
+            | xargs -n1 basename | sed 's/\.tfvars$//' | sort -u || true)
+          if [ -z "$changed" ]; then
+            echo "workspaces=[]" >> "$GITHUB_OUTPUT"
+          else
+            echo "workspaces=$(echo "$changed" | jq -R . | jq -sc .)" >> "$GITHUB_OUTPUT"
+          fi
+
+  plan:
+    name: Plan ${{ matrix.workspace }}
+    needs: detect
+    if: needs.detect.outputs.workspaces != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: ${{ fromJson(needs.detect.outputs.workspaces) }}
+    env:
+      TF_WORKSPACE: ${{ matrix.workspace }}
+    defaults:
+      run:
+        working-directory: azure-kubernetes-service
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+          cli_config_credentials_token: ${{ secrets.TFC_TOKEN }}
+
+      - run: terraform fmt -check -recursive
+      - run: terraform init -input=false
+      - run: terraform validate
+      - name: terraform plan
+        run: terraform plan -input=false -var-file="values/${{ matrix.workspace }}.tfvars"
+
+  apply:
+    name: Apply ${{ matrix.workspace }}
+    needs: [detect, plan]
+    if: github.event_name == 'push' && needs.detect.outputs.workspaces != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: ${{ fromJson(needs.detect.outputs.workspaces) }}
+    environment: >-
+      ${{
+        contains(matrix.workspace, '-prod-') && 'prod' ||
+        endsWith(matrix.workspace, '-prod')   && 'prod' ||
+        contains(matrix.workspace, '-qa-')    && 'qa'   ||
+        endsWith(matrix.workspace, '-qa')     && 'qa'   ||
+        'dev'
+      }}
+    env:
+      TF_WORKSPACE: ${{ matrix.workspace }}
+    defaults:
+      run:
+        working-directory: azure-kubernetes-service
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+          cli_config_credentials_token: ${{ secrets.TFC_TOKEN }}
+
+      - run: terraform init -input=false
+      - run: terraform apply -input=false -auto-approve -var-file="values/${{ matrix.workspace }}.tfvars"

@@ -1,0 +1,82 @@
+{{- if .Values.jobs.rebuildWarehouse.enabled }}
+{{- /* DROP DATABASE against a server this release does not own: refuse unless
+       the operator opted in. See prism.destructiveGuard for the full reasoning. */}}
+{{- include "prism.destructiveGuard" (dict "ctx" $
+      "job" "rebuild-warehouse"
+      "allowPath" "jobs.rebuildWarehouse.allowExternalDestructive"
+      "allow" .Values.jobs.rebuildWarehouse.allowExternalDestructive
+      "targets" (list
+        (dict "external" (not .Values.infra.warehousePostgres.enabled)
+              "store" "warehouse Postgres"
+              "endpoint" (include "prism.warehouseHost" .)
+              "does" (printf "DROP DATABASE %s" .Values.jobs.rebuildWarehouse.database)))) }}
+# DELIBERATE warehouse replacement: drop the warehouse database and restore it
+# from the dump baked into the image. The sibling restore job is skip-if-exists
+# by design, so it cannot carry a SCHEMA change (v5.10 -> v5.15 renamed ten
+# tables and added twelve). Run this only when the shipped dump intentionally
+# REPLACES the remote database; the rows are synthetic and reproducible from
+# scripts/{bootstrap_foundation_db,populate_*,backfill_*}.py.
+#
+# NOT a helm hook: it runs DROP DATABASE. A hook would do that on every upgrade.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "prism.fullname" . }}-rebuild-warehouse{{ with .Values.jobs.rebuildWarehouse.nameSuffix }}-{{ . }}{{ end }}
+  labels:
+    app: prism-rebuild-warehouse
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.jobs.rebuildWarehouse.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.jobs.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app: prism-rebuild-warehouse
+        {{- include "prism.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "prism.imagePullSecrets" . | nindent 6 }}
+      {{- include "prism.scheduling" . | nindent 6 }}
+      initContainers:
+        - name: dumps
+          image: {{ include "prism.image" (dict "ctx" $ "name" "prism-api" "tag" .Values.api.image.tag "registry" .Values.api.image.registry "repository" .Values.api.image.repository) }}
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.api.image.pullPolicy) }}
+          command: [sh, -c, "cp /dumps/{{ .Values.jobs.rebuildWarehouse.database }}.sql /work/"]
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      containers:
+        - name: rebuild
+          image: "{{ .Values.infra.warehousePostgres.image.repository }}:{{ .Values.infra.warehousePostgres.image.tag }}"
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.infra.warehousePostgres.image.pullPolicy) }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              until pg_isready -h {{ include "prism.warehouseHost" . }} -U {{ include "prism.warehouseUser" . }}; do sleep 2; done
+              psql -h {{ include "prism.warehouseHost" . }} -U {{ include "prism.warehouseUser" . }} -d postgres -c \
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='{{ .Values.jobs.rebuildWarehouse.database }}' AND pid <> pg_backend_pid()"
+              psql -h {{ include "prism.warehouseHost" . }} -U {{ include "prism.warehouseUser" . }} -d postgres -c 'DROP DATABASE IF EXISTS {{ .Values.jobs.rebuildWarehouse.database }}'
+              psql -h {{ include "prism.warehouseHost" . }} -U {{ include "prism.warehouseUser" . }} -d postgres -c 'CREATE DATABASE {{ .Values.jobs.rebuildWarehouse.database }}'
+              psql -h {{ include "prism.warehouseHost" . }} -U {{ include "prism.warehouseUser" . }} -d {{ .Values.jobs.rebuildWarehouse.database }} -q -f /work/{{ .Values.jobs.rebuildWarehouse.database }}.sql
+              psql -h {{ include "prism.warehouseHost" . }} -U {{ include "prism.warehouseUser" . }} -d {{ .Values.jobs.rebuildWarehouse.database }} -tc \
+                "SELECT 'tables: ' || count(*) FROM information_schema.tables WHERE table_schema='fs_foundation'"
+              psql -h {{ include "prism.warehouseHost" . }} -U {{ include "prism.warehouseUser" . }} -d {{ .Values.jobs.rebuildWarehouse.database }} -tc \
+                "SELECT 'parties: ' || count(*) FROM fs_foundation.fs_core_d_party"
+              psql -h {{ include "prism.warehouseHost" . }} -U {{ include "prism.warehouseUser" . }} -d {{ .Values.jobs.rebuildWarehouse.database }} -tc \
+                "SELECT 'alerts: ' || count(*) FROM fs_foundation.fs_core_f_case_alert"
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.warehousePgExisting | default .Values.secrets.warehousePg }}
+                  key: password
+          volumeMounts:
+            - name: work
+              mountPath: /work
+      volumes:
+        - name: work
+          emptyDir: {}
+{{- end }}

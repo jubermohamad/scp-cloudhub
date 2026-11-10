@@ -1,0 +1,145 @@
+{{- /*
+Copyright Broadcom, Inc. All Rights Reserved.
+SPDX-License-Identifier: APACHE-2.0
+*/}}
+
+{{- if eq (include "keycloak.externalDatabase.bootstrapEnabled" .) "true" }}
+{{- $fullname := include "common.names.fullname" . }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-db-bootstrap" (include "common.names.fullname" .) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ include "common.names.namespace" . | quote }}
+  labels: {{- include "common.labels.standard" (dict "customLabels" .Values.commonLabels "context" .) | nindent 4 }}
+    app.kubernetes.io/component: external-db-bootstrap
+    app.kubernetes.io/part-of: keycloak
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    metadata:
+      labels: {{- include "common.labels.standard" (dict "customLabels" .Values.commonLabels "context" .) | nindent 8 }}
+        app.kubernetes.io/component: external-db-bootstrap
+        app.kubernetes.io/part-of: keycloak
+    spec:
+      restartPolicy: Never
+      {{- include "keycloak.imagePullSecrets" . | nindent 6 }}
+      {{- if .Values.externalDatabase.bootstrap.podSecurityContext.enabled }}
+      securityContext: {{- include "common.compatibility.renderSecurityContext" (dict "secContext" .Values.externalDatabase.bootstrap.podSecurityContext "context" .) | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: db-bootstrap
+          image: "{{ (index .Values "cn-postgres-keycloak").image.repository }}:{{ (index .Values "cn-postgres-keycloak").image.tag }}"
+          {{- if .Values.externalDatabase.bootstrap.containerSecurityContext.enabled }}
+          securityContext: {{- include "common.compatibility.renderSecurityContext" (dict "secContext" .Values.externalDatabase.bootstrap.containerSecurityContext "context" .) | nindent 12 }}
+          {{- end }}
+          env:
+            - name: PGHOST
+              value: {{ .Values.externalDatabase.host | quote }}
+            - name: PGPORT
+              value: {{ .Values.externalDatabase.port | quote }}
+            - name: HOME
+              value: /tmp
+            {{- if .Values.externalDatabase.bootstrap.adminExistingSecret }}
+            - name: ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalDatabase.bootstrap.adminExistingSecret }}
+                  key: {{ .Values.externalDatabase.bootstrap.adminExistingSecretUserKey }}
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalDatabase.bootstrap.adminExistingSecret }}
+                  key: {{ .Values.externalDatabase.bootstrap.adminExistingSecretPasswordKey }}
+            {{- else }}
+            {{- /* Username isn't sensitive; password always via the dedicated secret from external-db-bootstrap-secrets.yaml — never a plain value. */}}
+            - name: ADMIN_USER
+              value: {{ .Values.externalDatabase.bootstrap.adminUser | quote }}
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-db-bootstrap-admin" $fullname | trunc 63 | trimSuffix "-" }}
+                  key: password
+            {{- end }}
+            {{- if .Values.externalDatabase.existingSecret }}
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl .Values.externalDatabase.existingSecret . }}
+                  key: {{ include "keycloak.database.secretUserKey" . }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ tpl .Values.externalDatabase.existingSecret . }}
+                  key: {{ include "keycloak.database.secretPasswordKey" . }}
+            {{- else }}
+            {{- /* Username isn't sensitive; password always via the dedicated secret from external-db-bootstrap-secrets.yaml — never a plain value. */}}
+            - name: DB_USER
+              value: {{ .Values.externalDatabase.user | quote }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-db-bootstrap-db" $fullname | trunc 63 | trimSuffix "-" }}
+                  key: password
+            {{- end }}
+            - name: DB_NAME
+              value: {{ .Values.externalDatabase.database | quote }}
+            - name: DB_SCHEMA
+              value: {{ include "keycloak.database.schema" . | quote }}
+            - name: CREATE_ROLE
+              value: {{ .Values.externalDatabase.bootstrap.createRole | quote }}
+            - name: CREATE_DATABASE
+              value: {{ .Values.externalDatabase.bootstrap.createDatabase | quote }}
+            - name: CREATE_SCHEMA
+              value: {{ .Values.externalDatabase.bootstrap.createSchema | quote }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              export PGPASSWORD="$ADMIN_PASSWORD"
+
+              # DB_USER/DB_PASSWORD/DB_NAME/DB_SCHEMA are operator-supplied
+              # (chart values or secrets) and may contain quote characters, so
+              # they are never spliced into SQL text directly. Instead they're
+              # bound as psql variables and substituted via :'var' (quote_literal)
+              # / :"var" (quote_ident) — psql's own safe escaping mechanism for
+              # values that can't be bind parameters (identifiers/DDL).
+              #
+              # Piped via stdin, not -c: psql's colon-variable substitution is
+              # only applied to script input (stdin/-f), not to -c command
+              # strings — verified directly against a live server (-c raises
+              # "syntax error at or near \":\"" for the exact same query that
+              # succeeds over stdin).
+              psql_admin=(psql -h "$PGHOST" -p "$PGPORT" -U "$ADMIN_USER" -v ON_ERROR_STOP=1
+                -v db_user="$DB_USER" -v db_password="$DB_PASSWORD" -v db_name="$DB_NAME" -v db_schema="$DB_SCHEMA")
+
+              if [[ "$CREATE_ROLE" == "true" ]]; then
+                role_exists="$(printf '%s\n' "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = :'db_user';" | "${psql_admin[@]}" -d postgres -tA)"
+                if [[ "$role_exists" == "1" ]]; then
+                  printf '%s\n' "ALTER ROLE :\"db_user\" WITH LOGIN PASSWORD :'db_password';" | "${psql_admin[@]}" -d postgres
+                else
+                  printf '%s\n' "CREATE ROLE :\"db_user\" WITH LOGIN PASSWORD :'db_password';" | "${psql_admin[@]}" -d postgres
+                fi
+              fi
+
+              if [[ "$CREATE_DATABASE" == "true" ]]; then
+                db_exists="$(printf '%s\n' "SELECT 1 FROM pg_catalog.pg_database WHERE datname = :'db_name';" | "${psql_admin[@]}" -d postgres -tA)"
+                if [[ "$db_exists" != "1" ]]; then
+                  printf '%s\n' "CREATE DATABASE :\"db_name\" OWNER :\"db_user\";" | "${psql_admin[@]}" -d postgres
+                fi
+              fi
+
+              if [[ "$CREATE_SCHEMA" == "true" ]]; then
+                printf '%s\n' "CREATE SCHEMA IF NOT EXISTS :\"db_schema\" AUTHORIZATION :\"db_user\";" | "${psql_admin[@]}" -d "$DB_NAME"
+              fi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -1,0 +1,135 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: create-aks-cluster
+  title: Create AKS Cluster
+  description: Provision AKS infrastructure through review, PR, plan, and apply workflows.
+spec:
+  owner: group:default/cloudhubplatformowners
+  type: infrastructure
+
+  parameters:
+    - title: Cluster profile
+      required:
+        - clusterProfile
+      properties:
+        clusterProfile:
+          title: Cluster profile
+          type: string
+          enum:
+            - free
+            - demo
+            - single-region
+            - active-passive
+            - active-active
+          default: free
+
+    - title: Capacity settings
+      properties:
+        subscriptionId:
+          title: Subscription ID
+          type: string
+        resourceGroup:
+          title: Resource Group
+          type: string
+        clusterName:
+          title: Cluster Name
+          type: string
+
+    - title: Review & Confirm
+      required:
+        - action
+      properties:
+        action:
+          title: Action
+          type: string
+          enum:
+            - review
+            - update
+            - cancel
+            - create
+          default: review
+        confirmReviewed:
+          title: I have reviewed and approve this request
+          type: boolean
+          default: false
+      dependencies:
+        action:
+          oneOf:
+            - properties:
+                action:
+                  enum: [review]
+            - properties:
+                action:
+                  enum: [update]
+            - properties:
+                action:
+                  enum: [cancel]
+            - required:
+                - confirmReviewed
+              properties:
+                action:
+                  enum: [create]
+                confirmReviewed:
+                  const: true
+
+  steps:
+    - id: fetch
+      name: Render infrastructure config
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          clusterProfile: ${{ parameters.clusterProfile }}
+          subscriptionId: ${{ parameters.subscriptionId }}
+          resourceGroup: ${{ parameters.resourceGroup }}
+          clusterName: ${{ parameters.clusterName }}
+
+    - id: pr
+      name: Open or update infrastructure pull request
+      action: publish:github:pull-request
+      if: ${{ parameters.action === 'update' || parameters.action === 'cancel' || parameters.action === 'create' }}
+      input:
+        repoUrl: github.com?owner=SymphonySensa&repo=cloudhub-infra-as-code
+        branchName: cloudhub/aks/${{ parameters.clusterName }}
+        title: AKS request for ${{ parameters.clusterName }}
+        description: Requested from Backstage AKS wizard.
+
+    - id: plan
+      name: Run review plan workflow
+      action: github:actions:dispatch
+      if: ${{ parameters.action === 'review' }}
+      input:
+        repoUrl: github.com?owner=SymphonySensa&repo=cloudhub-infra-as-code
+        workflowId: plan-cluster.yaml
+        branchOrTagName: main
+        workflowInputs:
+          clusterProfile: ${{ parameters.clusterProfile }}
+          subscriptionId: ${{ parameters.subscriptionId }}
+          resourceGroup: ${{ parameters.resourceGroup }}
+          clusterName: ${{ parameters.clusterName }}
+
+    - id: apply
+      name: Run create apply workflow
+      action: github:actions:dispatch
+      if: ${{ parameters.action === 'create' }}
+      input:
+        repoUrl: github.com?owner=SymphonySensa&repo=cloudhub-infra-as-code
+        workflowId: apply-cluster.yaml
+        branchOrTagName: main
+        workflowInputs:
+          clusterProfile: ${{ parameters.clusterProfile }}
+          subscriptionId: ${{ parameters.subscriptionId }}
+          resourceGroup: ${{ parameters.resourceGroup }}
+          clusterName: ${{ parameters.clusterName }}
+
+  output:
+    links:
+      - title: Review plan workflow
+        url: ${{ steps.plan.output.workflowUrl }}
+      - title: Pull request
+        url: ${{ steps.pr.output.remoteUrl }}
+      - title: Create apply workflow
+        url: ${{ steps.apply.output.workflowUrl }}
+      - title: Terraform Cloud workspace
+        url: https://app.terraform.io/app/symphony-sensa/workspaces

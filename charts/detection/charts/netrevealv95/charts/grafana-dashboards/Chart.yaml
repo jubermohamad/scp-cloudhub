@@ -1,0 +1,7 @@
+apiVersion: v2
+name: grafana-dashboards
+appVersion: "9.4.0.0"
+description: kube-prometheus-stack dashboards
+# netreveal chart version: 1.0.0
+version: 1.0.0
+type: application

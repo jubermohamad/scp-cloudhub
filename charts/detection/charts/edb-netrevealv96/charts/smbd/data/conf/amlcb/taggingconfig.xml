@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tagging>
+    <datasource name="Transaction">
+        <views>
+            <view name="CounterPartyRelationship">
+                <profilekey_field name="OriginCPartySrcUniqueId + &quot;&amp;&amp;&quot; + BeneCPartySrcUniqueId">
+                    <value>profilekey</value>
+                </profilekey_field>
+				<excludedprofile_elements/>
+            </view>
+            <view name="CounterPartyRelationship">
+                <profilekey_field name="BeneCPartySrcUniqueId + &quot;&amp;&amp;&quot; + OriginCPartySrcUniqueId" inverse = "true">
+                    <value>profilekey</value>
+                </profilekey_field>
+				<excludedprofile_elements/>
+            </view>
+			<view name="SubCustomer">
+				<profilekey_field name="OriginSubCustSrcUniqueId">
+					<value>profilekey</value>
+				</profilekey_field>
+				<excludedprofile_elements/>
+			</view>
+			<view name="SubCustomer">
+				<profilekey_field name="BeneSubCustSrcUniqueId" inverse = "true">
+					<value>profilekey</value>
+				</profilekey_field>
+				<excludedprofile_elements/>
+			</view>
+			<view name="Account">
+				<profilekey_field name="DbRespAccountSrcUniqueId">
+					<value>profilekey</value>
+				</profilekey_field>
+				<excludedprofile_elements/>
+			</view>
+			<view name="Account">
+				<profilekey_field name="CrRespAccountSrcUniqueId" inverse = "true">
+					<value>profilekey</value>
+				</profilekey_field>
+				<excludedprofile_elements/>
+			</view>
+			<view name="Respondent">
+				<profilekey_field name="DbRespCustSrcUniqueId">
+					<value>profilekey</value>
+				</profilekey_field>
+				<excludedprofile_elements/>
+			</view>
+			<view name="Respondent">
+				<profilekey_field name="CrRespCustSrcUniqueId" inverse = "true">
+					<value>profilekey</value>
+				</profilekey_field>
+				<excludedprofile_elements/>
+			</view>
+			<view name="CounterParty">
+				<profilekey_field name="OriginCPartySrcUniqueId">
+					<value>profilekey</value>
+				</profilekey_field>
+				<excludedprofile_elements/>
+			</view>
+			<view name="CounterParty">
+				<profilekey_field name="BeneCPartySrcUniqueId" inverse = "true">
+					<value>profilekey</value>
+				</profilekey_field>
+				<excludedprofile_elements/>
+			</view>
+        </views>
+    </datasource>
+</tagging>

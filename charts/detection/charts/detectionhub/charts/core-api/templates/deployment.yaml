@@ -1,0 +1,214 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "core-api.fullname" . }}
+  labels:
+    {{- include "core-api.labels" . | nindent 4 }}
+    {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "core-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "core-api.selectorLabels" . | nindent 8 }}
+        {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 8 }}
+    spec:
+      {{- include "detectionhub.imagePullSecrets" . | indent 6 }}
+      initContainers:
+        {{- $db := include "detectionhub.database" . | fromYaml }}
+        - name: wait-for-db
+          image: busybox
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - /bin/sh
+            - -c
+            - until nc -z {{ $db.host }} {{ $db.port }}; do echo waiting for database; sleep 2; done;
+        {{- with .Values.extraInitContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          {{- with .Values.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            {{- $db := include "detectionhub.database" . | fromYaml }}
+            {{- $modelhub := include "detectionhub.modelHub" . | fromYaml }}
+            {{- $trainingtool := include "detectionhub.trainingTool" . | fromYaml }}
+            - name: DATABASE_URL
+              value: {{ include "detectionhub.dbUrlTomcat" . | quote }}
+            - name: DATABASE_USER
+              value: "{{ $db.user }}"
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $db.existingSecret }}
+                  key: {{ $db.secretKey | default "password" }}
+            - name: SUPERSET_URL
+              value: {{ .Values.frontend.supersetUrl | quote }}
+            - name: DEFAULT_IDLE_TIMEOUT_MS
+              value: {{ .Values.frontend.defaultIdleTimeout | quote }}
+            - name: ENABLE_SSO_REDIRECT
+              value: {{ .Values.frontend.enableSSORedirect | quote }}
+            {{- if .Values.keycloak.internalBaseUrl }}
+            - name: KEYCLOAK_INTERNAL_BASE_URL
+              value: {{ .Values.keycloak.internalBaseUrl | quote }}
+            {{- end }}
+            - name: EXTAPI_BASE_URL
+              {{- if (index (default dict .Values.extApi) "baseUrl") }}
+              value: {{ index (default dict .Values.extApi) "baseUrl" | quote }}
+              {{- else }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ index (default dict .Values.extApi) "existingSecretName" | default (printf "%s-core-api-ext-secrets" .Release.Name) }}
+                  key: {{ index (default dict .Values.extApi) "existingSecretUrl" | default "internal.url" }}
+              {{- end }}
+            - name: EXTAPI_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ index (default dict .Values.extApi) "existingSecretName"  | default (printf "%s-core-api-ext-secrets" .Release.Name) }}
+                  key: {{ index (default dict .Values.extApi) "existingSecretKey"  | default "jwt.api" }}
+            - name: SYSTEM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ index (default dict .Values.apiJWT) "existingSecretName" | default (printf "%s-core-api-secrets" .Release.Name) }}
+                  key: {{ index (default dict .Values.apiJWT) "existingSecretKey" | default "jwt.api" }}
+            {{- if $modelhub.enabled }}
+            - name: MODEL_HUB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $modelhub.existingSecretName }}
+                  key: {{ $modelhub.existingSecretUrl }}
+            - name: MODEL_HUB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $modelhub.existingSecretName }}
+                  key: {{ $modelhub.existingSecretKey }}
+            {{- end }}
+            {{- if $trainingtool.enabled }}
+            - name: TRAINING_TOOL_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $trainingtool.existingSecretName }}
+                  key: {{ $trainingtool.existingSecretTTUrl }}
+            - name: TRAINING_TOOL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $trainingtool.existingSecretName }}
+                  key: {{ $trainingtool.existingSecretTTToken }}
+            - name: TRAINING_TOOL_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $trainingtool.existingSecretName }}
+                  key: {{ $trainingtool.existingSecretMinioBucket }}
+            {{- end }}
+            {{- with .Values.extraEnvRaw }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- if .Values.investigationsIntegration.enabled }}
+            - name: DECISIONS_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-investigations-secret
+                  key: clientId
+            - name: DECISIONS_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-investigations-secret
+                  key: clientSecret
+            {{- end }}
+            - name: RUN_TEMPLATE
+              value: {{ .Values.dsgRunTemplate | default "small_bulk_info-template" | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          {{- if or $db.ssl .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- if $db.ssl }}
+            - name: certs
+              mountPath: "/certificates"
+            - name: cacerts
+              mountPath: "/cacertificates"
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- if .Values.probes.startup.enabled }}
+          startupProbe:
+            {{- if eq (.Values.probes.startup.type | default "http") "tcp" }}
+            tcpSocket:
+              port: http
+            {{- else }}
+            httpGet:
+              path: {{ .Values.probes.startup.httpPath | default .Values.probes.startup.path | default "/" }}
+              port: http
+            {{- end }}
+            initialDelaySeconds: {{ .Values.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold | default 30 }}
+            successThreshold: {{ .Values.probes.startup.successThreshold | default 1 }}
+          {{- end }}
+          {{- if .Values.probes.liveness.enabled }}
+          livenessProbe:
+            {{- if eq (.Values.probes.liveness.type | default "http") "tcp" }}
+            tcpSocket:
+              port: http
+            {{- else }}
+            httpGet:
+              path: {{ .Values.probes.liveness.httpPath | default .Values.probes.liveness.path | default "/" }}
+              port: http
+            {{- end }}
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold | default 3 }}
+            successThreshold: {{ .Values.probes.liveness.successThreshold | default 1 }}
+          {{- end }}
+          {{- if .Values.probes.readiness.enabled }}
+          readinessProbe:
+            {{- if eq (.Values.probes.readiness.type | default "http") "tcp" }}
+            tcpSocket:
+              port: http
+            {{- else }}
+            httpGet:
+              path: {{ .Values.probes.readiness.httpPath | default .Values.probes.readiness.path | default "/" }}
+              port: http
+            {{- end }}
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold | default 3 }}
+            successThreshold: {{ .Values.probes.readiness.successThreshold | default 1 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+        {{- with .Values.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if or $db.ssl .Values.extraVolumes }}
+      volumes:
+        {{- if $db.ssl }}
+        - name: certs
+          secret:
+            secretName: {{ $db.sslSecret }}
+        - name: cacerts
+          secret:
+            secretName: {{ $db.sslCASecret }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}      

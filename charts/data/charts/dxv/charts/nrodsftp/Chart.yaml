@@ -1,0 +1,24 @@
+apiVersion: v2
+name: nrodsftp
+description: A Helm chart for installing nrodsftp
+icon: https://helm.symphonysensa.com/symphonyai_sensa_netreveal_logo.jpg
+type: application
+# netreveal chart version: 3.1.0
+version: 3.1.1
+appVersion: "9.6.1.0"
+
+dependencies:
+  - name: minio-provisioner
+    version: 1.0.5
+    repository: file://./charts/minio-provisioner
+
+  - name: nrodsftp
+    version: 0.0.7
+    repository: https://helm.symphonysensa.com
+
+  # Redis (disable to use a shared platform Redis — set REDIS_HOST on the
+  # inner nrodsftp chart via nrodsftp.redisHost)
+  - name: redis
+    version: 20.13.5
+    repository: file://./charts/redis
+    condition: redis.enabled

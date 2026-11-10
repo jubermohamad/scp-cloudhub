@@ -1,0 +1,68 @@
+# values-10m.yaml — overlay for a 10M-transaction (20.2M-observation) build on single-node minikube.
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# Layered ON TOP of the serving profile, which already sets backfill.enabled=false + builds.enabled:
+#
+#   minikube start --driver=docker --cpus=8 --memory=24g --disk-size=40g
+#   helm install cpr deploy/helm/cpr -f deploy/helm/cpr/values-serving.yaml -f deploy/helm/cpr/values-10m.yaml
+#   curl -sX POST http://cpr.local/api/builds -H 'content-type: application/json' \
+#        -d '{"kind":"backfill","input_location":"/data/10m-clean/base","reset_store":true}'
+#
+# ⚠️ A canonical scale set is a COMPOUND dataset — its Parquet lives in `base/` and `delta/`, and the
+#    root is not itself a canonical dataset, so `input_format=auto` would fall back to XML, match no
+#    files and (before the guard) "succeed" with 0 observations. Always point at `.../base`.
+#
+#    Generate it with the full GLEIF file — see values-50m.yaml for the recipe and why the name pool
+#    matters. (`10m-canonical`, the earlier pathology set, was RETIRED: it predated the GLEIF-overflow
+#    fix, so its background entities drew from a 960-name synthetic fallback and every accuracy number
+#    taken from it was meaningless. Regenerate if a pathology set is wanted.)
+#
+# MEASURED on this exact shape (8 CPU / 24g node, 20,167,898 observations → 1,760,646 entities):
+#   backfill      20.3 min end to end, 16,617 rec/s, 0 OOMKills
+#   export        ~489s for 29.8M rows across 13 tables
+#   evaluation    ~107s (blocking reduction ~28s + GT join/accuracy ~80s)
+
+# ── The partition count is derived from DATA VOLUME, not from core count ─────────────────────────
+# This is the setting that decides whether a build survives. values-serving.yaml pins 16, which was
+# MEASURED optimal at 1M (2.16M observations → 135k rows per shuffle partition, and a blanket 200 was
+# ~1 min slower). The same 16 at 20.17M observations is 1.26M rows per partition, and it OOMKilled
+# executors repeatedly — the run never finished. Partition count sets how much data one task holds, so
+# it scales with the dataset, not the cluster:
+#
+#     partitions ≈ observations / 150_000     (reproduces 16 at 1M; gives 128 here)
+#
+# Raise it for a larger dataset before raising executor memory — this is the cheaper lever, and the
+# one that was actually wrong.
+backfill:
+  driver:
+    cores: 1
+    memory: "4g"              # driver heap scales with PLAN STRUCTURE × iterations, not row count
+  executor:
+    instances: 2
+    cores: 2
+    memory: "4g"              # 2×4g + 4g driver ≈ 17Gi of Spark under a 24Gi node cap
+  sparkConf:
+    spark.sql.shuffle.partitions: "128"
+    spark.default.parallelism: "128"
+
+# The dataset root is mounted, so any subdirectory is addressable as input_location (and every
+# immediate subdir appears in the Builds dropdown — GET /api/builds/datasets).
+api:
+  builds:
+    enabled: true
+    allowConcurrent: false
+    messages:
+      hostPath: /data
+
+# Spark checkpoints for a 20.2M-observation run: `materialize()` writes reliable checkpoints (obs,
+# reps, attr, preds, final), so this volume holds several copies of the observation frame. The build
+# now deletes its own tree on completion (backfill_entrypoint._stop_spark); before that fix every
+# build leaked its checkpoints onto a volume that hostpath never enforced a quota on.
+sharedWorkdir:
+  persistence:
+    size: 30Gi
+
+# ⚠️ NODE DISK is not expressible above and is easy to under-provision. The largest consumer during a
+# build is Spark's per-executor shuffle scratch (on the node's filesystem, NOT any PVC): measured at
+# 31 GB for a 97M-observation run, so budget proportionally here. Add checkpoints, Postgres + WAL and
+# the staged dataset — and note a dataset costs disk TWICE on single-machine minikube (host copy plus
+# node copy, same physical volume). See values-50m.yaml for the measured breakdown.

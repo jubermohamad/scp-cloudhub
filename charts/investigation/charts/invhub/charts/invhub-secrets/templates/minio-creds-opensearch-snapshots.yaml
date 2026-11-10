@@ -1,0 +1,13 @@
+{{- $secretName := "minio-creds-opensearch-snaphsots" -}}
+{{- $minioCredsSecretName := "minio-creds" -}}
+{{- $minioCredsSecret := (lookup "v1" "Secret" .Release.Namespace $minioCredsSecretName) | default dict -}}
+{{- $minioCredsData := get $minioCredsSecret "data" | default dict -}}
+{{- $password := include "invhub-secrets.getOrGenerateSecretValue" (dict "value" .Values.global.PASSWORD "existingData" $minioCredsData "secretName" $minioCredsSecretName "secretKey" "root-password") -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName | quote }}
+type: Opaque
+stringData:
+  s3.client.default.access_key: {{ .Values.global.MINIO_USER | quote }}
+  s3.client.default.secret_key: {{ $password | quote }}

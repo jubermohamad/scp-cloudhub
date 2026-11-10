@@ -1,0 +1,23 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "azureStorageAccountSecret": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "secretName": {
+                    "type": "string"
+                },
+                "storageAccountKey": {
+                    "type": "string"
+                },
+                "storageAccountName": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

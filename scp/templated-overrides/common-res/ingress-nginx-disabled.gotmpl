@@ -1,0 +1,20 @@
+appSCPHelmPipelineRefs:
+  internalNLB: "{{ .Values.internal_NLB_flag }}"
+  internalNLBsubnet: "{{ .Values.internal_NLB_subnet }}"
+  helmChartVersion: "{{ .Values.helm_chart_version }}"
+  helmChartValuesFileRef: "{{ .Values.helm_chart_values_file_ref }}"
+  deploymentDateTimeStamp: "{{ now }}"
+  deploymentFromGithubRepo: '{{ requiredEnv "GITHUB_REPOSITORY" }}'
+  deploymentGitHubAction: '{{ requiredEnv "GITHUB_ACTION" }}'
+  deploymentRepoBranch: '{{ requiredEnv "GITHUB_REF_NAME" }}'
+  deploymentByGithubTriggeringActor: '{{ requiredEnv "GITHUB_TRIGGERING_ACTOR" }}'
+  deploymentGithubRunAttempt: '{{ requiredEnv "GITHUB_RUN_ATTEMPT" }}'
+  deploymentGithubRunnerEnv: '{{ requiredEnv "RUNNER_ENVIRONMENT" }}'
+  deploymentGithubRunnerName: '{{ requiredEnv "RUNNER_NAME" }}'
+
+# ingress-nginx must be disabled, all other components set from helm chart defaults.
+ingress-nginx:
+  enabled: false
+  controller:
+    ingressClassResource:
+      create: false

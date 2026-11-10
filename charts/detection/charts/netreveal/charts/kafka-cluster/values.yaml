@@ -1,0 +1,681 @@
+replicas: 3
+apiVersion: "kafka.strimzi.io/v1beta2"
+
+kafka:
+  version: "3.8.0"
+  # soft: preferredDuringSchedulingIgnoredDuringExecution
+  # hard: requiredDuringSchedulingIgnoredDuringExecution
+  # custom: custom affinity rules defined with affinityRules
+  antiAffinity: "soft"
+  customAffinityRules: {}
+    # preferredDuringSchedulingIgnoredDuringExecution:
+    #   - weight: 100
+    #     podAffinityTerm:
+    #       labelSelector:
+    #         matchLabels:
+    #           strimzi.io/component-type: kafka
+    #           app-release-name: {{ .Release.Name }}
+    #       topologyKey: "topology.kubernetes.io/zone"
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: "1"
+  jvmOptions:
+    # -Xms - Minimum initial heap size when JVM starts
+    xms: 2048m
+    # -Xmx - Maximum heap size
+    xmx: 2048m
+    # -XX - Advanced runtime options for JVM
+    # Example:
+    # xx:
+    #   - name: "UseG1GC"
+    #     value: "true"
+    #   - name: "MaxGCPauseMillis"
+    #     value: "20"
+    #   - name: "ExplicitGCInvokesConcurrent"
+    #     value: "true"
+    #
+    # Empty list
+    # xx: []
+    xx:
+      - name: "UseG1GC"
+        value: "true"
+      - name: "MaxGCPauseMillis"
+        value: "20"
+      - name: "ExplicitGCInvokesConcurrent"
+        value: "true"
+    # Enables garbage collection logging
+    gcLoggingEnabled: false
+    # javaSystemProperties - Additional system properties
+    # Example:
+    #   javaSystemProperties:
+    #     - name: javax.net.debug
+    #       value: ssl
+    javaSystemProperties: []
+  networkPolicyPeers: []
+  config:
+    offsets.topic.replication.factor: 3
+    transaction.state.log.replication.factor: 3
+    transaction.state.log.min.isr: 2
+    default.replication.factor: 3
+    min.insync.replicas: 2
+    log.retention.hours: 48
+    log.segment.bytes: 1073741824
+    log.retention.check.interval.ms: 300000
+    num.network.threads: 3
+    num.recovery.threads.per.data.dir: 1
+    socket.send.buffer.bytes: 102400
+    socket.receive.buffer.bytes: 102400
+    socket.request.max.bytes: 10485760
+    group.initial.rebalance.delay.ms: 0
+    zookeeper.connection.timeout.ms: 6000
+    num.io.threads: 4
+    num.partitions: 1
+    max.incremental.fetch.session.cache.slots: 10000
+    auto.create.topics.enable: false
+    #auto.create.topics.enable: true
+  pvc:
+    storage: "10Gi"
+  pv:
+    hostPath: "/var/nfs_k8s/kafka-cluster"
+    hostPathMinikube: "/opt/netreveal/kafka-cluster"
+  podAnnotations: {}
+  kafkaExporter:
+    groupRegex: .*
+    logging: warn
+    podAnnotations:
+      prometheus.io/port: "9404"
+      prometheus.io/scrape: "true"
+  livenessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  readinessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+zookeeper:
+  # soft: preferredDuringSchedulingIgnoredDuringExecution
+  # hard: requiredDuringSchedulingIgnoredDuringExecution
+  # custom: custom affinity rules defined with affinityRules
+  antiAffinity: "soft"
+  customAffinityRules: {}
+    # preferredDuringSchedulingIgnoredDuringExecution:
+    #   - weight: 100
+    #     podAffinityTerm:
+    #       labelSelector:
+    #         matchLabels:
+    #           strimzi.io/component-type: zookeeper
+    #           app-release-name: {{ .Release.Name }}
+    #       topologyKey: "topology.kubernetes.io/zone"
+  ssl:
+    hostnameVerification: "false"
+    quorum:
+      hostnameVerification: "false"
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: "0.3"
+    limits:
+      memory: 1Gi
+      cpu: "0.5"
+  jvmOptions:
+    # -Xms - Minimum initial heap size when JVM starts
+    xms: ""
+    # -Xmx - Maximum heap size
+    xmx: ""
+    # -XX - Advanced runtime options for JVM
+    # Example:
+    # xx:
+    #   - name: "UseG1GC"
+    #     value: "true"
+    #   - name: "MaxGCPauseMillis"
+    #     value: "20"
+    #   - name: "ExplicitGCInvokesConcurrent"
+    #     value: "true"
+    #
+    # Empty list
+    # xx: []
+    xx:
+      - name: "UseG1GC"
+        value: "true"
+      - name: "MaxGCPauseMillis"
+        value: "20"
+      - name: "ExplicitGCInvokesConcurrent"
+        value: "true"
+    # Enables garbage collection logging
+    gcLoggingEnabled: false
+    # javaSystemProperties - Additional system properties
+    # Example:
+    #   javaSystemProperties:
+    #     - name: javax.net.debug
+    #       value: ssl
+    javaSystemProperties: []
+  pvc:
+    storage: "10Gi"
+  pv:
+    hostPath: "/var/nfs_k8s/kafka-cluster"
+    hostPathMinikube: "/opt/netreveal/kafka-cluster"
+  podAnnotations: {}
+
+  livenessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  readinessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+
+entityOperator:
+  podAnnotations: {}
+
+  topicOperator:
+    resources:
+      requests:
+        memory: ""
+        cpu: ""
+      limits:
+        memory: ""
+        cpu: ""
+
+  userOperator:
+    resources:
+      requests:
+        memory: ""
+        cpu: ""
+      limits:
+        memory: ""
+        cpu: ""
+
+topics:
+  nr-agg_scoring:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-alert_adjudication:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-alert_adjudication_internal:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-alert_adjudication_internal_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-application_response:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-application_response_internal:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-application_response_internal_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-applications:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-applications_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-cdd_alerts:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-cdd_alerts_triaged:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-cdd_alerts_triaged_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-cdd_ui_requests:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-cdd_ui_requests_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-customer_scores:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-customer_scores_internal:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-customer_scores_internal_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-enriched_applications:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-enriched_applications_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-enriched_customer_scores:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-enriched_customer_scores_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-event_processing_time_internal:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-event_processing_time_internal_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-ind_scored_customers:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-ind_scored_customers_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-ind_scoring:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-internal_agg_risk_odd:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-internal_combiner:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-internal_ind_score_odd:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-internal_risk:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-internal_score:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-normalized_applications:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-normalized_applications_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-refresh_cdd:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-refresh_cddaat:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-risk_scores:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-risk_scores_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-scored_customers:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-scored_customers_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-scored_customers_no_ags:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-screened_applications:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-subjects:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-subjects_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-subjects_for_alert_update:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-subjects_for_alert_update_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-validated_applications:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-validated_applications_error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-GenericTransaction-Suspect:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-GenericTransaction-in-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-GenericTransaction-in:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-GenericTransaction-out:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-Swift-Suspect:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-Swift-in-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-Swift-in:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-Swift-out:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-ags-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-ags-external:
+    partitions: 5
+    #replicas: 1
+    #config:
+  nr-wlm-ags:
+    partitions: 5
+    #replicas: 1
+    #config:
+  nr-wlm-ai-tf-error:
+    partitions: 1
+    #replicas: 1
+  nr-wlm-ai-tf:
+    partitions: 1
+    #replicas: 1
+  nr-wlm-batch-kafka-failure-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-batch-kafka-failure:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-batch-kafka-framework-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-batch-kafka-framework:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-batch-kafka-updates-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-batch-kafka-updates:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-batch-process-dummy:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-batch-process-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-batch-process:
+    partitions: 20
+    #replicas: 1
+    #config:
+  nr-wlm-batch-transform-dummy:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-batch-transform-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-batch-transform:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-cdd-subject-in-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-cdd-subject-in:
+    partitions: 2
+    #replicas: 1
+    #config:
+  nr-wlm-cdd-subject-out-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-cdd-subject-out:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-igs-response-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-igs-response:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-list-import-dummy:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-list-import-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-list-import:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-os-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-os:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-ps-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-ps-register-ack-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-ps-register-ack:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-ps-register-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-ps-register:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-ps:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-sl-alert-response-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-sl-alert-response:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-sl-alert:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-sl-topic-response-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-sl-topic-response:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-sl-topic:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-subject-in-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-subject-in:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-subject-out:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-swift-info-interim-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-swift-info-interim:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-swift-info:
+    partitions: 1
+    #replicas: 1
+    config:
+      cleanup.policy: "compact"
+      min.compaction.lag.ms: "0"
+      delete.retention.ms: "0"
+      segment.ms: "1000000"
+      min.cleanable.dirty.ratio: "0.000001"
+  nr-wlm-swift-link-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm-swift-link:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_alert_status_escalate-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_alert_status_escalate:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_alert_status_escalate_result-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_alert_status_escalate_result:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_alert_triage-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_alert_triage:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_alert_triage_score-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_alert_triage_score:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_spalert_get_score-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_spalert_get_score:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_spalert_matches_get_score-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_spalert_matches_get_score:
+    partitions: 5
+    #replicas: 1
+    #config:
+  nr-wlm_spalert_matches_to_score-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_spalert_matches_to_score:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_spalert_to_score-error:
+    partitions: 1
+    #replicas: 1
+    #config:
+  nr-wlm_spalert_to_score:
+    partitions: 1
+    #replicas: 1
+    #config:

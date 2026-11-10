@@ -1,0 +1,38 @@
+<dbspec>
+    <!-- SQL Query used to read data from datasource -->
+    <!-- In case of RDBMS this query will be used to read data from datasource -->
+    <!-- In case of Phoenix-Spark connector this will be the query executed in Spark after DataFrame is created -->
+    <source-query>
+        SELECT 
+          RUN_DATE as RunDate
+        , ALERT_ID as AlertId
+        , ACCOUNT_ID as AccountID
+        , CUSTOMER_ID as CustomerID
+        , CUSTOMER_SEGMENT as CustomerSegment
+		, SIM_ID as simId
+        , ORGUNIT_CODE as OrganisationalUnit
+        , CHECK_NAME as CheckName
+        , ALERT_WEIGHT as AlertWeight
+	FROM V_SIM_ALERT_FEEDBACK
+    WHERE @WHERE@ AND SIM_ID = @SIMID@
+	ORDER BY RUN_DATE
+    </source-query>
+
+    <tablename>V_SIM_ALERT_FEEDBACK</tablename>
+
+    <!-- Field that is used to filter data only for the current day -->
+    <timefield>RunDate</timefield>
+
+    <keyfield></keyfield>
+
+    <!-- List of columns, every column has fieldname, dataType and columnname -->
+    <column fieldname="RunDate" dataType="date" columnname="RUN_DATE"/>
+    <column fieldname="AlertId" dataType="string" columnname="ALERT_ID"/>
+    <column fieldname="AccountID" dataType="string" columnname="ACCOUNT_ID"/>
+    <column fieldname="CustomerID" dataType="string" columnname="CUSTOMER_ID"/>
+    <column fieldname="CustomerSegment" dataType="string" columnname="CUSTOMER_SEGMENT"/>
+    <column fieldname="simId" dataType="string" columnname="SIM_ID"/>
+    <column fieldname="OrganisationalUnit" dataType="string" columnname="ORGUNIT_CODE"/>
+	<column fieldname="CheckName" dataType="string" columnname="CHECK_NAME"/>
+    <column fieldname="AlertWeight" dataType="string" columnname="ALERT_WEIGHT"/>
+</dbspec>

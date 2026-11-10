@@ -1,0 +1,40 @@
+# ─── Golden Helmfile Template: Batch Job ─────────────────────────────────────
+# Owner: platform-team
+# DO NOT EDIT — changes must go through platform team review.
+# This template is rendered by the Service Deployment Wizard (Backstage).
+# ─────────────────────────────────────────────────────────────────────────────
+
+repositories:
+  - name: platform
+    url: https://charts.symphonyai.com
+
+releases:
+  - name: {{ service_name }}
+    namespace: {{ environment }}
+    chart: platform/batch
+    version: "1.0.0"
+    values:
+      - values.generated.yaml
+    set:
+      - name: image.repository
+        value: {{ image_repository }}
+      - name: image.tag
+        value: {{ image_tag }}
+      - name: resources.requests.cpu
+        value: "1000m"
+      - name: resources.requests.memory
+        value: "512Mi"
+      - name: resources.limits.cpu
+        value: "2000m"
+      - name: resources.limits.memory
+        value: "1Gi"
+      - name: schedule
+        value: "0 */6 * * *"
+      - name: concurrencyPolicy
+        value: Forbid
+      - name: restartPolicy
+        value: OnFailure
+      - name: backoffLimit
+        value: 3
+      - name: monitoring.enabled
+        value: true

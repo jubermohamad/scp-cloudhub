@@ -1,0 +1,11 @@
+{{- if and .Values.global.useCertManager .Values.global.ca.generate }}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Release.Name }}-ca
+  namespace: {{ tpl .Values.global.namespace . }}
+spec:
+  ca:
+    secretName: {{ tpl .Values.global.ca.secretName . }}
+{{- end }}

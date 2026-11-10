@@ -1,0 +1,45 @@
+{{- if .Values.server.deployment }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfs-server
+  labels:
+    app: nfs-server
+    {{- include "nfs-server.labels" . | nindent 4 }}
+    {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 4 }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app: nfs-server
+  template:
+    metadata:
+      labels:
+        app: nfs-server
+        {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 8 }}
+    spec:
+      {{- include "detectionhub.imagePullSecrets" . | indent 6 }}
+      containers:
+        - name: nfs-server
+          image: busybox
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+          - sleep
+          - infinity
+          volumeMounts:
+            {{- range .Values.volumes }}
+            - name: {{ .name }}
+              mountPath: {{ .path }}
+            {{- end }}
+          resources:
+            {{ toYaml .Values.server.resources | nindent 12 }}
+      volumes:
+        {{- range .Values.volumes }}
+        - name: {{ .name }}
+          persistentVolumeClaim: 
+           claimName: {{ .pvc.name }}
+        {{- end }}
+{{- end }}

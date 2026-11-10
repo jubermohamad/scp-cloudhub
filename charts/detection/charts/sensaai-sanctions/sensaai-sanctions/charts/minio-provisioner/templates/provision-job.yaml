@@ -1,0 +1,125 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-provisioner-{{ randAlphaNum 6 | lower }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation
+    "helm.sh/hook-weight": "-9"
+spec:
+  template:
+    spec:
+      containers:
+        - name: minio-client
+          image: "{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+          command:
+            - /bin/bash
+            - -exec
+            - |
+              set +x
+              max_attempts=20
+              wait_time=20
+              echo "Wait for MINIO to be ready..."
+              timeout 300 bash -c '
+                until mc --quiet --no-color alias set minio {{ include "minio.url" . }} ${MINIO_USER} ${MINIO_PASSWORD} > /dev/null 2>&1
+                do
+                  echo "Trying to connect to {{ include "minio.url" . }} server..."
+                  sleep 10
+                done
+              '
+              echo "Creating users."
+              mc --quiet --no-color admin user add minio ${CLIENT_USER} ${CLIENT_PASSWORD}
+
+              echo "Creating buckets."
+              mc --quiet --no-color mb --ignore-existing minio/keys
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket
+
+              # Private Bucket
+              # S4S Dynamic Resources
+              mc --quiet --no-color mb --ignore-existing minio/private-bucket/landing/s4s_dynamic_resources/dynamic
+
+              echo "Creating policies."
+              policyList=$(mc --quiet --no-color admin policy list minio)
+              if [[ $policyList == *"customerpolicy"* ]]; then
+                echo "'customerpolicy' is defined. No need to generate it."
+              else
+                set +e
+                attempt=0
+                while [ $attempt -lt $max_attempts ]; do
+                  echo "Attempt $attempt to create customerpolicy."
+                  command="mc --quiet --no-color admin policy create minio customerpolicy /tmp/customer.policy.json"
+                  output=$(eval $command 2>&1)
+                  command="mc --quiet --no-color admin policy attach minio customerpolicy --user {{ .Values.global.minio.clientUser }}"
+                  output2=$(eval $command 2>&1)
+                  if [[ "$output" == *"ERROR"* || "$output2" == *"ERROR"* ]]; then
+                    echo "Unable to create customerpolicy. Retrying..."
+                  else
+                    echo "customerpolicy created."
+                    break
+                  fi
+                  attempt=$((attempt+1))
+                  sleep $wait_time
+                done
+                set -e
+              fi
+
+              echo "Creating folders in sys_bucket."
+              # Connection status flag
+              attempt=0
+              set +e
+              while [ $attempt -lt $max_attempts ]; do
+                echo "Attempt $attempt to set up sy_bucket."
+                command="mc --quiet --no-color mb --ignore-existing minio/private-bucket/sys_bucket"
+                output=$(eval $command 2>&1)
+                if [ ! -f s3_mount_status.txt ]; then
+                  touch s3_mount_status.txt
+                  echo "s3 mount status" > s3_mount_status.txt
+                fi
+                command="mc cp s3_mount_status.txt minio/private-bucket/sys_bucket"
+                output2=$(eval $command 2>&1)
+                if [[ "$output" == *"ERROR"* || "$output2" == *"ERROR"* ]]; then
+                  echo "Unable to create sys_bucket. Retrying..."
+                else
+                  break
+                fi
+                attempt=$((attempt+1))
+                sleep $wait_time
+              done
+              echo "sys_bucket is ready."
+              set -e
+          env:
+            - name: MINIO_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mino-creds
+                  key: MINIO_USER
+            - name: MINIO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mino-creds
+                  key: MINIO_PASSWORD
+            - name: CLIENT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mino-creds
+                  key: CLIENT_USER
+            - name: CLIENT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mino-creds
+                  key: CLIENT_PASSWORD
+
+          volumeMounts:
+          - name: {{ .Release.Name }}-minio-customer-policy
+            mountPath: /tmp/customer.policy.json
+            subPath: customer.policy.json
+      volumes:
+        - name: {{ .Release.Name }}-minio-customer-policy
+          configMap:
+            name: {{ .Release.Name }}-minio-customer-policy
+            items:
+            - key: customer.policy.json
+              path: customer.policy.json
+      restartPolicy: Never
+  backoffLimit: 5
+  ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}

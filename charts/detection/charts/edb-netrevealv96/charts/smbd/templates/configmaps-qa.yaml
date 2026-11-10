@@ -1,0 +1,52 @@
+{{- if eq .Values.app_env "qa" -}}
+{{- $rootContext := . -}}
+
+{{- range $solution := .Values.global.nrSparkSolutionSwitches.smbd }}
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ $.Release.Name }}-{{ $.Chart.Name }}-dir-aml-{{ $solution }}-configs"
+  namespace:  {{ $.Values.global.namespace }}
+
+data:
+  {{- range $path, $_  := $.Files.Glob (printf "data/conf/%s/aml/**" $solution) }}
+  {{  trimPrefix (printf "data/conf/%s/" $solution) $path |  replace "/" "__" |  replace " " "--"}}: |-
+{{ tpl ( $.Files.Get $path) $ | indent 4 }}
+  {{- end }}
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ $.Release.Name }}-{{ $.Chart.Name }}-dir-aml2-{{ $solution }}-configs"
+  namespace:  {{ $.Values.global.namespace }}
+
+data:
+  {{- range $path, $_  := $.Files.Glob (printf "data/conf/%s/aml2/**" $solution) }}
+  {{  trimPrefix (printf "data/conf/%s/" $solution) $path | replace "/" "__" |  replace " " "--"}}: |-
+{{ tpl ($.Files.Get $path) $ | indent 4 }}
+  {{- end }}
+
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ $.Release.Name }}-{{ $.Chart.Name }}-dir-model-{{ $solution }}-configs"
+  namespace:  {{ $.Values.global.namespace }}
+
+data:
+{{- range $path, $_  := $.Files.Glob (printf "data/conf/%s/model/**" $solution) }}
+{{- if not (hasSuffix "RiskScore.pmml" $path) }}
+  {{  trimPrefix (printf "data/conf/%s/" $solution) $path | replace "/" "__" |  replace " " "--"}}: |-
+  {{- $key := trimPrefix (printf "data/conf/%s/" $solution) $path | replace "/" "__" | replace " " "--" | trim }}
+  {{- $value := tpl ($.Files.Get $path) $ | trim | indent 4 }}
+  {{ $key }}: |-
+{{ $value }}
+{{- end }}
+{{- end }}
+---
+{{- end }}
+{{- end -}}

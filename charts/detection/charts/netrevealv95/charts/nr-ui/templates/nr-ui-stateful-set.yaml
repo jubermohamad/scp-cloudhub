@@ -1,0 +1,747 @@
+{{- $solution := "nr-ui" -}}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "generate.name.with.release.name" (list $ . "nr-ui") | quote }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-nr-ui-instance"
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+  annotations:
+    ad.datadoghq.com/nr-ui.logs: |
+      [
+          {
+              "source": "nri-{{ .Release.Name }}-k8s-nr-ui",
+              "service": "nri-{{ .Release.Name }}-k8s-nr-ui",
+              "log_processing_rules": [
+                  {
+                      "type": "multi_line",
+                      "name": "java_log_format",
+                      "pattern": "(app)\\s-\\s(\\d{2}-[A-Za-z]{3}-\\d{4}\\s\\d{2}:\\d{2}:\\d{2},\\d{3})\\s+-\\s+-\\s+(\\w+)\\s+([A-Za-z]+:\\d+)"
+                  }
+              ]
+          },
+          {
+              "source": "nri-{{ .Release.Name }}-k8s-nr-ui",
+              "service": "nri-{{ .Release.Name }}-k8s-nr-ui",
+              "log_processing_rules": [
+                  {
+                      "type": "multi_line",
+                      "name": "java_stats_log_format",
+                      "pattern": "((appmsg)|(appfunc))\\s-\\s(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2},\\d{3}),+(.*)"
+                  }
+              ]
+          }
+      ]
+    reloader.stakater.com/search: "true"
+    secret.reloader.stakater.com/reload: "{{ .Release.Name }}-jks-password,cert-opensearch,{{ .Release.Name }}-cert-nr-ui,{{ .Release.Name }}-cert-wlm-pn-rt{{ include "saml.secret.reloader.list" . }}"
+    configmap.reloader.stakater.com/reload: "{{ .Release.Name }}-ui-base-config-property,{{ .Release.Name }}-{{ .Chart.Name }}-nr-ui-config"
+  {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.standaloneVersions.configuration .Values.global.override.chartEnable.standaloneVersions.database) }}
+    app.override.image: "{{ .Values.global.override.overrideDockerImageName }}"
+    {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.configuration }}
+    app.override.configuration: "{{ .Values.global.override.chartEnable.standaloneVersions.configuration | toString }}"
+    {{- end }}
+    {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.database }}
+    app.override.databse: "{{ .Values.global.override.chartEnable.standaloneVersions.database | toString }}"
+    {{- end }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-nr-ui-instance-pod
+  serviceName: {{ .Release.Name }}-nr-ui
+  replicas: {{ .Values.pod.replicas }}
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      namespace: {{ .Values.global.namespace }}
+      labels:
+        app: {{ .Release.Name }}-nr-ui-instance-pod
+      annotations:
+        saml.enbled: "{{ .Values.global.saml.enabled }}"
+      {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.standaloneVersions.configuration .Values.global.override.chartEnable.standaloneVersions.database) }}
+        app.override.image: "{{ .Values.global.override.overrideDockerImageName }}"
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.configuration }}
+        app.override.configuration: "{{ .Values.global.override.chartEnable.standaloneVersions.configuration | toString }}"
+        {{- end }}
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.standaloneVersions.database }}
+        app.override.databse: "{{ .Values.global.override.chartEnable.standaloneVersions.database | toString }}"
+        {{- end }}
+      {{- end }}
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway #
+          labelSelector:
+            matchLabels:
+              app: {{ .Release.Name }}-nr-ui-instance-pod
+      {{- if or (eq .Values.pod.antiAffinity "hard") (eq .Values.pod.antiAffinity "soft") (eq .Values.pod.antiAffinity "custom") }}
+      affinity:
+        podAntiAffinity:
+      {{- end }}
+      {{- if eq .Values.pod.antiAffinity "soft" }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ .Release.Name }}-nr-ui-instance-pod
+                topologyKey: topology.kubernetes.io/zone
+      {{- else if eq .Values.pod.antiAffinity "hard" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: {{ .Release.Name }}-nr-ui-instance-pod
+              topologyKey: topology.kubernetes.io/zone
+      {{- else if eq .Values.pod.antiAffinity "custom" }}
+{{- tpl (toYaml .Values.pod.customAffinityRules) . | nindent 10 }}
+      {{- end }}
+      serviceAccountName: spark-operator-manipulator
+      terminationGracePeriodSeconds: 1
+      securityContext:
+        runAsUser: 200
+        runAsGroup: 200
+        fsGroup: 200
+        fsGroupChangePolicy: OnRootMismatch
+      initContainers:
+      - name: wait-for-kafka-postgresql-db-job
+        image: "{{- include "nr.ui.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            /wait-for-it/wait-for-it.sh {{ include "kafka.bootstrap.servers.service.name" . }} --timeout=300 && \
+            /wait-for-it/wait-for-it.sh {{ include "db.url" . }} --timeout=500 && \
+          {{- if and .Values.global.override.overrideDockerImageName (or .Values.global.override.chartEnable.standaloneVersions.configuration .Values.global.override.chartEnable.standaloneVersions.database) }}
+            timeout {{ .Values.global.standalone.override.initialisedFileFlagTimeout }} bash -c 'while [ ! -f /opt/WLM/overrideInitialised.flag ]; do echo "Wait for the override job to complete"; sleep 2; done' && \
+          {{- end }}
+            timeout {{ .Values.global.standalone.dbInit.dbJobFileFlagTimeout }} bash -c 'while [ ! -f /opt/WLM/db_job_completed.flag ]; do echo "Wait for the db init job to complete"; sleep 2; done'
+        volumeMounts:
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+      - name: init-elytron-secrets
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.nrUiDockerImageName }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        volumeMounts:
+        - name: {{ .Release.Name }}-ui-app-elytron-tmp
+          mountPath: /opt/wildfly/elytron
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            set -e
+            cp /opt/wildfly/elytronCredentialStore.jceks /opt/wildfly/elytron
+            echo "Remove existing secrets from elytron credential store..."
+            export JAVA_HOME=/opt/tools/java
+            /opt/wildfly/bin/elytron-tool.sh credential-store -l /opt/wildfly/elytron/elytronCredentialStore.jceks --password "Elytron-credential-store" --remove "postgresql-database-pw"
+            /opt/wildfly/bin/elytron-tool.sh credential-store -l /opt/wildfly/elytron/elytronCredentialStore.jceks --password "Elytron-credential-store" --remove "postgresql-database-import-pw"
+            /opt/wildfly/bin/elytron-tool.sh credential-store -l /opt/wildfly/elytron/elytronCredentialStore.jceks --password "Elytron-credential-store" --remove "certificate-pw"
+
+            echo "Adding secrets to elytron credential store..."
+            /opt/wildfly/bin/elytron-tool.sh credential-store -l /opt/wildfly/elytron/elytronCredentialStore.jceks --password "Elytron-credential-store" --add "postgresql-database-pw" --secret="${APPS_PASSWORD}"
+            /opt/wildfly/bin/elytron-tool.sh credential-store -l /opt/wildfly/elytron/elytronCredentialStore.jceks --password "Elytron-credential-store" --add "postgresql-database-import-pw" --secret="${APPS_IMPORT_PASSWORD}"
+            /opt/wildfly/bin/elytron-tool.sh credential-store -l /opt/wildfly/elytron/elytronCredentialStore.jceks --password "Elytron-credential-store" --add "certificate-pw" --secret="${KEYSTORE_PASS}"
+        env:
+        - name: KEYSTORE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-jks-password
+              key: password
+        - name: APPS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credential-apps-user-cnpg
+              key: password
+        - name: APPS_IMPORT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credential-apps-import-user-cnpg
+              key: password
+      - name: init-nr-ui
+        image: "{{- include "nr.ui.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          {{- if .Values.global.useRootAccountForInit }}
+          runAsUser: 0
+          {{- end }}
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          {{- if not .Values.global.useRootAccountForInit }}
+          runAsNonRoot: true
+          {{- end }}
+        volumeMounts:
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-logs") | quote }}
+          mountPath: /opt/netreveal/uiHome/logs
+        - name: {{ .Release.Name }}-ui-java-tmp
+          mountPath: /opt/java/tmp
+        - name: {{ .Release.Name }}-ui-temp-reports
+          mountPath: /opt/netreveal/uiHome/temp/reports
+        - name: {{ .Release.Name }}-ui-app-server-tmp
+          mountPath: /opt/wildfly-tmp
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-data") | quote }}
+          mountPath: /opt/netreveal/uiHome/data
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-app-server-logs") | quote }}
+          mountPath: /opt/server-logs
+        - name: {{ .Release.Name }}-ui-server-deployments
+          mountPath: /opt/deployments
+        - name: {{ .Release.Name }}-ui-server-configuration-history
+          mountPath: /opt/wildfly/netreveal/configuration/standalone_xml_history
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-conf-wlm") | quote }}
+          mountPath: /opt/netreveal/uiHome/conf/wlm
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-conf-fts") | quote }}
+          mountPath: /opt/netreveal/uiHome/conf/fts
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+        {{- if .Values.global.saml.enabled }}
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-conf-saml") | quote }}
+          mountPath: /opt/netreveal/uiHome/conf/saml
+        {{- end }}
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.nrUi }}
+        - name: {{ .Release.Name }}-ui-conf-override
+          mountPath: /opt/conf-override
+        {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            {{- if .Values.global.useRootAccountForInit }}
+            export RUN_CHOWN="true"
+              {{- if .Values.global.saml.enabled }}
+            chown -R 200:200 /opt/netreveal/uiHome/conf/saml
+            find /opt/netreveal/uiHome/conf/saml -type f -name idp-metadata*xml -exec rm -f {} \;
+              {{- end }}
+            {{- else }}
+            export RUN_CHOWN="false"
+              {{- if .Values.global.saml.enabled }}
+            find /opt/netreveal/uiHome/conf/saml -type f -name idp-metadata*xml -exec rm -f {} \;
+              {{- end }}
+            {{- end }}
+            /opt/docker/initApplication.sh
+            {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.nrUi }}
+            cp -r /opt/netreveal/uiHome/conf/. /opt/conf-override
+              {{- if .Values.global.useRootAccountForInit }}
+            chown -R 200:200 /opt/conf-override
+              {{- end }}
+            {{- end }}
+
+      {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.nrUi }}
+      ##############################
+      # NROD OVERRIDE
+      ##############################
+      - name: nrod-override
+        image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        volumeMounts:
+          - name: {{ include "generate.name.with.release.name" (list $ . "ui-data") | quote }}
+            mountPath: /opt/netreveal/uiHome/data
+          - name: {{ include "generate.name.with.release.name" (list $ . "ui-conf-wlm") | quote }}
+            mountPath: /opt/netreveal/uiHome/conf/wlm
+          - name: {{ include "generate.name.with.release.name" (list $ . "ui-conf-fts") | quote }}
+            mountPath: /opt/netreveal/uiHome/conf/fts
+          - name: {{ .Release.Name }}-ui-conf-override
+            mountPath: /opt/conf-override
+          - name: {{ .Release.Name }}-ui-server-deployments
+            mountPath: /opt/deployments
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            if [ -f /opt/override/override_version.properties ]; then
+              echo "Override version file found. Copying to /opt/conf-override"
+              cp /opt/override/override_version.properties /opt/conf-override
+            else
+              echo "Override version file not found."
+            fi
+            if [ -d /opt/override/conf/nr-ui ]; then
+              echo "Copying /opt/override/conf/nr-ui to /opt/conf-override"
+              cp -r /opt/override/conf/nr-ui/. /opt/conf-override
+            else
+              echo "No /opt/override/conf/nr-ui found."
+            fi
+            if [ -d /opt/override/conf/nr-ui/wlm ]; then
+              echo "Copying /opt/override/conf/nr-ui/wlm to /opt/netreveal/uiHome/conf/wlm"
+              cp -r /opt/override/conf/nr-ui/wlm/. /opt/netreveal/uiHome/conf/wlm
+            else
+              echo "No /opt/override/conf/nr-ui/wlm found."
+            fi
+            if [ -d /opt/override/conf/nr-ui/fts ]; then
+              echo "Copying /opt/override/conf/nr-ui/fts to /opt/netreveal/uiHome/conf/fts"
+              cp -r /opt/override/conf/nr-ui/fts/. /opt/netreveal/uiHome/conf/fts
+            else
+              echo "No /opt/override/conf/nr-ui/fts found."
+            fi
+            # base_config.properties cannot be overwritten.
+            if [ -f /opt/conf-override/base_config.properties ]; then
+              echo "Removing /opt/conf-override/base_config.properties. This file cannot be overwritten."
+              rm -f /opt/conf-override/base_config.properties
+            fi
+            # Custom code override
+            echo "Prepare custom code override..."
+            if [ -d /opt/override/customcode/common/lib ]; then
+              countFiles=$(find /opt/override/customcode/common/lib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/common/lib to /opt/deployments/application.ear/lib"
+                cp -r /opt/override/customcode/common/lib/* /opt/deployments/application.ear/lib
+                echo ">>>>>"
+                find /opt/override/customcode/common/lib -type f ! -name ".*"
+                echo "<<<<<"
+              else
+                echo "No files found in /opt/override/customcode/common/lib"
+              fi
+            else
+              echo "No /opt/override/customcode/common/lib found."
+            fi
+
+            if [ -d /opt/override/customcode/common/earlib ]; then
+              countFiles=$(find /opt/override/customcode/common/earlib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/common/earlib to /opt/deployments/application.ear"
+                cp -r /opt/override/customcode/common/earlib/* /opt/deployments/application.ear
+                echo ">>>>>"
+                find /opt/override/customcode/common/earlib -type f ! -name ".*"
+                echo "<<<<<"
+              else
+                echo "No files found in /opt/override/customcode/common/earlib"
+              fi
+            else
+              echo "No /opt/override/customcode/common/earlib found."
+            fi
+
+            if [ -d /opt/override/customcode/nr-ui/lib ]; then
+              countFiles=$(find /opt/override/customcode/nr-ui/lib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/nr-ui/lib to /opt/deployments/application.ear/lib"
+                cp -r /opt/override/customcode/nr-ui/lib/* /opt/deployments/application.ear/lib
+                echo ">>>>>"
+                find /opt/override/customcode/nr-ui/lib -type f ! -name ".*"
+                echo "<<<<<"
+              else
+                echo "No files found in /opt/override/customcode/nr-ui/lib"
+              fi
+            else
+              echo "No /opt/override/customcode/nr-ui/lib found."
+            fi
+
+            if [ -d /opt/override/customcode/nr-ui/earlib ]; then
+              countFiles=$(find /opt/override/customcode/nr-ui/earlib -type f ! -name ".*" | wc -l)
+              if [ $countFiles -gt 0 ]; then
+                echo "Copying /opt/override/customcode/nr-ui/earlib to /opt/deployments/application.ear"
+                cp -r /opt/override/customcode/nr-ui/earlib/* /opt/deployments/application.ear
+                echo ">>>>>"
+                find /opt/override/customcode/nr-ui/earlib -type f ! -name ".*"
+                echo "<<<<<"
+              else
+                echo "No files found in /opt/override/customcode/nr-ui/earlib"
+              fi
+            else
+              echo "No /opt/override/customcode/nr-ui/earlib found."
+            fi
+      {{- end }}
+
+      - name: keystore-cert-init
+        image: "{{- include "nr.ui.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/bash
+          - -c
+          - |
+            set +x
+            set -e
+
+            cp /opt/tools/java/lib/security/cacerts /opt/wildfly/netreveal/configuration/server.jks
+            keytool -storepasswd -new $KEYSTORE_PASS -keystore /opt/wildfly/netreveal/configuration/server.jks -storepass changeit
+
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/nr-ui.jks -srcalias 1 -destkeystore /opt/wildfly/netreveal/configuration/server.jks -destalias nrui -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/opensearch.jks -srcalias 1 -destkeystore /opt/wildfly/netreveal/configuration/server.jks -destalias opensearch -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            {{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+            /opt/tools/java/bin/keytool -importcert -file "{{ .Values.global.sparkOperator.serviceaccount }}/ca.crt" -keystore /opt/wildfly/netreveal/configuration/server.jks -alias sparkoperator -storepass $KEYSTORE_PASS -noprompt
+            {{- end }}
+            {{- if .Values.global.nrSubChartSwitches.enableWlm }}
+            /opt/tools/java/bin/keytool -importkeystore -srckeystore /tmp/wlm-pn-rt.jks -srcalias 1 -destkeystore /opt/wildfly/netreveal/configuration/server.jks -destalias wlm24procrt -srcstorepass $KEYSTORE_PASS -deststorepass $KEYSTORE_PASS -noprompt
+            {{- end }}
+{{- include "definition.external.certificates" (list $ . "nr-ui") | indent 12 }}
+{{- include "nr.ui.saml.command.initKeysore" . | indent 12 }}
+            echo "Certificate import finished."
+        env:
+        - name: KEYSTORE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-jks-password
+              key: password
+        volumeMounts:
+        - name: {{ .Release.Name }}-opensearch-server-jks
+          mountPath: /tmp/opensearch.jks
+          subPath: opensearch.jks
+        - name: {{ .Release.Name }}-nr-ui-server-jks
+          mountPath: /tmp/nr-ui.jks
+          subPath: nr-ui.jks
+        {{- if .Values.global.nrSubChartSwitches.enableWlm }}
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-jks
+          mountPath: /tmp/wlm-pn-rt.jks
+          subPath: wlm-pn-rt.jks
+        {{- end }}
+        - name: {{ .Release.Name }}-nr-ui-merged-keystore
+          mountPath: /opt/wildfly/netreveal/configuration
+{{- include "nr.ui.saml.volumeMounts.certInit" . | indent 8 }}
+{{- include "secret-volume-mounts.external.certificates" . | indent 8 }}
+{{- include "init-container.kafka.jks" (merge (dict "solution" $solution) . ) | nindent 6 }}
+{{- include "saml.init.idp.file" . | nindent 6 }}
+
+      - name: nr-ui-config-merge
+        image: "{{- include "nr.ui.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            cat /tmp/nr-ui-conf/base_config.properties.orig > /tmp/nr-ui-conf/base_config.properties
+            REPLICA_NUMBER=$(hostname | grep -o '[^-]*$')
+            if [ "$REPLICA_NUMBER" -gt 0 ]; then
+                sed -i "s/server.name=Norkom/server.name=Norkom-$REPLICA_NUMBER/g" /tmp/nr-ui-conf/base_config.properties
+                sed -i "s/workflow.enable.rule.scheduler=true/workflow.enable.rule.scheduler=false/g" /tmp/nr-ui-conf/base_config.properties
+            fi
+          {{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+            set +x; echo -e "\nspark.operator.token=$(cat {{ .Values.global.sparkOperator.serviceaccount }}/token)" | \
+            tee -a /tmp/nr-ui-conf/base_config.properties > /dev/null
+            set -x;
+            cat /tmp/nr-ui-conf/smbd_nr_ui_config.properties | \
+            tee -a /tmp/nr-ui-conf/base_config.properties > /dev/null
+          {{- end }}
+        volumeMounts:
+        - name: {{ .Release.Name }}-nr-ui-merged-config
+          mountPath: /tmp/nr-ui-conf
+        - name: {{ .Release.Name }}-ui-server-base-config-properties
+          mountPath: /tmp/nr-ui-conf/base_config.properties.orig
+          subPath: base_config.properties
+          {{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+        - name: {{ .Release.Name }}-smbd-nr-ui-config
+          mountPath: /tmp/nr-ui-conf/smbd_nr_ui_config.properties
+          subPath: smbd_nr_ui_config.properties
+          {{- end }}
+
+{{- include "image.pull.secrets" . | nindent 6 }}
+
+      containers:
+      - name: nr-ui
+        image: "{{- include "nr.ui.docker.image" . -}}"
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+        {{- if eq .Values.global.useResourceConstraints "true" }}
+        resources:
+          requests:
+            memory: {{ .Values.pod.resources.requests.memory }}
+            cpu: {{ .Values.pod.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.pod.resources.limits.memory }}
+            cpu: {{ .Values.pod.resources.limits.cpu }}
+        {{- end }}
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            {{- if and .Values.global.baseConfigProperties.db.postgresql.sslmode (ne .Values.global.baseConfigProperties.db.postgresql.sslmode "disable") }}
+            export DB_TLS_CONFIG="?sslmode=$DB_SSLMODE&sslrootcert=$DB_SSLROOTCERT"
+            {{- end }}
+            /opt/wildfly/netreveal/startApplication.sh
+        env:
+        - name: MAX_HEAP
+          value: "{{ .Values.pod.java.nrUiMaxHeap }}"
+        - name: MIN_HEAP
+          value: "{{ .Values.pod.java.nrUiMinHeap }}"
+        - name: DB_MIN_POOL_SIZE
+          value: "{{ .Values.pod.dbPoolSize.min }}"
+        - name: DB_MAX_POOL_SIZE
+          value: "{{ .Values.pod.dbPoolSize.max }}"
+        - name: HTTPS_LISTENER_MAX_PARAMETERS
+          value: "{{ .Values.pod.wildfly.httpsListener.maxParameters }}"
+        - name: HTTPS_LISTENER_MAX_POST_SIZE
+          value: "{{ .Values.pod.wildfly.httpsListener.maxPostSize }}"
+        - name: THREAD_POOL_MAX_THREADS
+          value: "{{ .Values.pod.wildfly.threadPool.maxThreads }}"
+        - name: JAVA_OPTS
+          value: " {{ .Values.pod.java.extraJavaOpts }} -XX:MaxRAM={{ .Values.pod.java.nrUiMaxRam }} {{- include "jdk17.java.opts" . -}} "
+        - name: KEYSTORE_PASS
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Release.Name }}-jks-password
+              key: password
+        {{- if eq .Values.pod.java.switchOnDebug true }}
+        - name: EXTRA_JAVA_OPTS
+          value: " -Xdebug -Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=0.0.0.0:8787 "
+        {{- end }}
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: DB_HOST
+          value: "{{ include "db.host" . }}"
+        - name: DB_PORT
+          value: "{{ .Values.global.baseConfigProperties.db.postgresql.port }}"
+        - name: DB_DATABASE
+          value: "{{ .Values.global.baseConfigProperties.db.postgresql.database }}"
+        {{- if and .Values.global.baseConfigProperties.db.postgresql.sslmode (ne .Values.global.baseConfigProperties.db.postgresql.sslmode "disable") }}
+        - name: DB_SSLMODE
+          value: "{{ .Values.global.baseConfigProperties.db.postgresql.sslmode }}"
+        - name: DB_SSLROOTCERT
+          value: "{{ .Values.global.baseConfigProperties.db.postgresql.sslrootcert }}"
+        {{- end }}
+        ports:
+          - containerPort: 8443
+        volumeMounts:
+        {{ include "postgres.server.secret-mount" . | nindent 8  }}
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.nrUi }}
+        - name: {{ .Release.Name }}-ui-conf-override
+          mountPath: /opt/netreveal/uiHome/conf
+        {{- end }}
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-logs") | quote }}
+          mountPath: /opt/netreveal/uiHome/logs
+        - name: {{ .Release.Name }}-ui-java-tmp
+          mountPath: /opt/java/tmp
+        - name: {{ .Release.Name }}-ui-temp-reports
+          mountPath: /opt/netreveal/uiHome/temp/reports
+        - name: {{ .Release.Name }}-ui-conf-temp
+          mountPath: /opt/netreveal/uiHome/conf/temp
+        - name: {{ .Release.Name }}-ui-app-server-tmp
+          mountPath: /opt/wildfly-tmp
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-data") | quote }}
+          mountPath: /opt/netreveal/uiHome/data
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-app-server-logs") | quote }}
+          mountPath: /opt/server-logs
+        - name: {{ .Release.Name }}-ui-server-deployments
+          mountPath: /opt/deployments
+        - name: {{ .Release.Name }}-ui-server-configuration-history
+          mountPath: /opt/wildfly/netreveal/configuration/standalone_xml_history
+        - name: {{ .Release.Name }}-ui-server-conf-log-prop
+          mountPath: /opt/wildfly/netreveal/configuration/logging.properties
+          subPath: logging.properties
+        - name: {{ .Release.Name }}-nr-ui-merged-config
+          mountPath: /opt/netreveal/uiHome/conf/base_config.properties
+          subPath: base_config.properties
+        {{- include "nr.ui.log4j2.volume.mount" . | indent 8 }}
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-conf-wlm") | quote }}
+          mountPath: /opt/netreveal/uiHome/conf/wlm
+        - name: {{ .Release.Name }}-ui-app-elytron-tmp
+          mountPath: /opt/wildfly/elytronCredentialStore.jceks
+          subPath: elytronCredentialStore.jceks
+        - name: {{ include "generate.name.with.release.name" (list $ . "ui-conf-fts") | quote }}
+          mountPath: /opt/netreveal/uiHome/conf/fts
+        - name: {{ .Release.Name }}-wlm-indexes
+          mountPath: /opt/WLM
+        - name: {{ .Release.Name }}-nr-ui-merged-keystore
+          mountPath: /opt/wildfly/netreveal/configuration/server.jks
+          subPath: server.jks
+          readOnly: true
+        {{- include "nr.ui.saml.volumeMounts.nrUi" . | indent 8 }}
+        {{- if ne $.Values.global.baseConfigProperties.kafka.securityProtocol "PLAINTEXT" }}
+        - name: {{ .Release.Name }}-kafka-nr-ui-jks-volume
+          mountPath: /opt/netreveal/uiHome/conf/keys/kafka.keystore.jks
+          subPath: kafka.keystore.jks
+          readOnly: true
+        - name: {{ .Release.Name }}-kafka-nr-ui-jks-volume
+          mountPath: /opt/netreveal/uiHome/conf/keys/kafka.truststore.jks
+          subPath: kafka.truststore.jks
+          readOnly: true
+          {{- if .Values.global.kafka.externalKafkaCertificates }}
+            {{- if gt (len .Values.global.kafka.externalKafkaCertificates) 0 }}
+              {{- range $key, $value := .Values.global.kafka.externalKafkaCertificates }}
+        - name: {{ $.Release.Name }}-kafka-nr-ui-jks-volume
+          mountPath: /opt/netreveal/uiHome/conf/keys/{{ $key }}.kafka.truststore.jks
+          subPath: {{ $key }}.kafka.truststore.jks
+          readOnly: true
+        - name: {{ $.Release.Name }}-kafka-nr-ui-jks-volume
+          mountPath: /opt/netreveal/uiHome/conf/keys/{{ $key }}.kafka.keystore.jks
+          subPath: {{ $key }}.kafka.keystore.jks
+          readOnly: true
+              {{- end }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+        {{- if .Values.pod.startupProbe }}
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 9990
+            scheme: HTTP
+          {{- toYaml .Values.pod.startupProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.readinessProbe }}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9990
+            scheme: HTTP
+          {{- toYaml .Values.pod.readinessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.livenessProbe }}
+        livenessProbe:
+          httpGet:
+            path: /netreveal/login.do
+            port: 8443
+            scheme: HTTPS
+          {{- toYaml .Values.pod.livenessProbe | nindent 10 }}
+        {{- end }}
+      volumes:
+        {{ include "postgres.server.secret-volume" . | nindent 8  }}
+        {{ include "secret-volumes.kafka.jks" (merge (dict "solution" $solution ) . ) | nindent 8 }}
+        {{ include "secret-volumes.external.certificates" . | nindent 8 }}
+        - name: {{ .Release.Name }}-nr-ui-merged-config
+          emptyDir: {}
+        - name: {{ .Release.Name }}-nr-ui-merged-keystore
+          emptyDir: {}
+        - name: {{ .Release.Name }}-ui-java-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-ui-temp-reports
+          emptyDir: {}
+        - name: {{ .Release.Name }}-ui-conf-temp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-ui-app-server-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-ui-app-elytron-tmp
+          emptyDir: {}
+        {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.nrUi }}
+        - name: {{ .Release.Name }}-ui-conf-override
+          emptyDir: {}
+        {{- end }}
+        - name: {{ .Release.Name }}-ui-server-deployments
+          emptyDir: {}
+        - name: {{ .Release.Name }}-ui-server-configuration-history
+          emptyDir: {}
+        - name: {{ .Release.Name }}-wlm-indexes
+          persistentVolumeClaim:
+            claimName: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+        - name: {{ .Release.Name }}-ui-server-conf-log-prop
+          secret:
+            secretName: {{ .Release.Name }}-ui-logging-property
+            items:
+            - key: logging.properties
+              path: logging.properties
+        {{- include "nr.ui.log4j2.volume" . | indent 8 }}
+        - name: {{ .Release.Name }}-ui-server-base-config-properties
+          configMap:
+            name: {{ .Release.Name }}-ui-base-config-property
+            items:
+            - key: base_config.properties
+              path: base_config.properties
+        {{- if .Values.global.nrSubChartSwitches.enableSmbd }}
+        - name: {{ .Release.Name }}-smbd-nr-ui-config
+          configMap:
+            name: {{ .Release.Name }}-smbd-nr-ui-config
+            items:
+            - key: smbd_nr_ui_config.properties
+              path: smbd_nr_ui_config.properties
+        {{- end }}
+        - name: {{ .Release.Name }}-opensearch-server-jks
+          secret:
+            secretName: cert-opensearch
+            items:
+            - key: keystore.p12
+              path: opensearch.jks
+        - name: {{ .Release.Name }}-nr-ui-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-nr-ui
+            items:
+            - key: keystore.p12
+              path: nr-ui.jks
+        {{- if .Values.global.nrSubChartSwitches.enableWlm }}
+        - name: {{ .Release.Name }}-wlm-pn-rt-server-jks
+          secret:
+            secretName: {{ .Release.Name }}-cert-wlm-pn-rt
+            items:
+            - key: keystore.p12
+              path: wlm-pn-rt.jks
+        {{- end }}
+        {{- include "nr.ui.saml.volumes" . | nindent 8 }}
+      restartPolicy: Always
+  volumeClaimTemplates:
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "ui-app-server-logs") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "nrUi.pvcServerLogsStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "ui-logs") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "nrUi.pvcApplicationLogsStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "ui-data") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "nrUi.pvcDataStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "ui-conf-wlm") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "nrUi.pvcConfWlmStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "ui-conf-saml") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "nrUi.pvcConfSamlStorage" . }}
+  - metadata:
+      name: {{ include "generate.name.with.release.name" (list $ . "ui-conf-fts") | quote }}
+      {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.class.name.selectStorageClassName" .)) | indent 6 }}
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      {{- include "storage.selectStorageClassName" . | indent 6 }}
+      resources:
+        requests:
+          storage: {{ include "nrUi.pvcConfFtsStorage" . }}

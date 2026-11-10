@@ -1,0 +1,7 @@
+apiVersion: v2
+name: backups
+description: A Helm chart for backups
+type: application
+# netreveal chart version: 1.0.1
+version: 1.0.2
+appVersion: "9.4.0.0"

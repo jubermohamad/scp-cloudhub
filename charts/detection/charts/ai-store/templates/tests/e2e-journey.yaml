@@ -1,0 +1,155 @@
+{{- /*
+Cross-repo E2E journey (AC-336..339) as a `helm test` hook.
+
+Runs the suite from ai-store/e2e/ (published as the modelhub-e2e image) INSIDE
+the cluster against the release's own services, so `helm test <release>`
+verifies a chart install end to end:
+  MTT train -> register -> ai-store cache sync -> deploy -> monitoring -> teardown.
+
+Disabled by default (e2e.enabled=false) because it trains a real model and,
+in full scope, builds and deploys one. Enable per-install:
+  helm test <release> --logs --timeout 90m   (with e2e.enabled=true)
+
+Delete policy is `before-hook-creation` ONLY: a failed pod is deliberately
+kept so its logs and the collected diagnostics remain readable.
+*/}}
+{{- if and (index .Values "e2e") .Values.e2e.enabled }}
+{{- /* Defensive lookups: `--set e2e.enabled=true` alone (no values block) must
+       produce a clear message, never a nil-pointer template crash. */}}
+{{- $e2e := index .Values "e2e" | default dict }}
+{{- $e2eImage := $e2e.image | default dict }}
+{{- if not $e2eImage.repository }}
+{{- fail "ERROR: e2e.enabled is true but e2e.image.repository is unset — the chart's default `e2e:` values block is missing or was overridden." }}
+{{- end }}
+{{- /* An un-substituted <placeholder> would only surface as ImagePullBackOff
+       minutes into `helm test`; fail at render time instead. */}}
+{{- if hasPrefix "<" $e2eImage.repository }}
+{{- fail (printf "ERROR: e2e.image.repository is still a placeholder (%s) — set it to a real registry path, e.g. --set e2e.image.repository=<acr>.azurecr.io/modelhub-e2e." $e2eImage.repository) }}
+{{- end }}
+{{- $e2eMinio := $e2e.minio | default dict }}
+{{- $e2eDeploy := $e2e.deploy | default dict }}
+{{- $mtt := index .Values "model_training_tool" | default dict }}
+{{- $mon := index .Values "monitoring_tool" | default dict }}
+{{- if not (default false $mtt.enabled) }}
+{{- fail "ERROR: e2e.enabled requires model_training_tool.enabled (the journey trains a model via MTT)." }}
+{{- end }}
+{{- if not (default false $mon.enabled) }}
+{{- fail "ERROR: e2e.enabled requires monitoring_tool.enabled (the journey runs monitoring jobs)." }}
+{{- end }}
+{{- $mttHost := $mtt.fullnameOverride | default "model-training-tool" }}
+{{- $mttPort := (($mtt.service | default dict).httpPort | default 9000) }}
+{{- $monHost := $mon.fullnameOverride | default "monitoring-tool" }}
+{{- $monPort := (($mon.service | default dict).httpPort | default 9000) }}
+{{- $backendHost := include "model-store.componentName" (list . "backend") }}
+{{- $backendPort := (.Values.backend.service | default dict).port | default 8000 }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "model-store.componentName" (list . "e2e-journey") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: e2e-journey
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  restartPolicy: Never
+  {{- with $e2e.imagePullSecrets | default .Values.global.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if $e2e.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ $e2e.activeDeadlineSeconds }}
+  {{- end }}
+  containers:
+    - name: e2e
+      image: "{{ $e2eImage.repository }}:{{ $e2eImage.tag | default "latest" }}"
+      imagePullPolicy: {{ $e2eImage.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+      env:
+        # ── in-cluster service endpoints ─────────────────────────────────────
+        - name: AISTORE_BASE_URL
+          value: {{ printf "http://%s:%v" $backendHost $backendPort | quote }}
+        - name: MTT_BASE_URL
+          value: {{ printf "http://%s:%v" $mttHost $mttPort | quote }}
+        - name: MONITORING_BASE_URL
+          value: {{ printf "http://%s:%v" $monHost $monPort | quote }}
+        # ── credentials (from the release's shared secret) ────────────────────
+        - name: AISTORE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.global.secretName }}
+              key: external-api-key
+        # MTT and monitoring both authenticate with the mcp-api-key value.
+        - name: MTT_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.global.secretName }}
+              key: mcp-api-key
+        - name: MONITORING_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.global.secretName }}
+              key: mcp-api-key
+        - name: DEPLOYMENT_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.global.secretName }}
+              key: deployment-api-key
+        # ── MinIO (landing zone + dataset cache seeding + worker logs) ───────
+        - name: E2E_MINIO_ENDPOINT
+          value: {{ $e2eMinio.endpoint | default "minio:9000" | quote }}
+        - name: E2E_MINIO_SECURE
+          value: {{ ternary "1" "0" ($e2eMinio.secure | default false) | quote }}
+        - name: E2E_MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $e2eMinio.secretName | default .Values.global.secretName }}
+              key: {{ $e2eMinio.accessKeyKey | default "aws-access-key-id" }}
+        - name: E2E_MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $e2eMinio.secretName | default .Values.global.secretName }}
+              key: {{ $e2eMinio.secretKeyKey | default "aws-secret-access-key" }}
+        # ── run identity / behaviour ─────────────────────────────────────────
+        - name: E2E_SCOPE
+          value: {{ $e2e.scope | default "core" | quote }}
+        - name: E2E_RUN_ID
+          value: {{ printf "%s-%v" (.Release.Name | trunc 20 | trimSuffix "-") .Release.Revision | quote }}
+        - name: E2E_USER_EMAIL
+          value: {{ $e2e.userEmail | default "e2e-suite@symphonyai.com" | quote }}
+        # Running inside the cluster: a *.svc.cluster.local model endpoint is
+        # correct here, so the outside-the-cluster reachability guard is off.
+        - name: E2E_IN_CLUSTER
+          value: "1"
+        - name: E2E_DEPLOY_TARGET
+          value: {{ $e2eDeploy.target | default "prod_aks" | quote }}
+        - name: E2E_DEPLOY_NAMESPACE
+          value: {{ $e2eDeploy.namespace | default (include "model-store.modelsNamespace" .) | quote }}
+        - name: E2E_DEPLOY_CLEANUP_DELAY
+          value: {{ $e2eDeploy.cleanupDelaySeconds | default 320 | quote }}
+        {{- /* Default true: image reuse is keyed by model name (no version), so
+               reusing one would serve artifacts older than the version the run
+               just registered. */}}
+        - name: E2E_FORCE_REBUILD
+          value: {{ ternary "1" "0" (ne $e2eDeploy.forceRebuild false) | quote }}
+        {{- /* No cold/warm build flag: the deployment wait is progress-aware. */}}
+        # Writable paths (the image's workdir may be read-only).
+        - name: E2E_ARTIFACTS_DIR
+          value: /tmp/e2e-artifacts
+        - name: E2E_JUNIT_FILE
+          value: /tmp/test-results-e2e.xml
+        {{- with $e2e.extraEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      volumeMounts:
+        - name: scratch
+          mountPath: /tmp
+      {{- with $e2e.resources }}
+      resources:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumes:
+    - name: scratch
+      emptyDir: {}
+{{- end }}

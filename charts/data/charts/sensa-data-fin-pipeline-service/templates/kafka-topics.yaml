@@ -1,0 +1,38 @@
+{{- if .Values.kafkaTopics.enabled }}
+# Declarative topics via the Strimzi TOPIC OPERATOR (the shared cluster is
+# Strimzi-managed) — no imperative job. KafkaTopic CRs must live in the
+# namespace the topic operator watches (the Kafka cluster's own), so these
+# are cross-namespace on purpose. CR names are release-scoped; the REAL
+# Kafka topic name is spec.topicName. Environments sharing the cluster must
+# use distinct topic names or two CRs end up fighting over one topic.
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: {{ .Release.Name }}-plan-published
+  namespace: {{ .Values.kafkaTopics.namespace }}
+  labels:
+    strimzi.io/cluster: {{ .Values.kafkaTopics.clusterName }}
+  annotations:
+    # helm uninstall must NOT cascade here: deleting the CR makes the topic
+    # operator delete the REAL topic and all its data. Orphaned CRs are a
+    # deliberate teardown chore, not a bug.
+    "helm.sh/resource-policy": keep
+spec:
+  topicName: {{ .Values.kafka.topicPlan | quote }}
+  partitions: {{ .Values.kafkaTopics.partitions }}
+  replicas: {{ .Values.kafkaTopics.replicas }}
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: {{ .Release.Name }}-exec-results
+  namespace: {{ .Values.kafkaTopics.namespace }}
+  labels:
+    strimzi.io/cluster: {{ .Values.kafkaTopics.clusterName }}
+  annotations:
+    "helm.sh/resource-policy": keep
+spec:
+  topicName: {{ .Values.kafka.topicResults | quote }}
+  partitions: {{ .Values.kafkaTopics.partitions }}
+  replicas: {{ .Values.kafkaTopics.replicas }}
+{{- end }}

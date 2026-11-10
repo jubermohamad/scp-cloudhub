@@ -1,0 +1,28 @@
+apiVersion: v2
+name: ai-store
+description: AI Store stack for tenant-scoped single-namespace deployments
+type: application
+version: 1.2.5
+appVersion: "1.2.4"
+dependencies:
+  # Vendored locally (unpacked source dirs) so `helm dependency build`/`update` stay fully
+  # offline and never re-fetch from public repos. To upgrade, replace the local dir with a
+  # newer unpacked chart, bump the version, and re-run `helm dependency update`.
+  - name: mlflow
+    version: 1.11.3
+    condition: internalServices.mlflow.enabled
+  - name: minio
+    version: 0.1.1
+    # in-tree patch (P5): own condition — the bundled MinIO used to share
+    # internalServices.mlflow.enabled, so it could not be turned off in favour
+    # of a shared/platform object store without also losing MLflow.
+    condition: minio.enabled
+  - name: zot
+    version: 0.1.105
+    condition: internalServices.zot.enabled
+  - name: model_training_tool
+    version: 1.2.5
+    condition: model_training_tool.enabled
+  - name: monitoring_tool
+    version: 1.2.5
+    condition: monitoring_tool.enabled

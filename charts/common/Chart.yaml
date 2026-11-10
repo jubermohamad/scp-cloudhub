@@ -1,0 +1,46 @@
+apiVersion: v2
+name: common
+description: Common domain umbrella chart
+type: application
+version: 0.1.8
+appVersion: "0.1.0"
+dependencies:
+  - name: common-res
+    version: 2.1.3
+    condition: common-res.enabled
+  - name: sri-micro-frontend
+    version: 0.7.2
+    condition: sri-micro-frontend.enabled
+  - name: keycloak
+    version: 0.1.1
+    condition: keycloak.enabled
+  - name: platform-services
+    version: 0.1.1
+    condition: platform-services.enabled
+  # 0.1.7 exists to force an operators APPLY. The release is skipped when this
+  # chart's digest is unchanged, and the spark webhook configurations only exist
+  # while that release has applied them — the umbrella used to delete them two
+  # seconds later on every pass (see products/umbrella/product.yaml). With the
+  # deleter gone they need recreating once, and a version change is what makes the
+  # engine stop skipping.
+  #
+  # spark-operator is NOT here any more: every cluster-wide operator ships from
+  # the common-res layer so the operators release owns all of them (see the note
+  # on its dependency entry in charts/common-res/Chart.yaml). P9 moved it out of
+  # detectionhub for the right reason but left it on this parent chart, which
+  # meant the PRODUCT release still installed it.
+  - name: kafka-cluster
+    version: ">=0.0.1"
+    repository: file://./charts/kafka-cluster
+    # P10: THE platform Kafka (sri-kafka). Relocated here from detectionhub so
+    # all five shared services live in one domain; detectionhub keeps its own
+    # copy for standalone installs, disabled in our deploy values.
+    condition: kafka-cluster.enabled
+  - name: minio
+    version: 0.1.1
+    repository: file://./charts/minio
+    # P10: THE platform object store (sri-minio). Same relocation as above —
+    # and it dissolves the common<->detection install cycle, because the
+    # ensure-minio-* hooks in platform-services now provision a store their own
+    # release renders.
+    condition: minio.enabled

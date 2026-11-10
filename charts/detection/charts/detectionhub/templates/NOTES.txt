@@ -1,0 +1,77 @@
+Thank you for installing {{ .Chart.Name }}.
+
+Your release is named {{ .Release.Name }}.
+
+DetectionHub Components:
+-----------------------
+
+{{- if (index .Values "cn-postgres" "enabled") }}
+{{- $config := include "cn-postgres.config" . | fromYaml }}
+CloudNativePG Database:
+   - Primary (read-write): {{ .Release.Name }}-cn-postgres-rw
+   - Replicas (read-only): {{ .Release.Name }}-cn-postgres-ro
+   - Port: 5432
+   - Database: {{ $config.bootstrap.initdb.database }}
+   - Username: {{ $config.bootstrap.initdb.owner }}
+
+   To get the database password:
+   $ kubectl get secret {{ .Release.Name }}-cn-postgres-app -o jsonpath="{.data.password}" | base64 --decode
+
+   To check database status:
+   $ kubectl get cluster {{ .Release.Name }}-cn-postgres
+{{- end }}
+{{- if (index .Values "db-updater" "enabled") }}
+DB Updater:
+   - Changelog path: {{ (index .Values "db-updater" "changelog" "path" ) }}
+{{- end }}
+{{- if (index .Values "core-api" "enabled") }}
+Core API:
+   - URL: {{ (index .Values "core-api" "ingress" "hosts" 0 "host") }}
+   - SupersetURL: {{ (index .Values "core-api" "frontend" "supersetUrl") }}
+   - DefaultIdleTimeout: {{ (index .Values "core-api" "frontend" "defaultIdleTimeout") }}
+   - EnableSSORedirect: {{ (index .Values "core-api" "frontend" "enableSSORedirect") }}
+{{- end }}
+{{- if (index .Values "spark-operator" "enabled") }}
+Spark operator:
+   - Webhook selector: {{ (index .Values "spark-operator" "webhook" "namespaceSelector") }}
+{{- end }}
+{{- if (index .Values "nfs-server" "server" "deployment" ) }}
+NFS server
+{{- end }}
+{{- if (index .Values "minio" "enabled") }}
+MinIO:
+   - rootUser: {{ (index .Values "minio" "rootUser") }}
+   - URL: {{ (index .Values "minio" "ingress" "hosts" 0) }}
+{{- end }}
+{{- if (index .Values "kafka-cluster" "enabled") }}
+Kafka Cluster:
+   - replicas: {{ (index .Values "kafka-cluster" "replicas") }}
+{{- end }}
+{{- if (index .Values "superset-postgres" "enabled") }}
+{{- $config := include "cn-postgres.config" (index .Subcharts "superset-postgres" ) | fromYaml }}
+Superset CloudNativePG Database:
+   - Primary (read-write): {{ .Release.Name }}-superset-postgres-rw
+   - Replicas (read-only): {{ .Release.Name }}-superset-postgres-ro
+   - Port: 5432
+   - Database: {{ $config.bootstrap.initdb.database }}
+   - Username: {{ $config.bootstrap.initdb.owner }}
+
+   To get the database password:
+   $ kubectl get secret {{ .Release.Name }}-superset-postgres-app -o jsonpath="{.data.password}" | base64 --decode
+
+   To check database status:
+   $ kubectl get cluster {{ .Release.Name }}-superset-postgres
+{{- end }}
+{{- if (index .Values "superset" "enabled") }}
+Superset:
+   - URL: {{ (index .Values "superset" "ingress" "hosts" 0 ) }}
+{{- end }}
+{{- if (index .Values "superset-updater" "enabled") }}
+Superset DB Updater:
+   - Changelog path: {{ (index .Values "superset-updater" "changelog" "path" ) }}
+{{- end }}
+
+For more information about individual components, check their respective NOTES.
+
+To monitor the deployment:
+$ kubectl get pods -l release={{ .Release.Name }}

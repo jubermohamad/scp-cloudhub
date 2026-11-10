@@ -1,0 +1,119 @@
+app:
+  title: CloudHub
+  # App Service public URL, for example https://cloudhub.contoso.com
+  baseUrl: ${APP_BASE_URL:-https://cloudhub.symphonyai.cloud}
+
+backend:
+  # Public backend base URL used by Backstage backend plugins.
+  # Keep this as ${APP_BASE_URL} when frontend proxies /api to backend,
+  # or set a dedicated URL (for example https://cloudhub-api.contoso.com).
+  baseUrl: ${BACKEND_BASE_URL:-${APP_BASE_URL:-https://cloudhub.symphonyai.cloud}}
+  listen:
+    port: 7007
+    host: 0.0.0.0
+  auth:
+    externalAccess:
+      # Data Export Hub cluster agents authenticate with Entra tokens issued to
+      # their Azure Workload Identity (no shared secrets). Tokens are only
+      # accepted by the data-export plugin, and the token subject must match a
+      # registered agent. The CloudHub API app registration must issue v2
+      # tokens (accessTokenAcceptedVersion: 2) for the issuer below to match.
+      - type: jwks
+        options:
+          url: https://login.microsoftonline.com/${AUTH_MICROSOFT_TENANT_ID}/discovery/v2.0/keys
+          issuer: https://login.microsoftonline.com/${AUTH_MICROSOFT_TENANT_ID}/v2.0
+          audience: ${DATA_EXPORT_AGENT_AUDIENCE:-api://cloudhub-data-export}
+          subjectPrefix: data-export-agent
+        accessRestrictions:
+          - plugin: data-export
+  cors:
+    origin:
+      - ${APP_BASE_URL:-https://cloudhub.symphonyai.cloud}
+      - https://cloudhub.symphonyai.cloud
+      - https://www.cloudhub.symphonyai.cloud
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+
+  # config options: https://node-postgres.com/apis/client
+  database:
+    client: pg
+    connection:
+      host: ${POSTGRES_HOST}
+      port: ${POSTGRES_PORT}
+      user: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+      database: ${POSTGRES_DB:-cloudhub}
+      # Azure Database for PostgreSQL requires TLS in production.
+      ssl:
+        rejectUnauthorized: false
+      # https://node-postgres.com/features/ssl
+      # you can set the sslmode configuration option via the `PGSSLMODE` environment variable
+      # see https://www.postgresql.org/docs/current/libpq-ssl.html Table 33.1. SSL Mode Descriptions (e.g. require)
+      # ssl:
+      #   ca: # if you have a CA file and want to verify it you can uncomment this section
+      #     $file: <file-path>/ca/server.crt
+
+deploymentControlPlane:
+  onePassword:
+    serviceAccountToken: ${OP_SERVICE_ACCOUNT_TOKEN}
+
+enableExperimentalRedirectFlow: true
+
+auth:
+  environment: production
+  providers:
+    microsoft:
+      development:
+        clientId: ${AUTH_MICROSOFT_CLIENT_ID}
+        clientSecret: ${AUTH_MICROSOFT_CLIENT_SECRET}
+        tenantId: ${AUTH_MICROSOFT_TENANT_ID}
+        domainHint: ${AUTH_MICROSOFT_TENANT_ID}
+        callbackUrl: ${AUTH_MICROSOFT_CALLBACK_URL:-https://cloudhub.symphonyai.cloud/api/auth/microsoft/handler/frame}
+        signIn:
+          resolvers:
+            - resolver: symphonySensaEmail
+      production:
+        clientId: ${AUTH_MICROSOFT_CLIENT_ID}
+        clientSecret: ${AUTH_MICROSOFT_CLIENT_SECRET}
+        tenantId: ${AUTH_MICROSOFT_TENANT_ID}
+        domainHint: ${AUTH_MICROSOFT_TENANT_ID}
+        callbackUrl: ${AUTH_MICROSOFT_CALLBACK_URL:-https://cloudhub.symphonyai.cloud/api/auth/microsoft/handler/frame}
+        signIn:
+          resolvers:
+            - resolver: symphonySensaEmail
+
+catalog:
+  # Keep catalog locations in app-config.yaml as the single source of truth.
+  # Do not redefine catalog.locations here to avoid dev/prod drift.
+  providers:
+    microsoftGraphOrg:
+      default:
+        target: https://graph.microsoft.com/v1.0
+        tenantId: ${AZURE_TENANT_ID}
+        clientId: ${AZURE_CLIENT_ID}
+        clientSecret: ${AZURE_CLIENT_SECRET}
+        user:
+          filter: accountEnabled eq true
+        group:
+          filter: ${CATALOG_APPROVER_GROUP_FILTER:-accountEnabled eq true}
+        schedule:
+          frequency: { minutes: 30 }
+          timeout: { minutes: 5 }
+          initialDelay: { seconds: 15 }
+
+provisioning:
+  github:
+    # Applies only to the Tailscale policy PR (JumpboxAccessProvisioningService);
+    # the AKS infrastructure PR has no auto-merge code path at all. Disabled:
+    # SymphonyFS/tailscale's procedure (docs/jumpbox-access-self-service.md) is
+    # "the repository owner or designated approver reviews and merges the PR",
+    # its main ruleset requires a CODEOWNERS (@symphonyfs/cloud-operations)
+    # review, and the repository disallows auto-merge (allow_auto_merge=false),
+    # so enabling it would make every Tailscale PR creation fail.
+    autoMerge:
+      enabled: false
+      method: squash
+
+integrations:
+  github:
+    - host: github.com

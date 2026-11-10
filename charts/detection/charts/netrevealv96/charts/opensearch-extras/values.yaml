@@ -1,0 +1,15 @@
+---
+replicas: 1
+
+clusterName: "opensearch-cluster"
+nodeGroup: "master"
+
+persistence:
+  size: 8Gi
+
+pv:
+  hostPath: "/var/nfs_k8s/opensearch"
+  hostPathMinikube: "/opt/netreveal/opensearch"
+
+secret:
+  hash: ""

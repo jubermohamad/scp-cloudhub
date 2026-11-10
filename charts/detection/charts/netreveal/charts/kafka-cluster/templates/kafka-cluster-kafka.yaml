@@ -1,0 +1,256 @@
+---
+apiVersion: {{ .Values.apiVersion }}
+kind: Kafka
+metadata:
+  name: {{ include "generate.name.with.release.name" (list $ . "kafka") | quote }}
+  labels:
+    resource/type: kafka
+  namespace: {{ .Values.global.namespace }}
+spec:
+  kafka:
+    version: {{ .Values.kafka.version }}
+    replicas: {{ .Values.replicas }}
+
+    {{- if .Values.kafka.livenessProbe }}
+    livenessProbe:
+      {{- toYaml .Values.kafka.livenessProbe | nindent 6 }}
+    {{- end }}
+    {{- if .Values.kafka.readinessProbe }}
+    readinessProbe:
+      {{- toYaml .Values.kafka.readinessProbe | nindent 6 }}
+    {{- end }}
+
+    {{- if eq .Values.global.useResourceConstraints "true" }}
+    resources:
+      requests:
+        memory: {{ .Values.kafka.resources.requests.memory }}
+        cpu: {{ .Values.kafka.resources.requests.cpu }}
+      limits:
+        memory: {{ .Values.kafka.resources.limits.memory }}
+        cpu: {{ .Values.kafka.resources.limits.cpu }}
+    {{- end }}
+
+    {{- include "kafka.jvmOptions" . | nindent 4 }}
+
+    jmxOptions: {}
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: kafka-metrics-config.yml
+    template:
+    {{- if and (ne .Values.global.clusterType "nfs") (ne .Values.global.clusterType "minikube") }}
+      persistentVolumeClaim:
+        metadata:
+          {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.storageClassName" .)) | indent 10 }}
+    {{- end }}
+      pod:
+{{- include "image.pull.secrets" . | nindent 8 }}
+        metadata:
+        {{- if .Values.kafka.podAnnotations }}
+          annotations:
+            {{- toYaml .Values.kafka.podAnnotations | nindent 12 }}
+        {{- end }}
+          labels:
+            app-release-name: {{ .Release.Name }}
+
+        {{- if or (eq .Values.kafka.antiAffinity "hard") (eq .Values.kafka.antiAffinity "soft") (eq .Values.kafka.antiAffinity "custom") }}
+        affinity:
+          podAntiAffinity:
+        {{- end }}
+        {{- if eq .Values.kafka.antiAffinity "soft" }}
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      strimzi.io/component-type: kafka
+                      app-release-name: {{ .Release.Name }}
+                  topologyKey: topology.kubernetes.io/zone
+        {{- else if eq .Values.kafka.antiAffinity "hard" }}
+            requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchLabels:
+                    strimzi.io/component-type: kafka
+                    app-release-name: {{ .Release.Name }}
+                topologyKey: topology.kubernetes.io/zone
+        {{- else if eq .Values.kafka.antiAffinity "custom" }}
+{{- tpl (toYaml .Values.kafka.customAffinityRules) . | nindent 12 }}
+        {{- end }}
+
+        securityContext:
+        {{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+          runAsUser: 0
+          fsGroup: 0
+        {{- else }}
+          runAsUser: 1000001
+          fsGroup: 0
+      kafkaContainer:
+        securityContext:
+          runAsUser: 2000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+        {{- end }}
+    listeners:
+    - name: plain
+      port: 9092
+      type: internal
+      tls: false
+      {{- if .Values.kafka.networkPolicyPeers }}
+      networkPolicyPeers:
+        {{ tpl (toYaml .Values.kafka.networkPolicyPeers) . | nindent 8 }}
+      {{- end }}
+    - name: tls
+      port: 9093
+      type: internal
+      tls: true
+      authentication:
+        type: tls
+    config:
+      inter.broker.protocol.version: {{ .Values.kafka.version }}
+      log.message.format.version: {{ .Values.kafka.version }}
+      {{- toYaml .Values.kafka.config | nindent 6 }}
+    storage:
+      type: jbod
+      volumes:
+      - id: 0
+        type: persistent-claim
+        size: {{ include "kafkaCluster.kafka.pvcStorage" . }}
+        class: {{ include "storage.storageClassName" . }}
+        deleteClaim: false
+
+  zookeeper:
+    jmxOptions: {}
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          key: zookeeper-metrics-config.yml
+          name: kafka-metrics
+
+    {{- include "zookeeper.jvmOptions" . | nindent 4 }}
+
+    replicas: {{ .Values.replicas }}
+
+    {{- if .Values.zookeeper.livenessProbe }}
+    livenessProbe:
+      {{- toYaml .Values.zookeeper.livenessProbe | nindent 6 }}
+    {{- end }}
+    {{- if .Values.zookeeper.readinessProbe }}
+    readinessProbe:
+      {{- toYaml .Values.zookeeper.readinessProbe | nindent 6 }}
+    {{- end }}
+
+    {{- if eq .Values.global.useResourceConstraints "true" }}
+    resources:
+      requests:
+        memory: {{ .Values.zookeeper.resources.requests.memory }}
+        cpu: {{ .Values.zookeeper.resources.requests.cpu }}
+      limits:
+        memory: {{ .Values.zookeeper.resources.limits.memory }}
+        cpu: {{ .Values.zookeeper.resources.limits.cpu }}
+    {{- end }}
+
+    template:
+    {{- if and (ne .Values.global.clusterType "nfs") (ne .Values.global.clusterType "minikube") }}
+      persistentVolumeClaim:
+        metadata:
+          {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.storageClassName" .)) | indent 10 }}
+    {{- end }}
+
+      pod:
+{{- include "image.pull.secrets" . | nindent 8 }}
+        metadata:
+        {{- if .Values.zookeeper.podAnnotations }}
+          annotations:
+            {{- toYaml .Values.zookeeper.podAnnotations | nindent 12 }}
+        {{- end }}
+          labels:
+            app-release-name: {{ .Release.Name }}
+
+        {{- if or (eq .Values.zookeeper.antiAffinity "hard") (eq .Values.zookeeper.antiAffinity "soft") (eq .Values.zookeeper.antiAffinity "custom") }}
+        affinity:
+          podAntiAffinity:
+        {{- end }}
+        {{- if eq .Values.zookeeper.antiAffinity "soft" }}
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      strimzi.io/component-type: zookeeper
+                      app-release-name: {{ .Release.Name }}
+                  topologyKey: topology.kubernetes.io/zone
+        {{- else if eq .Values.zookeeper.antiAffinity "hard" }}
+            requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchLabels:
+                    strimzi.io/component-type: zookeeper
+                    app-release-name: {{ .Release.Name }}
+                topologyKey: topology.kubernetes.io/zone
+        {{- else if eq .Values.zookeeper.antiAffinity "custom" }}
+{{- tpl (toYaml .Values.zookeeper.customAffinityRules) . | nindent 12 }}
+        {{- end }}
+
+        securityContext:
+        {{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+          runAsUser: 0
+          fsGroup: 0
+        {{- else }}
+          runAsUser: 1000001
+          fsGroup: 0
+      zookeeperContainer:
+        securityContext:
+          runAsUser: 2000
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+        {{- end }}
+    storage:
+      type: persistent-claim
+      size: {{ include "kafkaCluster.zookeeper.pvcStorage" . }}
+      class: {{ include "storage.storageClassName" . }}
+      deleteClaim: false
+
+  entityOperator:
+    template:
+      {{- if .Values.entityOperator.podAnnotations }}
+      pod:
+{{- include "image.pull.secrets" . | nindent 8 }}
+        metadata:
+          annotations:
+            {{- toYaml .Values.entityOperator.podAnnotations | nindent 12 }}
+      {{- end }}
+      topicOperatorContainer:
+        env:
+        - name: STRIMZI_USE_ZOOKEEPER_TOPIC_STORE
+          value: 'true'
+
+    {{- include "entityOperator.topicOperator" . | nindent 4 }}
+
+    {{- include "entityOperator.userOperator" . | nindent 4 }}
+
+  {{- if eq .Values.global.baseConfigProperties.kafka.securityProtocol "SSL" }}
+  clusterCa:
+    generateCertificateAuthority: true
+    validityDays: 365
+    renewalDays: 30
+  clientsCa:
+    generateCertificateAuthority: true
+    validityDays: 365
+    renewalDays: 30
+  {{- end }}
+
+  maintenanceTimeWindows:
+    - "* * 0-1 ? * SUN *"
+
+  kafkaExporter:
+    groupRegex: {{ .Values.kafka.kafkaExporter.groupRegex }}
+    logging: {{ .Values.kafka.kafkaExporter.logging }}
+    {{- if .Values.kafka.kafkaExporter.podAnnotations }}
+    template:
+      pod:
+        metadata:
+          annotations:
+            {{- toYaml .Values.kafka.kafkaExporter.podAnnotations | nindent 12 }}
+    {{- end }}

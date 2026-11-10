@@ -1,0 +1,41 @@
+{{- if .Values.ingress.enabled }}
+# OFF by default. Inside the SRI platform the portal proxies the console
+# same-origin, and a second public hostname would publish the same app under a
+# second identity: its own certificate, its own Keycloak redirect surface, its
+# own login. Enable this only for a standalone install with no portal in front.
+#
+# The console's nginx already routes /rigraph/ to the API and /chat/ to the
+# assistant, so ONE host in front of the console reaches all three.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "prism.fullname" . }}-console
+  labels:
+    app: prism-console
+    {{- include "prism.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ required "ingress.host is required when ingress.enabled is true" .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-console-tls" (include "prism.fullname" .)) }}
+  {{- end }}
+  rules:
+    - host: {{ required "ingress.host is required when ingress.enabled is true" .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "prism.fullname" . }}-console
+                port:
+                  number: {{ .Values.console.port }}
+{{- end }}

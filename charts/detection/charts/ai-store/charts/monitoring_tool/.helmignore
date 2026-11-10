@@ -1,0 +1,4 @@
+# If a venv is created inside this chart directory, do not package it.
+.venv/
+venv/
+ENV/

@@ -1,0 +1,79 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "backupConfig": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "mirror": {
+                    "type": "object",
+                    "properties": {
+                        "mirrorObjectStore": {
+                            "type": "object",
+                            "properties": {
+                                "azureCredentials": {
+                                    "type": "object",
+                                    "properties": {
+                                        "storageAccount": {
+                                            "type": "object",
+                                            "properties": {
+                                                "key": {
+                                                    "type": "string"
+                                                },
+                                                "name": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "storageKey": {
+                                            "type": "object",
+                                            "properties": {
+                                                "key": {
+                                                    "type": "string"
+                                                },
+                                                "name": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "bucketsToMirror": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                },
+                                "destinationPath": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                },
+                "schedule": {
+                    "type": "string"
+                }
+            }
+        },
+        "mirror": {
+            "type": "object",
+            "properties": {
+                "image": {
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string"
+                        },
+                        "tag": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

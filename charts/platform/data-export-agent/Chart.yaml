@@ -1,0 +1,13 @@
+apiVersion: v2
+name: data-export-agent
+description: >-
+  CloudHub Data Export Hub cluster agent. Claims export jobs for this cluster
+  from CloudHub, runs read-only extracts against the cluster's PostgreSQL read
+  replica and delivers files to ADLS Gen2 or SFTP. Authenticates with Azure
+  Workload Identity only; the chart contains no secrets.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - cloudhub
+  - data-export

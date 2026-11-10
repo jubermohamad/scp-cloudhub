@@ -1,0 +1,210 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ .Release.Name }}-sensaai-sanctions"
+  namespace: "{{ tpl .Values.namespace . }}"
+  labels:
+    app: "{{ .Release.Name }}-sensaai-sanctions"
+    app.kubernetes.io/managed-by: {{.Release.Service | quote }}
+    app.kubernetes.io/instance: {{.Release.Name | quote }}
+    helm.sh/chart: "{{.Chart.Name}}-{{.Chart.Version}}"
+  annotations:
+    secret.reloader.stakater.com/reload: "{{ .Release.Name }}-sensaai-sanctions,{{ .Release.Name }}-sensaai-users"
+spec:
+  selector:
+    matchLabels:
+      app: "{{ .Release.Name }}-sensaai-sanctions-pod"
+  replicas: {{ .Values.pod.replicas }}
+  minReadySeconds: {{ .Values.pod.minReadySeconds }}
+  strategy:
+    type: "{{ .Values.pod.strategy.type }}"
+    rollingUpdate:
+      maxUnavailable: {{ .Values.pod.strategy.rollingUpdate.maxUnavailable }}
+      maxSurge: {{ .Values.pod.strategy.rollingUpdate.maxSurge }}
+  template:
+    metadata:
+      namespace: "{{ tpl .Values.namespace . }}"
+      labels:
+        app: "{{ .Release.Name }}-sensaai-sanctions-pod"
+
+    spec:
+
+      {{ include "define.topology.spread.constraints" . | indent 4 }}
+
+      hostname: "{{ .Release.Name}}-sensaai-sanctions"
+      terminationGracePeriodSeconds: 1
+
+      securityContext:
+        runAsUser: 200
+        runAsGroup: 200
+        fsGroup: 200
+        fsGroupChangePolicy: OnRootMismatch
+
+{{- include "image.pull.secrets" . | nindent 6 }}
+
+      initContainers:
+      - name: init-sensaai-sanction
+        image: "{{ tpl .Values.pod.dockerRegistryName . }}/{{ .Values.pod.imageRepository }}:{{ .Values.pod.imageTag }}"
+        imagePullPolicy: IfNotPresent
+
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+
+        volumeMounts:
+        - name: {{ .Release.Name }}-tmp-resources
+          mountPath: /tmp/resources
+        - name: {{ .Release.Name }}-sensaai-users
+          mountPath: /server/resources/password.json
+          subPath: password.json
+        - name: {{ .Release.Name}}-sensaai-sanctions-cert
+          mountPath: /server/resources/server.key
+          subPath: server.key
+        - name: {{ .Release.Name}}-sensaai-sanctions-cert
+          mountPath: /server/resources/server.crt
+          subPath: server.crt
+        - name: {{ .Release.Name }}-tmp-log
+          mountPath: /server/logs
+
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+            cp -r /server/resources/. /tmp/resources
+            echo "Update config.properties..."
+            sed -r -i -e "s/^(.+LOG_TO_FILE.+)(=)(.+)(True|False)/\1\2\3False/" /tmp/resources/config.properties
+
+            {{- if .Values.serverConfig }}
+              {{- range $param, $value := .Values.serverConfig }}
+            sed -r -i -e 's|^(.+{{ $param }}.+)(=)(.+)|\1\2 {{ $value }}|' /tmp/resources/config.properties
+              {{- end }}
+            {{- end }}
+
+            {{- if .Values.appConfig }}
+              {{- range $param, $value := .Values.appConfig }}
+            sed -r -i -e 's|^(.+{{ $param }}.+)(=)(.+)|\1\2 {{ $value }}|' /tmp/resources/config.properties
+              {{- end }}
+            {{- end }}
+
+            cat /tmp/resources/config.properties
+
+      - name: encode-pass
+        image: "{{ tpl .Values.pod.dockerRegistryName . }}/{{ .Values.pod.imageRepository }}:{{ .Values.pod.imageTag }}"
+        imagePullPolicy: IfNotPresent
+
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+
+        volumeMounts:
+        - name: {{ .Release.Name }}-tmp
+          mountPath: /tmp
+        - name: {{ .Release.Name }}-tmp-resources
+          mountPath: /server/resources
+        - name: {{ .Release.Name}}-sensaai-sanctions-cert
+          mountPath: /server/resources/server.key
+          subPath: server.key
+        - name: {{ .Release.Name}}-sensaai-sanctions-cert
+          mountPath: /server/resources/server.crt
+          subPath: server.crt
+        - name: {{ .Release.Name }}-tmp-log
+          mountPath: /server/logs
+
+        command:
+          - /bin/bash
+          - -exec
+          - |
+            set +x
+
+            cd /server
+            python - <<EOF
+            import os.path
+            from common.auth import OAuthForm, Token, AuthProvider
+            auth_provider = AuthProvider()
+            auth_provider.hash_plain_passwords()
+            EOF
+
+      containers:
+      - name: sensaai-sanctions
+        image: "{{ tpl .Values.pod.dockerRegistryName . }}/{{ .Values.pod.imageRepository }}:{{ .Values.pod.imageTag }}"
+        imagePullPolicy: IfNotPresent
+
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+
+        {{- if eq (tpl .Values.pod.useResourceConstraints .) "true" }}
+        resources:
+          requests:
+            memory: {{ .Values.pod.resources.requests.memory }}
+            cpu: {{ .Values.pod.resources.requests.cpu }}
+          limits:
+            memory: {{ .Values.pod.resources.limits.memory }}
+            cpu: {{ .Values.pod.resources.limits.cpu }}
+        {{- end }}
+
+        ports:
+          - name: https
+            containerPort: 5050
+            protocol: TCP
+
+        volumeMounts:
+        - name: {{ .Release.Name }}-tmp
+          mountPath: /tmp
+        - name: {{ .Release.Name }}-tmp-resources
+          mountPath: /server/resources
+        - name: {{ .Release.Name }}-tmp-application-cache
+          mountPath: /home/netreveal/.cache
+        - name: {{ .Release.Name }}-tmp-application-cache
+          mountPath: /home/netreveal/.config
+
+        {{- if .Values.pod.startupProbe }}
+        startupProbe:
+          exec:
+            command:
+              - /bin/bash
+              - -exec
+              - |
+                ps -fe | grep -v grep | grep server.py || exit 10
+
+          {{- toYaml .Values.pod.startupProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.readinessProbe }}
+        readinessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - -exec
+              - |
+                ps -fe | grep -v grep | grep server.py || exit 10
+
+          {{- toYaml .Values.pod.readinessProbe | nindent 10 }}
+        {{- end }}
+        {{- if .Values.pod.livenessProbe }}
+        livenessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - -exec
+              - |
+                ps -fe | grep -v grep | grep server.py || exit 10
+
+          {{- toYaml .Values.pod.livenessProbe | nindent 10 }}
+        {{- end }}
+
+      volumes:
+        - name: {{ .Release.Name }}-tmp
+          emptyDir: {}
+        - name: {{ .Release.Name }}-tmp-resources
+          emptyDir: {}
+        - name: {{ .Release.Name }}-tmp-log
+          emptyDir: {}
+        - name: {{ .Release.Name }}-tmp-application-cache
+          emptyDir: {}
+        {{- include "user.secret.definition" . | indent 6 }}
+        {{- include "certificate.secret.definition" . | indent 6 }}

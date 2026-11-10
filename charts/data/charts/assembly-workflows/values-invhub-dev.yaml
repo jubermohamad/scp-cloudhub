@@ -1,0 +1,326 @@
+# ============================================================================
+# invhub-dev (dev-assembly @ invhub-dev-uksouth-aks) — CANONICAL values.
+# "Assembly next to InvHub" drop-in: https://assembly.invhub.fseng.net
+#
+#   helm upgrade --install assembly ./helm/assembly-workflows \
+#     -n dev-assembly --create-namespace \
+#     -f helm/assembly-workflows/values-invhub-dev.yaml \
+#     --set image.tag=<release>        # pin a release; NEVER a moving tag
+#
+# Shared-cluster deltas (vs values-dev):
+#   * APISIX on its own internal Azure LB (not shared nginx, no public IP; Azure
+#     assigns the address — don't pin one).
+#   * No nodeSelector — the single node pool is unlabeled, so any selector strands
+#     pods Pending.
+#   * networkPolicies OFF (runbook-proven): default-deny + same-namespace-only allow
+#     breaks the internal-LB→APISIX path and kubelet probes on this shared cluster.
+#   * TLS terminates at APISIX from Secret `apisix-tls` (provision out of band;
+#     runbook covers renewal); drives KEYCLOAK_EXPECTED_ISSUER.
+#   * InvHub contract: copilot CORS origin, SSRF + webhook-run allowlists, Keycloak
+#     flows integration (workflow-canvas ROPC client + invhub_service_user).
+#
+# infra.enabled MUST stay true — an upgrade that flips it prunes the in-cluster
+# Postgres (DB-wipe class of incident). Runtime secrets are `ref+op://` references
+# into the 1Password `Assembly` item (section `dev-assembly-eng` + `common`), resolved
+# by `vals eval` in deploy.yml before helm. A plain `helm -f` without vals fails
+# render (unresolved-ref guard); render-only escape hatch:
+# --set validation.allowPlaceholders=true.
+# ============================================================================
+
+global:
+  environment: development
+
+image:
+  # AAD role assignment for managed-identity pull is not self-serviceable on
+  # this shared cluster; provision an ACR pull secret via the chart instead.
+  createPullSecret:
+    enabled: true
+    # ACR pull-token pair from the `common` section of the 1Password `Assembly`
+    # item; `vals eval` (deploy.yml) resolves them before helm.
+    username: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/common/image__createPullSecret__username
+    password: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/common/image__createPullSecret__password
+  pullSecrets:
+    - name: acr-secret
+
+rollout:
+  noSurge: true
+
+# Explicit on purpose: an upgrade that omits this value must never flip the
+# release to external-infra mode and prune the in-cluster Postgres.
+infra:
+  enabled: true
+  # Single-pool cluster without workload labels — see header.
+  nodeSelector: {}
+  postgres:
+    password: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/infra__postgres__password
+    storage: 20Gi
+    resources:
+      requests: { memory: 768Mi, cpu: 200m }
+      limits: { memory: 2Gi }
+  redis:
+    resources:
+      requests: { memory: 256Mi, cpu: 50m }
+      limits: { memory: 1Gi, cpu: 500m }
+  keycloak:
+    adminPassword: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/infra__keycloak__adminPassword
+    resources:
+      requests: { memory: 384Mi, cpu: 50m }
+    # InvHub flows integration: seeds + converges the public ROPC
+    # workflow-canvas client and the invhub_service_user realm user (see
+    # values.yaml for the mechanism; the reconcile Job also heals the
+    # frontend client's publicHostname redirect/webOrigins drift on every
+    # upgrade). Password contract: secrets.invhubServiceUserPassword below.
+    flowsIntegration:
+      enabled: true
+      webOrigins:
+        - https://copilot.invhub.fseng.net
+  temporal:
+    # ⚠ IMMUTABLE once the Temporal DB is initialized (dev-assembly was
+    # created with 256; changing it against an existing DB bricks Temporal).
+    numHistoryShards: 256
+    dynamicConfig:
+      perfOptimized: true
+    gomaxprocs: 2
+    resources:
+      requests: { memory: 768Mi, cpu: 500m }
+      limits: { memory: 3Gi }
+  postgresTemporal:
+    # dev-assembly runs a DEDICATED Temporal Postgres (32Gi PVC, in use since
+    # install); Temporal connects to it, so it MUST stay enabled — disabling tears
+    # the pod down and repoints Temporal at the main DB (history loss). Its
+    # password inherits infra.postgres.password (supplied at deploy from 1Password).
+    enabled: true
+    storage: 32Gi
+    storageClass: managed-csi
+    syncCommitOff: true
+    sharedBuffers: 2GB
+    nodeSelector: {}
+    resources:
+      requests: { memory: 768Mi, cpu: 250m }
+      limits: { memory: 4Gi, cpu: "2" }
+
+minio:
+  enabled: true
+
+# ref+op:// references into the `dev-assembly-eng` section of the 1Password `Assembly`
+# item; `vals eval` (deploy.yml) resolves them before helm.
+secrets:
+  jwtSecret: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__jwtSecret
+  fernetKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__fernetKey
+  internalServiceApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__internalServiceApiKey
+  sandboxInternalServiceApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__sandboxInternalServiceApiKey
+  workspaceManagerInternalServiceApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__workspaceManagerInternalServiceApiKey
+  # Initial Keycloak admin (bootstrap-admin) seeded into the realm import.
+  bootstrapAdminPassword: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__bootstrapAdminPassword
+  llmGateway:
+    userKeysInternalApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__llmGateway__userKeysInternalApiKey
+    adminKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__llmGateway__adminKey
+  # Azure Foundry (InvHub narrative model) endpoint + key for this instance.
+  azureFoundry:
+    url: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__azureFoundry__url
+    apiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__azureFoundry__apiKey
+  # Provider-owned ROPC credential (assembly's Keycloak). MUST equal InvHub's
+  # `flows` Secret value, or the flows Job locks InvHub out.
+  invhubServiceUserPassword: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__invhubServiceUserPassword
+  # web_search agent tool (Tavily). Reused from assembly-aks-dev's key -- shared
+  # usage/rate-limits across environments, not a distinct account.
+  tavilyApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/secrets__tavilyApiKey
+
+apisix:
+  # Two supported ways to terminate TLS on this shared cluster — pick per your
+  # constraints (both fix the old inline-cert-in-ConfigMap workaround: no private
+  # key in a ConfigMap, no render-time lookup). See docs/invhub-dev-deployment-runbook.md
+  # §2 for the original internal-LB decision and its blast-radius rationale.
+  #
+  # DEFAULT below = mode "apisix" + a dedicated INTERNAL Azure LB (runbook §2's
+  # isolated choice, and what the live cluster already runs): assembly is its own
+  # front door on the internal LB; APISIX terminates TLS from apisix-tls, which an
+  # init-container splices into `ssls` at startup. Zero blast radius for cluster
+  # neighbours, no dependency on a controller we don't own, and NO DNS change
+  # (assembly.invhub.fseng.net already resolves to this LB).
+  #   PREREQS: apisix-tls Secret in-namespace — a cert-manager Certificate for
+  #   assembly.invhub.fseng.net (issuer letsencrypt-production, DNS-01) or the
+  #   synced *.invhub.fseng.net wildcard. Rotation is picked up on pod restart.
+  #
+  # ALTERNATIVE = mode "ingress": a plain ClusterIP behind the cluster's shared
+  # ingress-nginx, which terminates TLS (cert-manager ingress-shim, native
+  # renewal — how copilot.invhub.fseng.net etc. do TLS). Cleaner, but couples to a
+  # controller we don't own AND needs assembly.invhub.fseng.net REPOINTED to the
+  # ingress-nginx IP in the shared invhub.fseng.net DNS zone (an IH-side change).
+  # Swap the `service` + `tls` blocks below for:
+  #   service:
+  #     type: ClusterIP
+  #   tls:
+  #     enabled: true
+  #     mode: ingress
+  #     publicHostname: assembly.invhub.fseng.net
+  #     ingress:
+  #       className: nginx
+  #       clusterIssuer: letsencrypt-production
+  # (Guarded by test_overlay_ingress_alternative_renders.)
+  service:
+    type: LoadBalancer
+    # Azure INTERNAL LB — additive frontend IP on the shared LB; reachable from
+    # the InvHub VNet only. No loadBalancerIP: let Azure allocate.
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+  tls:
+    enabled: true
+    mode: apisix
+    publicHostname: assembly.invhub.fseng.net
+    existingSecret: apisix-tls
+  cors:
+    # REPLACES the chart-default list (helm lists never merge) — restate the
+    # defaults, then allow ANY *.invhub.fseng.net subdomain for the browser-direct
+    # narrative + get-token calls (copilot today; new InvHub subdomains need no chart
+    # edit). Anchored ^…$ so ONLY exact <sub>.invhub.fseng.net hosts match — not
+    # invhub.fseng.net.evil.com etc. NB: feeds the GLOBAL cors block too, which is
+    # allow_credential:true — so every invhub.fseng.net subdomain is trusted for
+    # credentialed cross-origin requests (fine for the org-controlled zone).
+    allowOriginsRegex:
+      - '^http://localhost(?::(?:80|3000|5173))?$'
+      - '^https://[^/]+\.app\.github\.dev$'
+      - '^https://[^/]+\.invhub\.fseng\.net$'
+
+# SSRF-guard bypass for the api_request/webhook targets that live inside the
+# VNet — assembly's own namespace, InvHub copilot's namespace, and the
+# invhub.fseng.net zone (public DNS, but every record resolves to a private
+# 10.232.x address from inside the cluster, so it hits the private-IP block).
+#
+# Domain wildcards, NOT a host list: a new in-cluster API (the SCP TCP test
+# services on :3001/:3002, the next one after that) then needs no chart edit and
+# no worker rollout. Scoped to these two namespaces rather than
+# *.svc.cluster.local — this is a shared cluster and other teams' namespaces
+# stay closed. Platform infra (postgres/keycloak/redis/temporal/minio/assembly-*)
+# is never opened by a wildcard; see values.yaml.
+urlValidation:
+  allowHosts: >-
+    *.dev-assembly.svc.cluster.local,*.dev-copilot.svc.cluster.local,*.invhub.fseng.net
+  # Merged with the baseline above — for a domain you'd rather open WITHOUT a
+  # commit + chart release: edit the 1Password field, re-run deploy.yml. The field
+  # exists and is empty, which resolves to "" and renders nothing, so this is inert
+  # until someone puts a hostname in it. Same grammar as allowHosts.
+  extraAllowHosts: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/urlValidation__extraAllowHosts
+
+# ----------------------------------------------------------------------------
+# Dev-tier sizing carried from values-dev.yaml — 1 replica/service where safe,
+# trimmed resources, HPA off — to minimize footprint on the shared cluster.
+# ----------------------------------------------------------------------------
+agents:
+  replicas: 1
+  resources:
+    requests: { cpu: 150m }
+    limits: { cpu: "1" }
+  hpa:
+    enabled: false
+
+agentsWorker:
+  replicas: 6
+  resources:
+    requests: { memory: 256Mi, cpu: 100m }
+    limits: { memory: 1Gi }
+  temporal:
+    maxConcurrentActivities: 300
+    maxConcurrentWorkflowTasks: 200
+    maxCachedWorkflows: 384
+    disableResourceTuner: true
+    # Poller floors via the dedicated keys ONLY — re-declaring these through
+    # extraEnv duplicates the chart-emitted env names, which server-side
+    # apply rejects (see values-dev.yaml).
+    workflowTaskPollerMin: 6
+    workflowTaskPollerInitial: 10
+    activityTaskPollerMin: 8
+    activityTaskPollerInitial: 12
+  fastCodeActivityTimeout: 60
+  extraEnv:
+    - name: ASSEMBLY_INLINE_SIMPLE_CALL_WORKFLOW
+      value: "true"
+    - name: ASSEMBLY_INLINE_CONDITION_NODES
+      value: "true"
+    - name: ASSEMBLY_LOCAL_CUSTOM_CODE_NODES
+      value: "true"
+    - name: ASSEMBLY_TRUSTED_CODE_EXECUTOR_MAX_WORKERS
+      value: "12"
+    - name: ASSEMBLY_WORKFLOW_STATUS_BATCH_CONCURRENCY
+      value: "150"
+
+agentsCodeWorker:
+  replicas: 2
+  codeExecutionTarget: sandbox-service
+  trustedCodeInprocess: true
+  resources:
+    requests: { memory: 256Mi, cpu: 100m }
+    limits: { memory: 1Gi }
+  fastCodeActivityTimeout: 60
+  extraEnv:
+    - name: ASSEMBLY_TRUSTED_CODE_EXECUTOR_MAX_WORKERS
+      value: "12"
+
+agentsSubflowWorker:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 100m }
+    limits: { memory: 768Mi }
+  fastCodeActivityTimeout: 60
+  extraEnv:
+    - name: ASSEMBLY_TRUSTED_CODE_INPROCESS
+      value: "true"
+    - name: ASSEMBLY_TRUSTED_CODE_EXECUTOR_MAX_WORKERS
+      value: "12"
+
+llmGateway:
+  replicas: 1
+  resources:
+    requests: { memory: 192Mi, cpu: 50m }
+    limits: { cpu: 500m }
+  # Every deployment actually live on invhub-shared-oai-swedencentral (the
+  # resource secrets.azureFoundry.url points at here), captured 2026-08-12 via
+  # `az cognitiveservices account deployment list`. Re-run that and update the
+  # 1Password field when the shared resource's deployments change; this ref
+  # reaches the gateway with no chart release.
+  availableModels: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/llmGateway__availableModels
+
+# Single replica during initial install to avoid the two-replica alembic race;
+# scale up after rollout.
+userProject:
+  replicas: 1
+
+frontend:
+  replicas: 1
+
+sandboxExecute:
+  replicas: 2
+  resources:
+    requests: { memory: 1Gi, cpu: 100m }
+    limits: { memory: 3Gi }
+
+sandboxTrigger:
+  resources:
+    requests: { memory: 256Mi, cpu: 50m }
+  # InvHub drop-in: the flows service user may invoke deployments it does not
+  # own on the /run + webhook path only, run delegated to the deployment
+  # owner. Redundant with the chart's auto-derivation from
+  # infra.keycloak.flowsIntegration.serviceUser (commit 25706613) as long as
+  # this matches that value -- kept as a 1Password ref (empty for now) so
+  # ADDITIONAL subjects can be added without a chart release, not because this
+  # instance needs one today.
+  webhookRunAllowlist: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/dev-assembly-eng/sandboxTrigger__webhookRunAllowlist
+  extraEnv:
+    - name: DEPLOYMENT_RUN_RATE_LIMIT_PER_MINUTE
+      value: "0"
+
+scheduling:
+  # Single-pool cluster — see header.
+  nodeSelector: {}
+
+# OFF (runbook-proven for this shared cluster): default-deny + same-namespace-only allow
+# match POD sources, so node/kubelet probes and the LB path to non-gateway pods are not
+# covered — that combination took dev-assembly dark. The gateway itself is now handled
+# unconditionally by `allow-apisix-public-ingress`, but that alone was never the whole
+# gap, so keep NetworkPolicies off here until the node-sourced path is validated.
+networkPolicies:
+  enabled: false
+
+podDisruptionBudgets:
+  enabled: false

@@ -1,0 +1,44 @@
+<dbspec name="AccountUpdate" comments="Accounts from ACCOUNTS table">
+
+    <!-- Read Account data from ACCOUNTS table -->
+    <source-query>
+		SELECT * 
+		FROM (
+		SELECT
+			 RECORD_ID as RecordId	 
+			,RUN_DATE as RunDate
+			,ACCOUNT_ID as AccountID
+			,CUSTOMER_ID as CustomerID
+			,CUSTOMER_SEGMENT as CustomerSegment
+			,ORGANISATIONAL_UNIT as  OrganisationalUnit
+			,DATE_OPENED as DateOpened
+			,DATE_CLOSED as DateClosed
+			,ACCOUNT_BALANCE_BASE as AccountBalanceBase
+		FROM V_SM_ACCOUNT_UPDATE
+		) V_SM_ACCOUNT_UPDATE
+		WHERE @WHERE@
+	</source-query>
+
+	<!-- Not supproted
+	<limit-field name="RunDate" operator="between"/>
+	-->
+	<!-- Navigation Fields -->
+	<timefield>RunDate</timefield>
+	<!--timefieldIncludeTime>false</timefieldIncludeTime-->
+	<!-- Not supproted
+	<keyfield>RecordId</keyfield>
+	-->
+	
+	<column fieldname="RunDate" dataType="DATE" columnname="RunDate" />
+	<!-- Not supproted
+	<column fieldname="RunDate" dataType="DATE" columnname="RUN_DATE" />
+	<column fieldname="RecordId" dataType="DBTEXT" columnname="RECORD_ID" />
+	<column fieldname="AccountID" dataType="DBTEXT" columnname="ACCOUNT_ID" />
+	<column fieldname="CustomerID" dataType="DBTEXT" columnname="CUSTOMER_ID" />
+	<column fieldname="CustomerSegment" dataType="DBTEXT" columnname="CUSTOMER_SEGMENT" />
+	<column fieldname="OrganisationalUnit" dataType="DBTEXT" columnname="ORGANISATIONAL_UNIT" />
+	<column fieldname="DateOpened" dataType="DBDATE" columnname="DATE_OPENED" />
+	<column fieldname="DateClosed" dataType="EXPIRYDATE" columnname="DATE_CLOSED" />
+	<column fieldname="AccountBalanceBase" dataType="DBAMOUNT" columnname="ACCOUNT_BALANCE_BASE" />
+	-->
+</dbspec>

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cn-postgres
+description: CloudNativePG configuration for Detection Hub
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

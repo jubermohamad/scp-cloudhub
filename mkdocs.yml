@@ -1,0 +1,26 @@
+site_name: CloudHub Beta Launch Docs
+site_description: CloudHub launch runbooks and operational documentation.
+
+nav:
+  - Home: index.md
+  - Beta Launch:
+      - Overview: beta-launch/README.md
+      - Access and Secrets: beta-launch/01-access-and-secrets.md
+      - Create the AKS Cluster: beta-launch/02-create-the-aks-cluster.md
+      - Deploy common-res: beta-launch/03-deploy-common-res.md
+      - Deploy SRI Workloads: beta-launch/04-deploy-sri-workloads.md
+      - Deploy NetReveal: beta-launch/05-deploy-netreveal.md
+      - Approvals and PRs: beta-launch/06-approvals-and-prs.md
+      - Customer Overlay: beta-launch/07-customer-overlay.md
+  - Existing References:
+      - AKS Deploy: AKS_DEPLOY.md
+      - Entra ID Login: LOGIN_ENTRAID.md
+      - GPU Compute Network Onboarding: gpu-compute-network-onboarding.md
+      - GPU Compute Architecture Validation: gpu-compute-architecture-validation.md
+      - GitHub Actions Deployment Workflows: github-actions-deployment-workflows.md
+      - Container Release Process: container-release-process.md
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true

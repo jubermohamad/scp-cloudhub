@@ -1,0 +1,63 @@
+imageRepository: "nri-nrod-k8s-aap"
+imageTag: "9.5.0.1-20260206091250"
+
+fullnameOverride: ""
+nameOverride: ""
+
+jdbc:
+  user: "aapsparkuser"
+  password: ""
+  encryptedPassword: ""
+
+aap:
+  admin_username: "admin"
+  admin_password: ""
+  memoryLimit: "2048"
+  coreLimit: 2
+
+ssl:
+  use_ssl: true
+
+jks:
+  path: "/opt/advanced-analytics-platform/conf/server.jks"
+  encryptedPassword: ""
+
+# To add more solutions, split it by comma
+solutions: '"AML"'
+
+job:
+  backofflimit: "0"
+  ttlSecondsAfterFinished: "86400"
+
+pod:
+  replicas: 1
+  resources:
+    requests:
+      memory: "4Gi"
+      cpu: "500m"
+    limits:
+      memory: "6Gi"
+      cpu: "1000m"
+  livenessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 100
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 5
+  readinessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 160
+    periodSeconds: 5
+    successThreshold: 1
+    timeoutSeconds: 10
+  # startupProbe:
+  #   failureThreshold: 3
+  #   initialDelaySeconds: 160
+  #   periodSeconds: 5
+  #   successThreshold: 1
+  #   timeoutSeconds: 10
+
+storage:
+  nfs_server_dir: "/var/nfs_k8s/aap"
+  storage: "5Gi"
+  hostPathMinikube: "/opt/netreveal/aap"

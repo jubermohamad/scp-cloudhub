@@ -1,0 +1,19 @@
+apiVersion: v2
+name: tailscale
+description: >-
+  CloudHub-vendored Tailscale mesh VPN / subnet router. Wraps the upstream
+  tailscale-operator chart and includes the SCP Connector/ProxyClass chart
+  (vendored from templated-overrides/raw-yaml-charts/tailscale-on-scp) so
+  CloudHub Native deployments have no dependency on SymphonyFS/scripts.
+type: application
+version: 1.0.0
+appVersion: "1.78"
+dependencies:
+  - name: tailscale-operator
+    version: "1.78.3"
+    repository: https://pkgs.tailscale.com/helmcharts
+    condition: tailscale-operator.enabled
+  - name: tailscale-on-scp
+    version: "0.1.0"
+    repository: file://./charts/tailscale-on-scp
+    condition: tailscale-on-scp.enabled

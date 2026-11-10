@@ -1,0 +1,30 @@
+---
+# users can be added either through UI or through .Values.global.USERS variable.
+# they are added idempotently as part of configurer job
+# (templates/configurator.yaml)
+global:
+  USERS: |
+    [
+      {
+        \"email\":\"firstname.lastname@symphonyai.com\",
+        \"enabled\":true,
+        \"first_name\":\"Firstname\",
+        \"last_name\":\"Lastname\",
+        \"accessPolicyIds\": [
+          \"allAllAccess\"
+        ],
+        \"roleIds\": [
+          \"eventLoader\",
+          \"admin\",
+          \"finCrimeManager\",
+          \"investigator\",
+          \"amlInvestigator\",
+          \"cddInvestigator\",
+          \"customerScreeningInvestigator\",
+          \"paymentFraudInvestigator\",
+          \"disclosures\",
+          \"otherInvestigator\"
+        ],
+        \"username\":\"firstname.lastname\"
+      }
+    ]

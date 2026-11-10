@@ -1,0 +1,175 @@
+# ============================================================================
+# values-scp.yaml — standalone Assembly on SCP (Sensa Cloud Platform).
+# Assembly owns its APISIX gateway on a dedicated internal Azure LB (not fronted by
+# shared ingress-nginx). IH-AGNOSTIC by default: the InvHub Copilot integration knobs
+# are present but OFF (grep "InvHub:") — enable them to serve Copilot's Flows contract.
+# Deployed by pipeline-internal (helmfile); every REDACTED_* is injected at deploy
+# from 1Password (ref+op://…) — this file never carries a real credential.
+# Render-only: --set validation.allowPlaceholders=true.
+# Prerequisites (ACR + mirrored images, wildcard TLS, perimeter/DNS, StorageClasses,
+# and the privileged sandbox-execute PodSecurity ruling): see docs/scp-deployment.md.
+# ============================================================================
+
+global:
+  environment: production
+  # All BUNDLED third-party images (postgres, redis, keycloak, temporal*,
+  # minio/mc, apisix) pulled from the SCP mirror ACR — SCP does not auto-mirror
+  # docker.io/quay.io. Repo path + tag preserved (see aw.infraImage).
+  imageRegistry: REDACTED_SCP_ACR.azurecr.io
+
+image:
+  # First-party app images from the same mirror ACR; tag pinned at deploy time.
+  registry: REDACTED_SCP_ACR.azurecr.io
+  createPullSecret:
+    enabled: true
+    registry: REDACTED_SCP_ACR.azurecr.io
+    username: REDACTED_ACR_PULL_USERNAME
+    password: REDACTED_ACR_PULL_TOKEN
+  pullSecrets:
+    - name: acr-secret
+
+infra:
+  enabled: true
+  # SCP landing-zone pool is unlabeled; a workload=infra selector strands pods.
+  nodeSelector: {}
+  postgres:
+    password: REDACTED_POSTGRES_PASSWORD
+    # storageClass default is managed-csi — confirm it exists on the SCP AKS.
+  keycloak:
+    adminPassword: REDACTED_KEYCLOAK_ADMIN_PASSWORD
+    # InvHub: seed the workflow-canvas ROPC client + invhub_service_user (+ reconcile
+    # Job) so Copilot can authenticate; set webOrigins to the Copilot browser origin.
+    flowsIntegration:
+      enabled: false
+      webOrigins: []   # ["https://<copilot-host>"]
+  temporal:
+    dynamicConfig:
+      perfOptimized: true
+
+minio:
+  enabled: true
+  # NOT a secret, but it must be overridden: validate.yaml rejects the chart default
+  # `minioadmin` whenever global.environment is production/staging (as it is here), so
+  # leaving it unset fails the render even with every secret resolved.
+  rootUser: assemblyadmin
+  rootPassword: REDACTED_MINIO_ROOT_PASSWORD
+  # SCP: confirm the exact minio/mc versions you mirror — must be >= any minio ever run
+  # for this tenant (minio refuses to start on newer on-disk data → never downgrade).
+  image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+  mcImage: minio/mc:RELEASE.2025-08-13T08-35-41Z
+  # storageClass default is managed-csi — confirm it exists on the SCP AKS.
+
+secrets:
+  jwtSecret: REDACTED_JWT_SECRET
+  fernetKey: REDACTED_FERNET_KEY
+  internalServiceApiKey: REDACTED_INTERNAL_SERVICE_API_KEY
+  sandboxInternalServiceApiKey: REDACTED_INTERNAL_SERVICE_API_KEY
+  workspaceManagerInternalServiceApiKey: REDACTED_INTERNAL_SERVICE_API_KEY
+  # Seeded realm-admin (admin@assembly.dev), loginable via the public auth flow —
+  # required whenever infra.enabled=true. The chart rejects the repo default.
+  bootstrapAdminPassword: REDACTED_BOOTSTRAP_ADMIN_PASSWORD
+  llmGateway:
+    userKeysInternalApiKey: REDACTED_LLM_GATEWAY_USER_KEYS_INTERNAL_API_KEY
+    adminKey: REDACTED_LLM_GATEWAY_ADMIN_KEY
+  # InvHub: the invhub_service_user password — MUST equal InvHub's `flows` Secret
+  # (assembly owns it). Empty = none; set the op:// ref when integrating.
+  invhubServiceUserPassword: ""
+
+externalInfra:
+  keycloak:
+    # Assembly self-hosts its own realm; now fully parametrized (seed + gateway).
+    realm: assembly-platform
+
+apisix:
+  service:
+    # Every SCP cluster runs a shared ingress-nginx (docs/scp-deployment.md §4 —
+    # confirmed by reading pipeline-internal's common-res app, deployed once per
+    # cluster) -- APISIX sits behind it as a plain in-cluster Service, no
+    # per-instance Azure LB. Manually verified end-to-end on the SCP pentest
+    # cluster (values-pen-test.yaml uses this same shape).
+    type: ClusterIP
+  tls:
+    enabled: true
+    # ingress-nginx terminates TLS; the cert is a pre-created kubernetes.io/tls
+    # Secret delivered by the pipeline (name is per-install). cert-manager is not
+    # usable on SCP — no ACME ClusterIssuer exists. See docs/scp-deployment.md.
+    mode: ingress
+    publicHostname: assembly-REDACTED_TENANT.symphonyai.cloud
+    existingSecret: REDACTED_WILDCARD_TLS_SECRET
+    ingress:
+      className: nginx
+
+# OFF: a shared-cluster NP posture needs its own validation on SCP.
+#
+# The GATEWAY path is now covered unconditionally (`allow-apisix-public-ingress` opens the
+# apisix pod's 9080/9443 to any source). What remains unvalidated is everything else:
+# default-deny and the same-namespace allow both match POD sources, so a kubelet health
+# probe — which originates from the NODE, not a pod — and the LB path to non-gateway pods
+# are still uncovered. That is what took dev-assembly dark, and no values flag fixes it;
+# it needs a node/CIDR-sourced allow validated against the cluster's CNI.
+# Start off; enable + validate as a follow-up.
+networkPolicies:
+  enabled: false
+
+podDisruptionBudgets:
+  enabled: false
+
+# --- InvHub Copilot integration (optional; all off by default) ---
+# Also enable infra.keycloak.flowsIntegration + secrets.invhubServiceUserPassword
+# above, and add the Copilot origin to apisix.cors.allowOriginsRegex (that list
+# REPLACES the chart defaults — see values-invhub-dev.yaml for the exact pattern).
+sandboxTrigger:
+  # InvHub: let invhub_service_user invoke deployments it doesn't own via the webhook
+  # (owner-delegation). Set to the service-user email when integrating.
+  webhookRunAllowlist: ""
+urlValidation:
+  # InvHub: hosts the SSRF guard may reach for Copilot callbacks (api_request
+  # nodes). Public hosts never need listing — this only exempts targets that
+  # resolve into private space. Prefer a wildcard over one entry per service:
+  #   *.<copilot-ns>.svc.cluster.local,*.<customer-domain>
+  allowHosts: ""
+  # Merged with allowHosts, for the customer's own internal zones — which should
+  # NOT be committed here. Point at the install's secret store and let `vals`
+  # resolve it at deploy (it fails closed if the field is missing):
+  #   ref+op://<vault>/Assembly/<section>/urlValidation__extraAllowHosts
+  extraAllowHosts: ""
+
+# ----------------------------------------------------------------------------
+# Dev-tier sizing baseline (mirror of values-dev). Scale per tenant load.
+# ----------------------------------------------------------------------------
+agents:
+  replicas: 1
+  hpa:
+    enabled: false
+
+agentsWorker:
+  replicas: 2
+
+agentsCodeWorker:
+  replicas: 1
+  # Route code execution to the sandbox service so the code-worker isn't privileged.
+  # NOTE: assembly-sandbox-execute is STILL unconditionally privileged — a locked-down
+  # SCP PodSecurity namespace will reject it; clear a PodSecurity exception with CI&E first.
+  codeExecutionTarget: sandbox-service
+
+agentsSubflowWorker:
+  enabled: true
+  replicas: 1
+
+llmGateway:
+  replicas: 1
+  # Platform-wide model list. The names must be real deployments on the tenant's provider
+  # (secrets.azureFoundry.url), so it is per-install: leave empty to keep the service's
+  # built-in list, or point at the install's secret store so it can change without a chart
+  # release — the gateway converges the stored value on every start:
+  #   availableModels: ref+op://<vault>/Assembly/<section>/llmGateway__availableModels
+  availableModels: ""
+
+userProject:
+  replicas: 1
+
+frontend:
+  replicas: 1
+
+sandboxExecute:
+  replicas: 1

@@ -1,0 +1,67 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+# Core API Configuration
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/dethub-ext-api
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+# Deployment configuration
+replicaCount: 1
+
+sparkOperatorEndpoint: ""
+
+notification:
+  defaults:
+    selector: "bulk"
+    runTemplate: "small_bulk_info-template"
+    processName: "ProcessingAndTagging"
+    appConfigFile: "REST"
+
+minio:
+  templatesBucketName: sparktemplates
+  configBucketName: conf
+
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "200m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+# Service configuration
+service:
+  type: ClusterIP  # Internal service, external access via Ingress
+  port: 9090
+
+probes:
+  startup:
+    enabled: true
+    type: http
+    httpPath: /actuator/health/liveness
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  liveness:
+    enabled: true
+    type: http
+    httpPath: /actuator/health/liveness
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+  readiness:
+    enabled: true
+    type: http
+    httpPath: /actuator/health/readiness
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+    successThreshold: 1

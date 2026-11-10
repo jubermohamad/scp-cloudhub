@@ -1,0 +1,65 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-postgres-client-cert
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    cnpg.io/reload: ""
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: postgres-client-cert
+  namespace: {{ .Values.global.namespace }}
+spec:
+  secretName: {{ .Release.Name }}-postgres-client-cert
+  usages:
+    - client auth
+  duration: {{ .Values.global.certificate.duration }}
+  renewBefore: {{ .Values.global.certificate.renewBefore }}
+  commonName: streaming_replica
+  subject:
+    organizations: {{ .Values.global.certificate.subject.organizations }}
+    countries: {{ .Values.global.certificate.subject.countries }}
+    organizationalUnits: {{ .Values.global.certificate.subject.organizationalUnits }}
+    localities: {{ .Values.global.certificate.subject.localities }}
+    provinces: {{ .Values.global.certificate.subject.provinces }}
+  issuerRef:
+    name: {{ .Values.global.issuer.ca.name }}
+  secretTemplate:
+      annotations:
+        reloader.stakater.com/match: "true"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-postgres-server-cert
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    cnpg.io/reload: ""
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: postgres-server-cert
+  namespace: {{ .Values.global.namespace }}
+spec:
+  secretName: {{ .Release.Name }}-postgres-server-cert
+  usages:
+    - server auth
+  duration: {{ .Values.global.certificate.duration }}
+  renewBefore: {{ .Values.global.certificate.renewBefore }}
+  dnsNames:
+  {{- include "postgresql.dnsNames" . | nindent 2 }}
+  subject:
+    organizations: {{ .Values.global.certificate.subject.organizations }}
+    countries: {{ .Values.global.certificate.subject.countries }}
+    organizationalUnits: {{ .Values.global.certificate.subject.organizationalUnits }}
+    localities: {{ .Values.global.certificate.subject.localities }}
+    provinces: {{ .Values.global.certificate.subject.provinces }}
+  issuerRef:
+    name: {{ .Values.global.issuer.ca.name }}
+  secretTemplate:
+      annotations:
+        reloader.stakater.com/match: "true"

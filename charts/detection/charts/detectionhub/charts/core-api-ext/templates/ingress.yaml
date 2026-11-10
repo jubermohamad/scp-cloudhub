@@ -1,0 +1,43 @@
+{{- if (index .Values "ingress" "enabled") }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "core-api-ext.fullname" . }}
+  labels:
+    {{- include "core-api-ext.labels" . | nindent 4 }}
+  {{- $customerIPs := .Values.ingress.ingressAllowList.customerIPs }}
+  {{- $platformIPs := .Values.ingress.ingressAllowList.platformIPs }}
+  {{- $allIPs := concat $customerIPs $platformIPs | uniq | compact }}
+  {{- if or .Values.ingress.annotations (and $allIPs (gt (len $allIPs) 0)) }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if and $allIPs (gt (len $allIPs) 0) }}
+    nginx.ingress.kubernetes.io/whitelist-source-range: {{ join ", " $allIPs | quote }}
+    {{- end }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "core-api-ext.fullname" $ }}
+                port:
+                  number: {{ $.Values.service.port }}
+          {{- end }}
+    {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

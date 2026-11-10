@@ -1,0 +1,7 @@
+apiVersion: v2
+name: nr-custom-metrics
+description: A Helm chart for Kubernetes
+type: application
+# netreveal chart version: 1.0.19
+version: 1.0.10
+appVersion: "9.4.0"

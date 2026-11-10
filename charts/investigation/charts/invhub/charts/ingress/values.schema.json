@@ -1,0 +1,27 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "annotations": {
+            "type": "object"
+        },
+        "enableGlobalTlsSecret": {
+            "type": "boolean"
+        },
+        "enabled": {
+            "type": "boolean"
+        },
+        "host": {
+            "type": "string"
+        },
+        "ingressClassName": {
+            "type": "string"
+        },
+        "service": {
+            "type": "array"
+        },
+        "tls": {
+            "type": "array"
+        }
+    }
+}

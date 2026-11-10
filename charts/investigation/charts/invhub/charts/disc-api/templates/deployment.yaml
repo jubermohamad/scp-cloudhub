@@ -1,0 +1,187 @@
+{{- $root := . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "disc-api.fullname" . }}
+  labels:
+    {{- include "disc-api.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "disc-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "disc-api.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "disc-api.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if include "disc-api.waitPermissionsNeeded" . | trim }}
+      initContainers:
+{{- include "disc-api.waitDependenciesInitContainer" . | nindent 8 }}
+{{- include "disc-api.waitTlsSecretsInitContainer" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: sensasecrets-volume
+              mountPath: /sensasecrets-volume
+          {{- if ne .Values.dbRootCert.secretName "" }}
+            - name: db-root-cert
+              mountPath: {{ .Values.dbRootCert.mountPath }}
+          {{- end }}
+          {{- if ne .Values.kafkaRootCert.secretName "" }}
+            - name: kafka-root-cert
+              mountPath: {{ .Values.kafkaRootCert.mountPath }}
+          {{- end }}
+          ports:
+            {{- range .Values.service.ports }}
+            - containerPort: {{ .port }}
+              protocol: {{ .protocol }}
+              name: {{ .name }}
+            {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Values.flowsConfigMapName }}
+            - secretRef:
+                name: {{ .Values.flowsSecretName }}
+          env:
+            - name: INVESTIGATION_HUB_SERVICE_ACCOUNT_EMAIL
+              value: {{ .Values.global.INVESTIGATION_HUB_SERVICE_ACCOUNT_EMAIL }}    
+            - name: INVESTIGATION_HUB_SERVICE_ACCOUNT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: invhub-service-api-keys
+                  key: investigation-hub-disclosures-service-user-api-key
+            {{- $sep := ((.Values.global).separateApiResponsibilities) | default false }}
+            {{- $apiBase := (((.Values.global).internalApiBaseUrl) | default (ternary "http://api-for-ui:3001" "http://api:3001" $sep)) | trimSuffix "/" }}
+            - name: INVESTIGATION_HUB_REST_API_URL
+              value: {{ $apiBase }}
+            - name: INVESTIGATION_HUB_GRAPHQL_API_URL
+              value: {{ printf "%s/graphql" $apiBase }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: sensa-global-secrets
+                  key: SENSA_DISC_DB_URL
+            - name: SENSA_JWT_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sensa-global-secrets
+                  key: SENSA_JWT_ACCESS_SECRET
+            - name: SENSA_JWT_REFRESH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sensa-global-secrets
+                  key: SENSA_JWT_REFRESH_SECRET
+            - name: KAFKA_BROKER
+              value: {{ .Values.global.SENSA_KAFKA_BOOTSTRAP }}              
+            - name: KAFKA_GROUP_ID
+              value: {{ .Values.global.KAFKA_GROUP_ID }}
+            - name: KAFKA_CONSUMER_GROUP_ID
+              value: {{ .Values.global.KAFKA_CONSUMER_GROUP_ID }} 
+            - name: SENSA_KAFKA_SSL
+              value: "{{ .Values.global.SENSA_KAFKA_SSL }}"
+            - name: MINIO_SSL_CA_PATH
+              value: "{{ .Values.global.MINIO_SSL_CA_PATH }}"              
+            - name: SENSA_KAFKA_SSL_CA_PATH
+              value: {{ .Values.global.SENSA_KAFKA_SSL_CA_PATH }}
+            - name: SENSA_KAFKA_MAX_BYTES
+              value: "{{ .Values.global.SENSA_KAFKA_MAX_BYTES }}"
+            - name: SENSA_KAFKA_INITIAL_RETRY_TIME
+              value: "{{ .Values.global.SENSA_KAFKA_INITIAL_RETRY_TIME }}"
+            - name: SENSA_KAFKA_RETRIES
+              value: "{{ .Values.global.SENSA_KAFKA_RETRIES }}"
+            - name: SENSA_KAFKA_SESSION_TIMEOUT
+              value: "{{ .Values.global.SENSA_KAFKA_SESSION_TIMEOUT }}"
+            - name: SENSA_KAFKA_HEARTBEAT_INTERVAL
+              value: "{{ .Values.global.SENSA_KAFKA_HEARTBEAT_INTERVAL }}"
+            - name: NODE_ENV
+              value: {{ .Values.global.NODE_ENV }}
+            - name: SENSA_LOG_LEVEL
+              value: {{ .Values.global.SENSA_LOG_LEVEL | default "warn" }}
+            - name: SENSA_S3_URL
+              valueFrom:
+                secretKeyRef:
+                  name: sensa-global-secrets
+                  key: SENSA_S3_URL
+            - name: DISCLOSURE_SUBMISSION_NAMESPACE
+              value: "{{ include "global.basename" . }}"
+            - name: FLOWS_INVHUB_BASE_URL
+              value: "{{ include "global.basename" . }}.{{ include "global.domain" . }}"
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: sensasecrets-volume
+          secret:
+            secretName: sensa-global-secrets
+      {{- if ne .Values.dbRootCert.secretName ""}}
+        - name: db-root-cert
+          secret:
+            secretName: {{ .Values.dbRootCert.secretName }}
+            items:
+              - key: {{ .Values.dbRootCert.key }}
+                path: {{ .Values.dbRootCert.key }}
+      {{- end }}
+
+      {{- if ne .Values.kafkaRootCert.secretName ""}}
+        - name: kafka-root-cert
+          secret:
+            secretName: {{ .Values.kafkaRootCert.secretName }}
+            items:
+              - key: {{ .Values.kafkaRootCert.key }}
+                path: {{ .Values.kafkaRootCert.key }}
+      {{- end }}
+      {{- if .Values.topologySpreadConstraints.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpreadConstraints.maxSkew | default 1 }}
+          topologyKey: {{ .Values.topologySpreadConstraints.topologyKey | default "kubernetes.io/hostname" }}
+          whenUnsatisfiable: {{ .Values.topologySpreadConstraints.whenUnsatisfiable | default "ScheduleAnyway" }}
+          labelSelector:
+            matchLabels:
+              {{- include "disc-api.selectorLabels" . | nindent 14 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,40 @@
+{{- $copilotSecretName := "postgres-creds-copilotv2" -}}
+{{- $copilotExistingSecret := (lookup "v1" "Secret" .Release.Namespace $copilotSecretName) | default dict -}}
+{{- $copilotExistingData := get $copilotExistingSecret "data" | default dict -}}
+{{- $copilotPassword := include "invhub-secrets.getOrGenerateSecretValue" (dict "value" .Values.global.PASSWORD "existingData" $copilotExistingData "secretName" $copilotSecretName "secretKey" "password") -}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $copilotSecretName | quote }}
+type: kubernetes.io/basic-auth
+stringData:
+  password: {{ $copilotPassword | quote }}
+  pgpass: {{ $copilotPassword | quote }}
+  username: "{{ .Values.copilotv2.copilot.username }}"
+  user: "{{ .Values.copilotv2.copilot.username }}"
+  port: "{{ .Values.copilotv2.copilot.port }}"
+  host: "{{ .Values.copilotv2.copilot.host }}"
+  dbname: "{{ .Values.copilotv2.copilot.dbname }}"
+  uri: "postgresql://{{ .Values.copilotv2.copilot.username }}:{{ $copilotPassword }}@{{ .Values.copilotv2.copilot.host }}:{{ .Values.copilotv2.copilot.port }}/{{ .Values.copilotv2.copilot.dbname }}?{{ .Values.global.COPILOT_DB_SSLMODE | default "sslmode=disable" }}{{ .Values.global.COPILOT_DB_SSLROOTCERT | default "" }}"
+  psycopg-uri: "postgresql+psycopg://{{ .Values.copilotv2.copilot.username }}:{{ $copilotPassword }}@{{ .Values.copilotv2.copilot.host }}:{{ .Values.copilotv2.copilot.port }}/{{ .Values.copilotv2.copilot.dbname }}?{{ .Values.global.COPILOT_DB_SSLMODE | default "sslmode=disable" }}{{ .Values.global.COPILOT_DB_SSLROOTCERT | default "" }}"
+{{ $adapterSecretName := "postgres-creds-copilot-data-adapter" -}}
+{{ $adapterExistingSecret := (lookup "v1" "Secret" .Release.Namespace $adapterSecretName) | default dict -}}
+{{ $adapterExistingData := get $adapterExistingSecret "data" | default dict -}}
+{{ $adapterPassword := include "invhub-secrets.getOrGenerateSecretValue" (dict "value" .Values.global.PASSWORD "existingData" $adapterExistingData "secretName" $adapterSecretName "secretKey" "password") -}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $adapterSecretName | quote }}
+type: kubernetes.io/basic-auth
+stringData:
+  password: {{ $adapterPassword | quote }}
+  pgpass: {{ $adapterPassword | quote }}
+  username: "{{ .Values.copilotv2.copilotDataAdapter.username }}"
+  user: "{{ .Values.copilotv2.copilotDataAdapter.username }}"
+  port: "{{ .Values.copilotv2.copilotDataAdapter.port }}"
+  host: "{{ .Values.copilotv2.copilotDataAdapter.host }}"
+  dbname: "{{ .Values.copilotv2.copilotDataAdapter.dbname }}"
+  uri: "postgresql://{{ .Values.copilotv2.copilotDataAdapter.username }}:{{ $adapterPassword }}@{{ .Values.copilotv2.copilotDataAdapter.host }}:{{ .Values.copilotv2.copilotDataAdapter.port }}/{{ .Values.copilotv2.copilotDataAdapter.dbname }}?{{ .Values.global.COPILOT_DB_SSLMODE | default "sslmode=disable" }}{{ .Values.global.COPILOT_DB_SSLROOTCERT | default "" }}"
+  psycopg-uri: "postgresql+psycopg://{{ .Values.copilotv2.copilotDataAdapter.username }}:{{ $adapterPassword }}@{{ .Values.copilotv2.copilotDataAdapter.host }}:{{ .Values.copilotv2.copilotDataAdapter.port }}/{{ .Values.copilotv2.copilotDataAdapter.dbname }}?{{ .Values.global.COPILOT_DB_SSLMODE | default "sslmode=disable" }}{{ .Values.global.COPILOT_DB_SSLROOTCERT | default "" }}"

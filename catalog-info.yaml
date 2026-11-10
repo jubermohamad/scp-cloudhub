@@ -1,0 +1,12 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: platform-cloudhub
+  description: Symphony Cloud Platform Backstage application.
+  annotations:
+    github.com/project-slug: jubermohamad/platform_cloudhub
+    backstage.io/techdocs-ref: dir:.
+spec:
+  type: website
+  owner: platform-team
+  lifecycle: production

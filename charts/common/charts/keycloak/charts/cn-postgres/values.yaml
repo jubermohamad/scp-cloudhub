@@ -1,0 +1,173 @@
+image:
+  repository: ghcr.io/cloudnative-pg/postgresql
+  tag: "17.6"
+
+imagePullSecrets: []
+
+instances: 3
+
+clusterName: cn-postgres-keycloak
+
+bootstrap:
+  enabled: true
+
+# primaryUpdateStrategy: unsupervised
+
+# superuserSecret: postgres-credential-cnpg
+
+# postgresql:
+#   parameters:
+#     shared_buffers: 256MB
+#     pg_stat_statements.max: '10000'
+#     pg_stat_statements.track: all
+#     auto_explain.log_min_duration: '10s'
+#   pg_hba:
+#     - host all all 10.244.0.0/16 md5
+
+storage:
+  size: 60Gi
+
+metrics:
+  enabled: true
+
+monitoring:
+  enabled: true
+  podMonitor:
+    enabled: true
+  prometheusRule:
+    enabled: false
+  customQueries: []
+
+commonAnnotations:
+  prometheus.io/port: "9187"
+  prometheus.io/scrape: "true"
+
+backupConfig:
+  enabled: false
+  schedule: "0 0 0 * * *"
+  backup:
+    barmanObjectStore:
+      destinationPath: https://sharedbackupsglobal.blob.core.windows.net/container-name/
+      azureCredentials:
+        storageAccount:
+          name: backup-creds
+          key: storageAccountName
+        storageKey:
+          name: backup-creds
+          key: storageAccountKey
+    retentionPolicy: "30d"
+# for customer tenancy with no cloud provider we can use MinIO deployed as part
+# of Investigation Hub as the destination
+# requires a secret created from kube-root-ca.crt configmap, as this is the CA
+# that MinIO uses by default for its TLS cert
+# example command:
+# kubectl create secret generic kube-root-ca.crt \
+#   --from-literal=ca.crt="$(
+#     kubectl -n kube-system get configmaps kube-root-ca.crt \
+#       -o jsonpath='{.data.ca\.crt}'
+#   )" --dry-run=client -o yaml | kubectl apply -f -
+# backupConfig:
+#   enabled: true
+#   schedule: "0 0 0 * * *"
+#   backup:
+#     barmanObjectStore:
+#       destinationPath: s3://backups/
+#       endpointCA:
+#         key: ca.crt
+#         name: kube-root-ca.crt
+#       endpointURL: https://minio
+#       s3Credentials:
+#         accessKeyId:
+#           key: root-user
+#           name: minio-creds
+#         secretAccessKey:
+#           key: root-password
+#           name: minio-creds
+#     retentionPolicy: 30d
+
+# # recovery examples
+# # example 1 - deploying a new cluster from invhub Helm charts in values.yaml
+# cn-postgres-invhub:
+#   clusterName: cn-postgres-invhub
+#   superuserSecret: postgres-credential-cn
+#   bootstrap:
+#     enabled: true
+#     config:
+#       bootstrap:
+#         recovery:
+#           source: cn-postgres-invhub
+#           # optional for Point in Time Recovery
+#           # recoveryTarget:
+#           #   targetTime: "2025-04-24 00:08:09.454074+00:00"
+#     source:
+#       externalClusters:
+#         - name: cn-postgres-invhub
+#           barmanObjectStore:
+#             destinationPath: https://sharedbackupsglobal.blob.core.windows.net/dev/
+#             azureCredentials:
+#               storageAccount:
+#                 name: backup-creds
+#                 key: storageAccountName
+#               storageKey:
+#                 name: backup-creds
+#                 key: storageAccountKey
+#   storage:
+#     size: 200Gi
+#   # IMPORTANT!!!
+#   # it is crucial to not reuse the same backup config destination
+#   # as it will cause the WAL archives to be overwritten
+#   backupConfig:
+#     enabled: false
+#
+# # example 2 - deploying a new cluster outside of invhub Helm charts
+# apiVersion: postgresql.cnpg.io/v1
+# kind: Cluster
+# metadata:
+#   name: cluster-restore
+# spec:
+#   instances: 3
+#   imageName: ghcr.io/cloudnative-pg/postgresql:17.6
+#
+#   storage:
+#     size: 200Gi
+#
+#   bootstrap:
+#     recovery:
+#       source: cn-postgres-invhub
+#       recoveryTarget:
+#         targetTime: "2025-04-24 00:08:09.454074+00:00"
+#
+#   externalClusters:
+#     - name: cn-postgres-invhub
+#       barmanObjectStore:
+#         destinationPath: https://sharedbackupsglobal.blob.core.windows.net/dev/
+#         azureCredentials:
+#           storageAccount:
+#             name: backup-creds
+#             key: storageAccountName
+#           storageKey:
+#             name: backup-creds
+#             key: storageAccountKey
+
+# # example 3 - moving existing PostgreSQL cluster to CNPG
+# # from invhub Helm charts in values.yaml
+# cn-postgres-invhub:
+#   clusterName: cn-postgres-invhub
+#   superuserSecret: postgres-credential-cn
+#   bootstrap:
+#     enabled: true
+#     config:
+#       bootstrap:
+#         pg_basebackup:
+#           source: source-db
+#           database: invhub
+#
+#     source:
+#       externalClusters:
+#         - name: source-db
+#           connectionParameters:
+#             host: postgres
+#             user: postgres
+#           password:
+#             name: postgres-creds
+#             key: password

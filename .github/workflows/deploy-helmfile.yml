@@ -1,0 +1,1383 @@
+name: Deploy Helmfile to Cluster
+# CloudHub correlates dispatched runs by the [app] and [instance] tokens.
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch'
+      && format('{0} [{1}] [{2}]', inputs.action || 'apply', inputs.appName || inputs.app_name, inputs.appInstance || inputs.instance_name)
+      || 'Deploy changed helmfiles' }}
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/**'
+      - 'scp/apps/**'
+  workflow_dispatch:
+    inputs:
+      appName:
+        description: 'Application name (e.g., detectionhub, invhub) — sent by CloudHub'
+        required: false
+      appInstance:
+        description: 'Application instance / namespace — sent by CloudHub'
+        required: false
+      client:
+        description: 'Customer the instance belongs to'
+        required: false
+        default: ''
+      cluster:
+        description: 'Target AKS cluster (fallback when the helmfile has no kube context)'
+        required: false
+        default: ''
+      action:
+        description: 'apply deploys the release; diff only prints helm diff'
+        required: false
+        default: 'apply'
+        type: choice
+        options:
+          - apply
+          - diff
+      triggerFailover:
+        description: 'Request failover after deploy (reserved)'
+        required: false
+        default: 'false'
+      app_name:
+        description: 'Legacy alias for appName'
+        required: false
+      instance_name:
+        description: 'Legacy alias for appInstance'
+        required: false
+      run_db_migration:
+        description: 'Run DB migration when a migration command is provided or discovered'
+        required: false
+        default: true
+        type: boolean
+      db_migration_command:
+        description: 'Optional migration command override (example: yarn workspace backend run db:migrate)'
+        required: false
+        default: ''
+      op_read_secret_name:
+        description: 'GitHub secret name containing the read-only 1Password service account token'
+        required: false
+        default: 'CLOUDHUB_1PASSWORD_READ'
+
+env:
+  HELM_REPO_USERNAME: ${{ secrets.HELM_REPO_USERNAME }}
+  HELM_REPO_PASSWORD: ${{ secrets.HELM_REPO_PASSWORD }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  KEYVAULT_NAME: cloudhub-deploy-vault
+  KEYVAULT_RG: rg-cfe-apps-mj
+  # apply (default, and every push to main) or diff (CloudHub "Run Diff").
+  DEPLOY_ACTION: ${{ github.event_name == 'workflow_dispatch' && inputs.action || 'apply' }}
+  INPUT_CLUSTER: ${{ github.event_name == 'workflow_dispatch' && inputs.cluster || '' }}
+  OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets[format('{0}', inputs.op_read_secret_name)] }}
+
+jobs:
+  detect-changes:
+    name: Detect Changed Helmfiles
+    runs-on: ubuntu-latest
+    outputs:
+      helmfiles: ${{ steps.detect.outputs.helmfiles }}
+      has_changes: ${{ steps.detect.outputs.has_changes }}
+      prod_helmfiles: ${{ steps.detect.outputs.prod_helmfiles }}
+      non_prod_helmfiles: ${{ steps.detect.outputs.non_prod_helmfiles }}
+      has_prod_changes: ${{ steps.detect.outputs.has_prod_changes }}
+      has_non_prod_changes: ${{ steps.detect.outputs.has_non_prod_changes }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed helmfiles
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual dispatch: deploy specific app/instance
+            APP="${{ github.event.inputs.appName || github.event.inputs.app_name }}"
+            INSTANCE="${{ github.event.inputs.appInstance || github.event.inputs.instance_name }}"
+            if [ -n "$APP" ]; then
+              HELMFILE="apps/$APP/$INSTANCE/helmfile.yaml"
+              if [ ! -f "$HELMFILE" ] && [ -f "scp/apps/$APP/$INSTANCE/helmfile.yaml" ]; then
+                HELMFILE="scp/apps/$APP/$INSTANCE/helmfile.yaml"
+              fi
+
+              if [ -f "$HELMFILE" ]; then
+                echo "helmfiles=$HELMFILE" >> $GITHUB_OUTPUT
+                echo "has_changes=true" >> $GITHUB_OUTPUT
+                
+                # Detect if production (contains 'prod' in instance name)
+                if [[ "$INSTANCE" =~ prod ]]; then
+                  echo "prod_helmfiles=$HELMFILE" >> $GITHUB_OUTPUT
+                  echo "has_prod_changes=true" >> $GITHUB_OUTPUT
+                  echo "has_non_prod_changes=false" >> $GITHUB_OUTPUT
+                else
+                  echo "non_prod_helmfiles=$HELMFILE" >> $GITHUB_OUTPUT
+                  echo "has_prod_changes=false" >> $GITHUB_OUTPUT
+                  echo "has_non_prod_changes=true" >> $GITHUB_OUTPUT
+                fi
+              else
+                echo "❌ Helmfile not found: $HELMFILE"
+                exit 1
+              fi
+            fi
+          else
+            # Push to main: detect changed helmfiles
+            CHANGED=$(git diff --name-only origin/main..HEAD | grep -E '^(scp/)?apps/.*helmfile.yaml' | sort -u)
+
+            if [ -z "$CHANGED" ]; then
+              echo "has_changes=false" >> $GITHUB_OUTPUT
+              echo "has_prod_changes=false" >> $GITHUB_OUTPUT
+              echo "has_non_prod_changes=false" >> $GITHUB_OUTPUT
+              echo "No helmfile changes detected"
+            else
+              HELMFILES=$(echo "$CHANGED" | tr '\n' ' ')
+              echo "helmfiles=$HELMFILES" >> $GITHUB_OUTPUT
+              echo "has_changes=true" >> $GITHUB_OUTPUT
+              echo "📋 Detected helmfiles:"
+              echo "$CHANGED"
+              
+              # Separate prod vs non-prod
+              PROD_FILES=$(echo "$CHANGED" | grep 'prod' | tr '\n' ' ' || true)
+              NON_PROD_FILES=$(echo "$CHANGED" | grep -v 'prod' | tr '\n' ' ' || true)
+              
+              if [ -n "$PROD_FILES" ]; then
+                echo "prod_helmfiles=$PROD_FILES" >> $GITHUB_OUTPUT
+                echo "has_prod_changes=true" >> $GITHUB_OUTPUT
+                echo "📋 Production helmfiles:"
+                echo "$PROD_FILES"
+              else
+                echo "has_prod_changes=false" >> $GITHUB_OUTPUT
+              fi
+              
+              if [ -n "$NON_PROD_FILES" ]; then
+                echo "non_prod_helmfiles=$NON_PROD_FILES" >> $GITHUB_OUTPUT
+                echo "has_non_prod_changes=true" >> $GITHUB_OUTPUT
+                echo "📋 Non-production helmfiles:"
+                echo "$NON_PROD_FILES"
+              else
+                echo "has_non_prod_changes=false" >> $GITHUB_OUTPUT
+              fi
+            fi
+          fi
+
+  deploy-non-prod:
+    name: Deploy Non-Prod ${{ matrix.helmfile }}
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_non_prod_changes == 'true'
+    strategy:
+      matrix:
+        helmfile: ${{ fromJson(format('[{0}]', needs.detect-changes.outputs.non_prod_helmfiles)) }}
+      max-parallel: 1
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'latest'
+
+      - name: Set up Azure CLI
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            echo "✅ Azure CLI ready"
+
+      - name: Parse helmfile path
+        id: parse
+        run: |
+          # Extract app and instance from helmfile path
+          # Format: [scp/]apps/{app}/{instance}/helmfile.yaml
+          HELMFILE="${{ matrix.helmfile }}"
+          INSTANCE=$(basename "$(dirname "$HELMFILE")")
+          APP=$(basename "$(dirname "$(dirname "$HELMFILE")")")
+
+          echo "app=$APP" >> $GITHUB_OUTPUT
+          echo "instance=$INSTANCE" >> $GITHUB_OUTPUT
+          echo "helmfile=$HELMFILE" >> $GITHUB_OUTPUT
+          echo "environment=non-production" >> $GITHUB_OUTPUT
+
+          echo "📋 Deployment Details:"
+          echo "  Application: $APP"
+          echo "  Instance: $INSTANCE"
+          echo "  Helmfile: $HELMFILE"
+          echo "  Environment: non-production (no approval needed)"
+
+      - name: Add Helm repositories
+        run: |
+          # Add chart repositories
+          helm repo add symphonyfs https://helm.symphonyfs.net \
+            --username "$HELM_REPO_USERNAME" \
+            --password "$HELM_REPO_PASSWORD" || true
+
+          helm repo add platform https://charts.symphonyai.com || true
+
+          helm repo update
+
+      - name: Validate helmfile
+        run: |
+          HELMFILE="${{ steps.parse.outputs.helmfile }}"
+
+          if [ ! -f "$HELMFILE" ]; then
+            echo "❌ Helmfile not found: $HELMFILE"
+            exit 1
+          fi
+
+          echo "✅ Helmfile exists: $HELMFILE"
+          echo ""
+          echo "📄 Helmfile content:"
+          head -50 "$HELMFILE"
+
+      - name: Authenticate to AKS (OIDC)
+        id: aks-auth
+        run: |
+          set -euo pipefail
+          
+          echo "🔐 Authenticating to AKS using OIDC..."
+          
+          # Extract cluster context from helmfile
+          CLUSTER=$(grep -A5 'cluster:' "${{ steps.parse.outputs.helmfile }}" | grep 'context:' | awk '{print $2}' || true)
+          CLUSTER="${CLUSTER:-$INPUT_CLUSTER}"
+          
+          if [ -z "$CLUSTER" ]; then
+            echo "❌ Failed to extract cluster context from helmfile and no cluster input was provided"
+            exit 1
+          fi
+          
+          echo "cluster=$CLUSTER" >> "$GITHUB_OUTPUT"
+          echo "🔍 Target cluster: $CLUSTER"
+          
+          # Parse cluster name and resource group from context
+          # Expected format: aks-scp-dev-sdc-st-cms (cluster name from context)
+          RESOURCE_GROUP="${CLUSTER%-*}"  # Remove last segment
+          
+          echo "resource_group=$RESOURCE_GROUP" >> "$GITHUB_OUTPUT"
+          echo "📍 Resource group: $RESOURCE_GROUP"
+          
+          # Authenticate using Azure CLI with OIDC
+          az login --service-principal \
+            -u "$AZURE_CLIENT_ID" \
+            -t "$AZURE_TENANT_ID" \
+            --federated-token "${{ github.token }}"
+          
+          echo "✅ Azure authentication successful"
+          
+          # Get kubeconfig for AKS cluster
+          az aks get-credentials \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CLUSTER" \
+            --overwrite-existing
+          
+          echo "✅ Kubeconfig updated for cluster: $CLUSTER"
+          
+          # Verify cluster connectivity
+          if kubectl cluster-info &> /dev/null; then
+            echo "✅ Cluster connectivity verified"
+          else
+            echo "❌ Failed to connect to cluster"
+            exit 1
+          fi
+
+      - name: Pre-flight Validation
+        id: preflight
+        run: |
+          set -euo pipefail
+          
+          echo "🔍 Running pre-flight validation..."
+          HELMFILE="${{ steps.parse.outputs.helmfile }}"
+          WORKDIR=$(dirname "$HELMFILE")
+          VALIDATION_ERRORS=""
+          
+          # 1. Validate helmfile exists and is valid YAML
+          if [ ! -f "$HELMFILE" ]; then
+            VALIDATION_ERRORS="$VALIDATION_ERRORS\n❌ Helmfile not found: $HELMFILE"
+          else
+            if ! yaml -c "$HELMFILE" &> /dev/null; then
+              echo "⚠️  YAML validation tool not available, checking syntax with grep..."
+              if ! grep -q "repositories:" "$HELMFILE"; then
+                VALIDATION_ERRORS="$VALIDATION_ERRORS\n❌ Invalid helmfile format (missing repositories section)"
+              fi
+            fi
+            echo "✅ Helmfile exists and appears valid: $HELMFILE"
+          fi
+          
+          # 2. Validate values.generated.yaml exists
+          if [ ! -f "$WORKDIR/values.generated.yaml" ]; then
+            VALIDATION_ERRORS="$VALIDATION_ERRORS\n❌ values.generated.yaml not found in $WORKDIR"
+          else
+            echo "✅ values.generated.yaml exists"
+          fi
+          
+          # 3. Check for required secrets in values
+          echo "🔐 Checking for required secrets..."
+          REQUIRED_SECRETS=("registry-credentials" "database-password" "api-key")
+          for SECRET in "${REQUIRED_SECRETS[@]}"; do
+            if kubectl get secret "$SECRET" -n default &> /dev/null 2>&1; then
+              echo "  ✅ Secret exists: $SECRET"
+            else
+              echo "  ⚠️  Secret not found (will be created/managed by chart): $SECRET"
+            fi
+          done
+          
+          # 4. Validate target namespace exists or can be created
+          NAMESPACE="${{ steps.parse.outputs.instance }}"
+          if kubectl get namespace "$NAMESPACE" &> /dev/null 2>&1; then
+            echo "✅ Namespace exists: $NAMESPACE"
+          else
+            echo "ℹ️  Namespace will be created by Helm: $NAMESPACE"
+          fi
+          
+          # 5. Check cluster resources
+          echo "📊 Checking cluster resources..."
+          NODES=$(kubectl get nodes -q | wc -l)
+          echo "  ✅ Available nodes: $NODES"
+          
+          if [ "$NODES" -lt 1 ]; then
+            VALIDATION_ERRORS="$VALIDATION_ERRORS\n❌ No nodes available in cluster"
+          fi
+          
+          # 6. Validate Helm chart references
+          echo "📦 Validating Helm chart references..."
+          if helm repo list &> /dev/null; then
+            echo "  ✅ Helm repos accessible"
+          else
+            echo "  ⚠️  Helm repo list failed (will retry during deployment)"
+          fi
+          
+          # Report validation results
+          if [ -n "$VALIDATION_ERRORS" ]; then
+            echo -e "\n🚨 Pre-flight validation completed with issues:"
+            echo -e "$VALIDATION_ERRORS"
+            echo ""
+            echo "Continuing deployment - issues may surface during Helm apply..."
+          else
+            echo -e "\n✅ Pre-flight validation passed!"
+          fi
+          
+          echo "validation_complete=true" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve DB migration command
+        id: db-migration
+        env:
+          INPUT_RUN_DB_MIGRATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_db_migration || 'true' }}
+          INPUT_DB_MIGRATION_COMMAND: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.db_migration_command || '' }}
+        run: |
+          set -euo pipefail
+          WORKDIR="$(dirname "${{ steps.parse.outputs.helmfile }}")"
+          SCRIPT_PATH="$WORKDIR/db-migration.sh"
+          COMMAND_FILE_PATH="$WORKDIR/db-migration-command.txt"
+
+          SHOULD_RUN="false"
+          REASON=""
+          MIGRATION_COMMAND=""
+
+          if [ "$INPUT_RUN_DB_MIGRATION" != "true" ]; then
+            REASON="run_db_migration=false"
+          elif [ -n "$(echo "$INPUT_DB_MIGRATION_COMMAND" | tr -d '[:space:]')" ]; then
+            SHOULD_RUN="true"
+            MIGRATION_COMMAND="$INPUT_DB_MIGRATION_COMMAND"
+            REASON="workflow input db_migration_command"
+          elif [ -f "$SCRIPT_PATH" ]; then
+            chmod +x "$SCRIPT_PATH"
+            SHOULD_RUN="true"
+            MIGRATION_COMMAND="$SCRIPT_PATH"
+            REASON="instance migration script"
+          elif [ -f "$COMMAND_FILE_PATH" ]; then
+            FILE_COMMAND="$(sed -n '1p' "$COMMAND_FILE_PATH" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [ -n "$FILE_COMMAND" ]; then
+              SHOULD_RUN="true"
+              MIGRATION_COMMAND="$FILE_COMMAND"
+              REASON="instance migration command file"
+            else
+              REASON="db-migration-command.txt is empty"
+            fi
+          else
+            REASON="no migration configuration found"
+          fi
+
+          echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
+          {
+            echo "command<<EOF"
+            echo "$MIGRATION_COMMAND"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+
+          echo "Migration check result: should_run=$SHOULD_RUN reason=$REASON"
+
+      - name: Run DB migration
+        if: env.DEPLOY_ACTION != 'diff' && steps.db-migration.outputs.should_run == 'true'
+        env:
+          MIGRATION_COMMAND: ${{ steps.db-migration.outputs.command }}
+        run: |
+          set -euo pipefail
+          echo "Running migration command (${{ steps.db-migration.outputs.reason }})"
+          bash -lc "$MIGRATION_COMMAND"
+          echo "✅ DB migration completed"
+
+      - name: DB migration summary
+        if: always()
+        run: |
+          {
+            echo "### Database migration"
+            echo "- Should run: ${{ steps.db-migration.outputs.should_run }}"
+            echo "- Reason: ${{ steps.db-migration.outputs.reason }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Detect 1Password references
+        id: op-refs
+        run: |
+          set -euo pipefail
+          WORKDIR="$(dirname "${{ steps.parse.outputs.helmfile }}")"
+          if grep -RIl --include='*.yaml' --include='*.yml' 'op://' "$WORKDIR" >/dev/null 2>&1; then
+            echo "has_refs=true" >> "$GITHUB_OUTPUT"
+            echo "1Password references detected in $WORKDIR"
+          else
+            echo "has_refs=false" >> "$GITHUB_OUTPUT"
+            echo "No 1Password references detected in $WORKDIR"
+          fi
+
+      - name: Install 1Password CLI
+        if: steps.op-refs.outputs.has_refs == 'true'
+        uses: 1password/install-cli-action@8d006a0d0a4fd505af7f7ce589e7f768385ff5e4 # v3.0.0
+
+      - name: Resolve 1Password references
+        if: steps.op-refs.outputs.has_refs == 'true'
+        run: |
+          set -euo pipefail
+          if [[ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
+            echo "::error::1Password references were found, but the read-only GitHub secret is not configured"
+            exit 1
+          fi
+          WORKDIR="$(dirname "${{ steps.parse.outputs.helmfile }}")"
+          op whoami --format json >/dev/null
+          op inject -i "$WORKDIR/values.generated.yaml" -o "$WORKDIR/values.generated.resolved.yaml"
+          echo "Resolved 1Password references into $WORKDIR/values.generated.resolved.yaml"
+
+      - name: Helm diff
+        if: env.DEPLOY_ACTION == 'diff'
+        run: |
+          set -euo pipefail
+          HELMFILE="${{ steps.parse.outputs.helmfile }}"
+          WORKDIR=$(dirname "$HELMFILE")
+          VALUES_FILE="values.generated.yaml"
+          if [ "${{ steps.op-refs.outputs.has_refs }}" = "true" ]; then
+            VALUES_FILE="values.generated.resolved.yaml"
+          fi
+          NAMESPACE="${{ steps.parse.outputs.instance }}"
+          RELEASE_NAME="${{ steps.parse.outputs.app }}-${{ steps.parse.outputs.instance }}"
+          CHART=$(grep -A10 'releases:' "$HELMFILE" | grep 'chart:' | head -1 | awk '{print $2}')
+          CHART_VERSION=$(grep -A10 'releases:' "$HELMFILE" | grep 'version:' | head -1 | awk '{print $2}' | sed 's/"//g')
+
+          helm repo add symphonyfs https://helm.symphonyfs.net \
+            --username "$HELM_REPO_USERNAME" \
+            --password "$HELM_REPO_PASSWORD" --force-update || true
+          helm repo add platform https://charts.symphonyai.com --force-update || true
+          helm repo update
+          helm plugin list | grep -q '^diff' || helm plugin install https://github.com/databus23/helm-diff
+
+          cd "$WORKDIR"
+          echo "🔍 helm diff upgrade $RELEASE_NAME ($CHART ${CHART_VERSION:-latest}) in $NAMESPACE"
+          helm diff upgrade "$RELEASE_NAME" "$CHART" \
+            --namespace "$NAMESPACE" \
+            --values "$VALUES_FILE" \
+            ${CHART_VERSION:+--version "$CHART_VERSION"} \
+            --allow-unreleased \
+            --no-color | tee helm-diff.txt
+          {
+            echo "### Helm diff: $RELEASE_NAME"
+            echo '```diff'
+            head -c 60000 helm-diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy with Helm
+        if: env.DEPLOY_ACTION != 'diff'
+        id: helm-deploy
+        run: |
+          set -euo pipefail
+          
+          HELMFILE="${{ steps.parse.outputs.helmfile }}"
+          WORKDIR=$(dirname "$HELMFILE")
+          VALUES_FILE="values.generated.yaml"
+          if [ "${{ steps.op-refs.outputs.has_refs }}" = "true" ]; then
+            VALUES_FILE="values.generated.resolved.yaml"
+          fi
+          NAMESPACE="${{ steps.parse.outputs.instance }}"
+          RELEASE_NAME="${{ steps.parse.outputs.app }}-${{ steps.parse.outputs.instance }}"
+          
+          echo "📦 Deploying with Helm..."
+          echo "  Helmfile: $HELMFILE"
+          echo "  Workdir: $WORKDIR"
+          echo "  Namespace: $NAMESPACE"
+          echo "  Release: $RELEASE_NAME"
+          
+          cd "$WORKDIR"
+          
+          # Create namespace if it doesn't exist
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          echo "✅ Namespace ready: $NAMESPACE"
+          
+          # Validate helmfile syntax if helmfile CLI is available
+          if command -v helmfile &> /dev/null; then
+            echo "🔍 Validating helmfile..."
+            helmfile validate || {
+              echo "❌ Helmfile validation failed"
+              exit 1
+            }
+            echo "✅ Helmfile syntax valid"
+          else
+            echo "ℹ️  helmfile CLI not available, continuing with helm directly"
+          fi
+          
+          # Extract chart name and version from helmfile
+          CHART_NAME=$(grep -A10 'releases:' "$HELMFILE" | grep 'chart:' | head -1 | awk '{print $2}' | cut -d'/' -f2)
+          CHART_VERSION=$(grep -A10 'releases:' "$HELMFILE" | grep 'version:' | head -1 | awk '{print $2}' | sed 's/"//g')
+          
+          if [ -z "$CHART_NAME" ] || [ -z "$CHART_VERSION" ]; then
+            echo "⚠️  Could not extract chart name/version, will rely on helmfile structure"
+          else
+            echo "📊 Chart: $CHART_NAME, Version: $CHART_VERSION"
+          fi
+          
+          # Update Helm repositories
+          echo "📡 Updating Helm repositories..."
+          helm repo add symphonyfs https://helm.symphonyfs.net \
+            --username "$HELM_REPO_USERNAME" \
+            --password "$HELM_REPO_PASSWORD" --force-update || true
+          helm repo add platform https://charts.symphonyai.com --force-update || true
+          helm repo update
+          echo "✅ Helm repositories updated"
+          
+          # Deploy/upgrade release with actual Helm installation
+          echo "🚀 Executing: helm upgrade --install"
+          helm upgrade --install \
+            "$RELEASE_NAME" \
+            $(grep -A10 'releases:' "$HELMFILE" | grep 'chart:' | head -1 | awk '{print $2}') \
+            --namespace "$NAMESPACE" \
+            --values "$VALUES_FILE" \
+            --version "${CHART_VERSION:-}" \
+            --wait \
+            --timeout 10m \
+            --atomic \
+            --cleanup-on-fail \
+            --debug
+          
+          HELM_EXIT_CODE=$?
+          
+          if [ $HELM_EXIT_CODE -eq 0 ]; then
+            echo "✅ Helm deployment succeeded"
+            echo "helm_status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ Helm deployment failed with exit code: $HELM_EXIT_CODE"
+            echo "helm_status=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Retrieve Secrets from Key Vault
+        if: env.DEPLOY_ACTION != 'diff'
+        id: keyvault
+        run: |
+          set -euo pipefail
+          
+          echo "🔐 Retrieving secrets from Key Vault..."
+          VAULT_NAME="${KEYVAULT_NAME}"
+          
+          # Retrieve secrets (will be stored as masked variables in logs)
+          echo "Fetching secrets from $VAULT_NAME..."
+          
+          # These would be used to populate environment variables
+          # In production, use external-secrets operator or Azure Key Vault provider
+          
+          # For this workflow, we demonstrate the capability
+          HELM_USERNAME=$(az keyvault secret show --vault-name "$VAULT_NAME" --name "helm-repo-username" --query value -o tsv)
+          HELM_PASSWORD=$(az keyvault secret show --vault-name "$VAULT_NAME" --name "helm-repo-password" --query value -o tsv)
+          DB_PASSWORD=$(az keyvault secret show --vault-name "$VAULT_NAME" --name "database-password" --query value -o tsv)
+          API_KEY=$(az keyvault secret show --vault-name "$VAULT_NAME" --name "api-key" --query value -o tsv)
+          
+          echo "helm_username=$HELM_USERNAME" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$HELM_PASSWORD"
+          echo "helm_password=$HELM_PASSWORD" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$DB_PASSWORD"
+          echo "database_password=$DB_PASSWORD" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$API_KEY"
+          echo "api_key=$API_KEY" >> "$GITHUB_OUTPUT"
+          
+          echo "✅ Secrets retrieved successfully (masked in logs)"
+
+      - name: Run Helm Tests
+        if: steps.helm-deploy.outputs.helm_status == 'success'
+        id: helm-tests
+        run: |
+          set -euo pipefail
+          
+          NAMESPACE="${{ steps.parse.outputs.instance }}"
+          RELEASE_NAME="${{ steps.parse.outputs.app }}-${{ steps.parse.outputs.instance }}"
+          
+          echo "🧪 Running Helm tests for release: $RELEASE_NAME"
+          
+          # Run helm tests with timeout
+          if helm test "$RELEASE_NAME" -n "$NAMESPACE" --timeout 5m; then
+            echo "✅ Helm tests passed"
+            echo "test_status=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "⚠️ Helm tests failed or timed out"
+            echo "test_status=failed" >> "$GITHUB_OUTPUT"
+            # Don't exit - continue to health checks
+          fi
+
+      - name: Health Verification
+        if: steps.helm-deploy.outputs.helm_status == 'success'
+        id: health-check
+        run: |
+          set -euo pipefail
+          
+          NAMESPACE="${{ steps.parse.outputs.instance }}"
+          RELEASE_NAME="${{ steps.parse.outputs.app }}-${{ steps.parse.outputs.instance }}"
+          
+          echo "🏥 Running health verification..."
+          
+          # 1. Check pod status
+          echo ""
+          echo "1️⃣ Checking pod readiness..."
+          READY_PODS=$(kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE_NAME" \
+            --field-selector=status.phase=Running -q | wc -l)
+          TOTAL_PODS=$(kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE_NAME" -q | wc -l)
+          echo "  Ready: $READY_PODS / $TOTAL_PODS pods"
+          
+          if [ "$READY_PODS" -eq "$TOTAL_PODS" ] && [ "$TOTAL_PODS" -gt 0 ]; then
+            echo "  ✅ All pods are ready"
+            PODS_HEALTHY=true
+          else
+            echo "  ⚠️ Some pods are not ready"
+            PODS_HEALTHY=false
+          fi
+          
+          # 2. Check pod logs for errors
+          echo ""
+          echo "2️⃣ Checking for errors in pod logs..."
+          ERROR_COUNT=$(kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE_NAME" \
+            --tail=100 --timestamps=true 2>/dev/null | grep -i "error\|fatal\|panic" | wc -l || echo "0")
+          
+          if [ "$ERROR_COUNT" -eq 0 ]; then
+            echo "  ✅ No errors in logs"
+            LOGS_HEALTHY=true
+          else
+            echo "  ⚠️ Found $ERROR_COUNT error(s) in logs"
+            LOGS_HEALTHY=false
+          fi
+          
+          # 3. Check service endpoints
+          echo ""
+          echo "3️⃣ Checking service endpoints..."
+          SERVICE_NAME="$RELEASE_NAME"
+          if kubectl get svc "$SERVICE_NAME" -n "$NAMESPACE" &> /dev/null; then
+            ENDPOINTS=$(kubectl get endpoints "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.subsets[*].addresses[*].ip}' | wc -w)
+            if [ "$ENDPOINTS" -gt 0 ]; then
+              echo "  ✅ Service has $ENDPOINTS endpoint(s)"
+              SERVICE_HEALTHY=true
+            else
+              echo "  ⚠️ Service has no endpoints"
+              SERVICE_HEALTHY=false
+            fi
+          else
+            echo "  ⚠️ Service not found"
+            SERVICE_HEALTHY=false
+          fi
+          
+          # 4. HTTP health check (if endpoint available)
+          echo ""
+          echo "4️⃣ Attempting HTTP health check..."
+          if kubectl get svc "$SERVICE_NAME" -n "$NAMESPACE" &> /dev/null; then
+            # Port-forward to pod for health check
+            POD_NAME=$(kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+            
+            if [ -n "$POD_NAME" ]; then
+              # Try to check /health endpoint
+              HEALTH_RESPONSE=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health 2>/dev/null || echo "000")
+              if [ "$HEALTH_RESPONSE" = "200" ] || [ "$HEALTH_RESPONSE" = "302" ]; then
+                echo "  ✅ Health endpoint returned $HEALTH_RESPONSE"
+                HTTP_HEALTHY=true
+              else
+                echo "  ⚠️ Health endpoint returned $HEALTH_RESPONSE"
+                HTTP_HEALTHY=false
+              fi
+            else
+              echo "  ⚠️ No pods available for HTTP check"
+              HTTP_HEALTHY=false
+            fi
+          else
+            echo "  ⚠️ Skipping HTTP check (service not found)"
+            HTTP_HEALTHY=false
+          fi
+          
+          # Summary
+          echo ""
+          echo "📊 Health Check Summary:"
+          echo "  Pod Status: $([ "$PODS_HEALTHY" = "true" ] && echo "✅" || echo "⚠️")"
+          echo "  Logs Status: $([ "$LOGS_HEALTHY" = "true" ] && echo "✅" || echo "⚠️")"
+          echo "  Service Status: $([ "$SERVICE_HEALTHY" = "true" ] && echo "✅" || echo "⚠️")"
+          echo "  HTTP Status: $([ "$HTTP_HEALTHY" = "true" ] && echo "✅" || echo "⚠️")"
+          
+          if [ "$PODS_HEALTHY" = "true" ] && [ "$SERVICE_HEALTHY" = "true" ]; then
+            echo ""
+            echo "✅ Application is healthy"
+            echo "health_status=healthy" >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo "⚠️ Application health check found issues"
+            echo "health_status=degraded" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate Installation Report
+        if: always()
+        id: report
+        run: |
+          set -euo pipefail
+          
+          echo "📋 Generating installation report..."
+          
+          NAMESPACE="${{ steps.parse.outputs.instance }}"
+          APP="${{ steps.parse.outputs.app }}"
+          INSTANCE="${{ steps.parse.outputs.instance }}"
+          REPORT_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          REPORT_FILE="/tmp/installation-report-$APP-$INSTANCE.md"
+          
+          cat > "$REPORT_FILE" <<'REPORT_EOF'
+          # Installation Report
+          
+          **Generated:** $REPORT_DATE
+          **Application:** $APP
+          **Instance:** $INSTANCE
+          **Environment:** Non-Production (No Approval Required)
+          REPORT_EOF
+          
+          echo "report_file=$REPORT_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Installation Report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: installation-report-${{ steps.parse.outputs.app }}-${{ steps.parse.outputs.instance }}
+          path: /tmp/installation-report-*.md
+          retention-days: 90
+
+  deploy-prod:
+    name: Deploy Prod ${{ matrix.helmfile }}
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_prod_changes == 'true'
+    environment: production
+    strategy:
+      matrix:
+        helmfile: ${{ fromJson(format('[{0}]', needs.detect-changes.outputs.prod_helmfiles)) }}
+      max-parallel: 1
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'latest'
+
+      - name: Set up Azure CLI
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            echo "✅ Azure CLI ready"
+
+      - name: Parse helmfile path
+        id: prod-parse
+        run: |
+          # Extract app and instance from helmfile path
+          # Format: [scp/]apps/{app}/{instance}/helmfile.yaml
+          HELMFILE="${{ matrix.helmfile }}"
+          INSTANCE=$(basename "$(dirname "$HELMFILE")")
+          APP=$(basename "$(dirname "$(dirname "$HELMFILE")")")
+
+          echo "app=$APP" >> $GITHUB_OUTPUT
+          echo "instance=$INSTANCE" >> $GITHUB_OUTPUT
+          echo "helmfile=$HELMFILE" >> $GITHUB_OUTPUT
+          echo "environment=production" >> $GITHUB_OUTPUT
+
+          echo "📋 Deployment Details:"
+          echo "  Application: $APP"
+          echo "  Instance: $INSTANCE"
+          echo "  Helmfile: $HELMFILE"
+          echo "  Environment: PRODUCTION (approval required & completed)"
+          echo "  Actor: ${GITHUB_ACTOR}"
+          echo "  Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      - name: Add Helm repositories
+        run: |
+          # Add chart repositories
+          helm repo add symphonyfs https://helm.symphonyfs.net \
+            --username "$HELM_REPO_USERNAME" \
+            --password "$HELM_REPO_PASSWORD" || true
+
+          helm repo add platform https://charts.symphonyai.com || true
+
+          helm repo update
+
+      - name: Validate helmfile
+        run: |
+          HELMFILE="${{ steps.prod-parse.outputs.helmfile }}"
+
+          if [ ! -f "$HELMFILE" ]; then
+            echo "❌ Helmfile not found: $HELMFILE"
+            exit 1
+          fi
+
+          echo "✅ Helmfile exists: $HELMFILE"
+          echo ""
+          echo "📄 Helmfile content:"
+          head -50 "$HELMFILE"
+
+      - name: Authenticate to AKS (OIDC)
+        id: prod-aks-auth
+        run: |
+          set -euo pipefail
+          
+          echo "🔐 Authenticating to AKS using OIDC..."
+          
+          # Extract cluster context from helmfile
+          CLUSTER=$(grep -A5 'cluster:' "${{ steps.prod-parse.outputs.helmfile }}" | grep 'context:' | awk '{print $2}' || true)
+          CLUSTER="${CLUSTER:-$INPUT_CLUSTER}"
+          
+          if [ -z "$CLUSTER" ]; then
+            echo "❌ Failed to extract cluster context from helmfile and no cluster input was provided"
+            exit 1
+          fi
+          
+          echo "cluster=$CLUSTER" >> "$GITHUB_OUTPUT"
+          echo "🔍 Target cluster: $CLUSTER"
+          
+          # Parse cluster name and resource group from context
+          # Expected format: aks-scp-dev-sdc-st-cms (cluster name from context)
+          RESOURCE_GROUP="${CLUSTER%-*}"  # Remove last segment
+          
+          echo "resource_group=$RESOURCE_GROUP" >> "$GITHUB_OUTPUT"
+          echo "📍 Resource group: $RESOURCE_GROUP"
+          
+          # Authenticate using Azure CLI with OIDC
+          az login --service-principal \
+            -u "$AZURE_CLIENT_ID" \
+            -t "$AZURE_TENANT_ID" \
+            --federated-token "${{ github.token }}"
+          
+          echo "✅ Azure authentication successful"
+          
+          # Get kubeconfig for AKS cluster
+          az aks get-credentials \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$CLUSTER" \
+            --overwrite-existing
+          
+          echo "✅ Kubeconfig updated for cluster: $CLUSTER"
+          
+          # Verify cluster connectivity
+          if kubectl cluster-info &> /dev/null; then
+            echo "✅ Cluster connectivity verified"
+          else
+            echo "❌ Failed to connect to cluster"
+            exit 1
+          fi
+
+      - name: Pre-flight Validation (Production)
+        id: prod-preflight
+        run: |
+          set -euo pipefail
+          
+          echo "🔍 Running PRODUCTION pre-flight validation..."
+          HELMFILE="${{ steps.prod-parse.outputs.helmfile }}"
+          WORKDIR=$(dirname "$HELMFILE")
+          VALIDATION_ERRORS=""
+          
+          # 1. Validate helmfile exists and is valid YAML
+          if [ ! -f "$HELMFILE" ]; then
+            VALIDATION_ERRORS="$VALIDATION_ERRORS\n❌ Helmfile not found: $HELMFILE"
+          else
+            if ! yaml -c "$HELMFILE" &> /dev/null; then
+              echo "⚠️  YAML validation tool not available, checking syntax with grep..."
+              if ! grep -q "repositories:" "$HELMFILE"; then
+                VALIDATION_ERRORS="$VALIDATION_ERRORS\n❌ Invalid helmfile format (missing repositories section)"
+              fi
+            fi
+            echo "✅ Helmfile exists and appears valid: $HELMFILE"
+          fi
+          
+          # 2. Validate values.generated.yaml exists
+          if [ ! -f "$WORKDIR/values.generated.yaml" ]; then
+            VALIDATION_ERRORS="$VALIDATION_ERRORS\n❌ values.generated.yaml not found in $WORKDIR"
+          else
+            echo "✅ values.generated.yaml exists"
+          fi
+          
+          # 3. Check for required secrets in values
+          echo "🔐 Checking for required secrets..."
+          REQUIRED_SECRETS=("registry-credentials" "database-password" "api-key")
+          for SECRET in "${REQUIRED_SECRETS[@]}"; do
+            if kubectl get secret "$SECRET" -n default &> /dev/null 2>&1; then
+              echo "  ✅ Secret exists: $SECRET"
+            else
+              echo "  ⚠️  Secret not found (will be created/managed by chart): $SECRET"
+            fi
+          done
+          
+          # 4. Validate target namespace exists or can be created
+          NAMESPACE="${{ steps.prod-parse.outputs.instance }}"
+          if kubectl get namespace "$NAMESPACE" &> /dev/null 2>&1; then
+            echo "✅ Namespace exists: $NAMESPACE"
+          else
+            echo "ℹ️  Namespace will be created by Helm: $NAMESPACE"
+          fi
+          
+          # 5. Check cluster resources
+          echo "📊 Checking cluster resources..."
+          NODES=$(kubectl get nodes -q | wc -l)
+          echo "  ✅ Available nodes: $NODES"
+          
+          if [ "$NODES" -lt 1 ]; then
+            VALIDATION_ERRORS="$VALIDATION_ERRORS\n❌ No nodes available in cluster"
+          fi
+          
+          # 6. Validate Helm chart references
+          echo "📦 Validating Helm chart references..."
+          if helm repo list &> /dev/null; then
+            echo "  ✅ Helm repos accessible"
+          else
+            echo "  ⚠️  Helm repo list failed (will retry during deployment)"
+          fi
+          
+          # Report validation results
+          if [ -n "$VALIDATION_ERRORS" ]; then
+            echo -e "\n🚨 Pre-flight validation completed with issues:"
+            echo -e "$VALIDATION_ERRORS"
+            exit 1
+          else
+            echo -e "\n✅ Pre-flight validation PASSED - safe to proceed with PRODUCTION deployment"
+          fi
+          
+          echo "validation_complete=true" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve DB migration command
+        id: prod-db-migration
+        env:
+          INPUT_RUN_DB_MIGRATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.run_db_migration || 'true' }}
+          INPUT_DB_MIGRATION_COMMAND: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.db_migration_command || '' }}
+        run: |
+          set -euo pipefail
+          WORKDIR="$(dirname "${{ steps.prod-parse.outputs.helmfile }}")"
+          SCRIPT_PATH="$WORKDIR/db-migration.sh"
+          COMMAND_FILE_PATH="$WORKDIR/db-migration-command.txt"
+
+          SHOULD_RUN="false"
+          REASON=""
+          MIGRATION_COMMAND=""
+
+          if [ "$INPUT_RUN_DB_MIGRATION" != "true" ]; then
+            REASON="run_db_migration=false"
+          elif [ -n "$(echo "$INPUT_DB_MIGRATION_COMMAND" | tr -d '[:space:]')" ]; then
+            SHOULD_RUN="true"
+            MIGRATION_COMMAND="$INPUT_DB_MIGRATION_COMMAND"
+            REASON="workflow input db_migration_command"
+          elif [ -f "$SCRIPT_PATH" ]; then
+            chmod +x "$SCRIPT_PATH"
+            SHOULD_RUN="true"
+            MIGRATION_COMMAND="$SCRIPT_PATH"
+            REASON="instance migration script"
+          elif [ -f "$COMMAND_FILE_PATH" ]; then
+            FILE_COMMAND="$(sed -n '1p' "$COMMAND_FILE_PATH" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            if [ -n "$FILE_COMMAND" ]; then
+              SHOULD_RUN="true"
+              MIGRATION_COMMAND="$FILE_COMMAND"
+              REASON="instance migration command file"
+            else
+              REASON="db-migration-command.txt is empty"
+            fi
+          else
+            REASON="no migration configuration found"
+          fi
+
+          echo "should_run=$SHOULD_RUN" >> "$GITHUB_OUTPUT"
+          {
+            echo "command<<EOF"
+            echo "$MIGRATION_COMMAND"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+
+          echo "Migration check result: should_run=$SHOULD_RUN reason=$REASON"
+
+      - name: Run DB migration
+        if: env.DEPLOY_ACTION != 'diff' && steps.prod-db-migration.outputs.should_run == 'true'
+        env:
+          MIGRATION_COMMAND: ${{ steps.prod-db-migration.outputs.command }}
+        run: |
+          set -euo pipefail
+          echo "Running PRODUCTION migration command (${{ steps.prod-db-migration.outputs.reason }})"
+          bash -lc "$MIGRATION_COMMAND"
+          echo "✅ DB migration completed"
+
+      - name: DB migration summary
+        if: always()
+        run: |
+          {
+            echo "### Database migration (PRODUCTION)"
+            echo "- Should run: ${{ steps.prod-db-migration.outputs.should_run }}"
+            echo "- Reason: ${{ steps.prod-db-migration.outputs.reason }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Detect 1Password references
+        id: op-refs
+        run: |
+          set -euo pipefail
+          WORKDIR="$(dirname "${{ steps.prod-parse.outputs.helmfile }}")"
+          if grep -RIl --include='*.yaml' --include='*.yml' 'op://' "$WORKDIR" >/dev/null 2>&1; then
+            echo "has_refs=true" >> "$GITHUB_OUTPUT"
+            echo "1Password references detected in $WORKDIR"
+          else
+            echo "has_refs=false" >> "$GITHUB_OUTPUT"
+            echo "No 1Password references detected in $WORKDIR"
+          fi
+
+      - name: Install 1Password CLI
+        if: steps.op-refs.outputs.has_refs == 'true'
+        uses: 1password/install-cli-action@8d006a0d0a4fd505af7f7ce589e7f768385ff5e4 # v3.0.0
+
+      - name: Resolve 1Password references
+        if: steps.op-refs.outputs.has_refs == 'true'
+        run: |
+          set -euo pipefail
+          if [[ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
+            echo "::error::1Password references were found, but the read-only GitHub secret is not configured"
+            exit 1
+          fi
+          WORKDIR="$(dirname "${{ steps.prod-parse.outputs.helmfile }}")"
+          op whoami --format json >/dev/null
+          op inject -i "$WORKDIR/values.generated.yaml" -o "$WORKDIR/values.generated.resolved.yaml"
+          echo "Resolved 1Password references into $WORKDIR/values.generated.resolved.yaml"
+
+      - name: Helm diff
+        if: env.DEPLOY_ACTION == 'diff'
+        run: |
+          set -euo pipefail
+          HELMFILE="${{ steps.prod-parse.outputs.helmfile }}"
+          WORKDIR=$(dirname "$HELMFILE")
+          VALUES_FILE="values.generated.yaml"
+          if [ "${{ steps.op-refs.outputs.has_refs }}" = "true" ]; then
+            VALUES_FILE="values.generated.resolved.yaml"
+          fi
+          NAMESPACE="${{ steps.prod-parse.outputs.instance }}"
+          RELEASE_NAME="${{ steps.prod-parse.outputs.app }}-${{ steps.prod-parse.outputs.instance }}"
+          CHART=$(grep -A10 'releases:' "$HELMFILE" | grep 'chart:' | head -1 | awk '{print $2}')
+          CHART_VERSION=$(grep -A10 'releases:' "$HELMFILE" | grep 'version:' | head -1 | awk '{print $2}' | sed 's/"//g')
+
+          helm repo add symphonyfs https://helm.symphonyfs.net \
+            --username "$HELM_REPO_USERNAME" \
+            --password "$HELM_REPO_PASSWORD" --force-update || true
+          helm repo add platform https://charts.symphonyai.com --force-update || true
+          helm repo update
+          helm plugin list | grep -q '^diff' || helm plugin install https://github.com/databus23/helm-diff
+
+          cd "$WORKDIR"
+          echo "🔍 helm diff upgrade $RELEASE_NAME ($CHART ${CHART_VERSION:-latest}) in $NAMESPACE"
+          helm diff upgrade "$RELEASE_NAME" "$CHART" \
+            --namespace "$NAMESPACE" \
+            --values "$VALUES_FILE" \
+            ${CHART_VERSION:+--version "$CHART_VERSION"} \
+            --allow-unreleased \
+            --no-color | tee helm-diff.txt
+          {
+            echo "### Helm diff: $RELEASE_NAME"
+            echo '```diff'
+            head -c 60000 helm-diff.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy with Helm (Production)
+        if: env.DEPLOY_ACTION != 'diff'
+        id: prod-helm-deploy
+        run: |
+          set -euo pipefail
+          
+          HELMFILE="${{ steps.prod-parse.outputs.helmfile }}"
+          WORKDIR=$(dirname "$HELMFILE")
+          VALUES_FILE="values.generated.yaml"
+          if [ "${{ steps.op-refs.outputs.has_refs }}" = "true" ]; then
+            VALUES_FILE="values.generated.resolved.yaml"
+          fi
+          NAMESPACE="${{ steps.prod-parse.outputs.instance }}"
+          RELEASE_NAME="${{ steps.prod-parse.outputs.app }}-${{ steps.prod-parse.outputs.instance }}"
+          
+          echo "📦 PRODUCTION Helm Deployment in progress..."
+          echo "  Helmfile: $HELMFILE"
+          echo "  Namespace: $NAMESPACE"
+          echo "  Release: $RELEASE_NAME"
+          
+          cd "$WORKDIR"
+          
+          # Create namespace if it doesn't exist
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          echo "✅ Namespace ready: $NAMESPACE"
+          
+          # Validate helmfile syntax if helmfile CLI is available
+          if command -v helmfile &> /dev/null; then
+            echo "🔍 Validating helmfile..."
+            helmfile validate || {
+              echo "❌ Helmfile validation failed"
+              exit 1
+            }
+            echo "✅ Helmfile syntax valid"
+          fi
+          
+          # Update Helm repositories
+          helm repo add symphonyfs https://helm.symphonyfs.net \
+            --username "$HELM_REPO_USERNAME" \
+            --password "$HELM_REPO_PASSWORD" --force-update || true
+          helm repo add platform https://charts.symphonyai.com --force-update || true
+          helm repo update
+          
+          # Deploy/upgrade release with ATOMIC guarantee (rollback on failure)
+          echo "🚀 PRODUCTION: helm upgrade --install --atomic"
+          helm upgrade --install \
+            "$RELEASE_NAME" \
+            $(grep -A10 'releases:' "$HELMFILE" | grep 'chart:' | head -1 | awk '{print $2}') \
+            --namespace "$NAMESPACE" \
+            --values "$VALUES_FILE" \
+            --wait \
+            --timeout 10m \
+            --atomic \
+            --cleanup-on-fail \
+            --debug
+          
+          HELM_EXIT_CODE=$?
+          
+          if [ $HELM_EXIT_CODE -eq 0 ]; then
+            echo "✅ PRODUCTION Helm deployment succeeded"
+            echo "helm_status=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ PRODUCTION Helm deployment FAILED - atomic rollback executed"
+            echo "helm_status=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Retrieve Secrets from Key Vault
+        id: prod-keyvault
+        run: |
+          set -euo pipefail
+          
+          echo "🔐 Retrieving PRODUCTION secrets from Key Vault..."
+          VAULT_NAME="${KEYVAULT_NAME}"
+          
+          HELM_USERNAME=$(az keyvault secret show --vault-name "$VAULT_NAME" --name "helm-repo-username" --query value -o tsv)
+          HELM_PASSWORD=$(az keyvault secret show --vault-name "$VAULT_NAME" --name "helm-repo-password" --query value -o tsv)
+          DB_PASSWORD=$(az keyvault secret show --vault-name "$VAULT_NAME" --name "database-password" --query value -o tsv)
+          API_KEY=$(az keyvault secret show --vault-name "$VAULT_NAME" --name "api-key" --query value -o tsv)
+          
+          echo "helm_username=$HELM_USERNAME" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$HELM_PASSWORD"
+          echo "helm_password=$HELM_PASSWORD" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$DB_PASSWORD"
+          echo "database_password=$DB_PASSWORD" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$API_KEY"
+          echo "api_key=$API_KEY" >> "$GITHUB_OUTPUT"
+          
+          echo "✅ PRODUCTION secrets retrieved successfully (masked in logs)"
+
+      - name: Run Helm Tests (Production)
+        if: steps.prod-helm-deploy.outputs.helm_status == 'success'
+        id: prod-helm-tests
+        run: |
+          set -euo pipefail
+          
+          NAMESPACE="${{ steps.prod-parse.outputs.instance }}"
+          RELEASE_NAME="${{ steps.prod-parse.outputs.app }}-${{ steps.prod-parse.outputs.instance }}"
+          
+          echo "🧪 Running PRODUCTION Helm tests..."
+          
+          if helm test "$RELEASE_NAME" -n "$NAMESPACE" --timeout 5m; then
+            echo "✅ PRODUCTION Helm tests PASSED"
+            echo "test_status=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ PRODUCTION Helm tests FAILED"
+            echo "test_status=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Health Verification (Production)
+        if: steps.prod-helm-deploy.outputs.helm_status == 'success'
+        id: prod-health-check
+        run: |
+          set -euo pipefail
+          
+          NAMESPACE="${{ steps.prod-parse.outputs.instance }}"
+          RELEASE_NAME="${{ steps.prod-parse.outputs.app }}-${{ steps.prod-parse.outputs.instance }}"
+          
+          echo "🏥 Running PRODUCTION health verification (4-point check)..."
+          
+          # 1. Check pod status
+          echo ""
+          echo "1️⃣ Pod Status Check..."
+          READY_PODS=$(kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE_NAME" \
+            --field-selector=status.phase=Running -q | wc -l)
+          TOTAL_PODS=$(kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE_NAME" -q | wc -l)
+          echo "  Ready: $READY_PODS / $TOTAL_PODS pods"
+          
+          if [ "$READY_PODS" -eq "$TOTAL_PODS" ] && [ "$TOTAL_PODS" -gt 0 ]; then
+            echo "  ✅ All pods READY"
+            PODS_HEALTHY=true
+          else
+            echo "  ❌ FAILED: Some pods not ready"
+            PODS_HEALTHY=false
+          fi
+          
+          # 2. Check pod logs for errors
+          echo ""
+          echo "2️⃣ Log Analysis Check..."
+          ERROR_COUNT=$(kubectl logs -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE_NAME" \
+            --tail=100 --timestamps=true 2>/dev/null | grep -i "error\|fatal\|panic" | wc -l || echo "0")
+          
+          if [ "$ERROR_COUNT" -eq 0 ]; then
+            echo "  ✅ No errors/fatal/panic in logs"
+            LOGS_HEALTHY=true
+          else
+            echo "  ❌ FAILED: Found $ERROR_COUNT error(s)"
+            LOGS_HEALTHY=false
+          fi
+          
+          # 3. Check service endpoints
+          echo ""
+          echo "3️⃣ Service Endpoints Check..."
+          SERVICE_NAME="$RELEASE_NAME"
+          if kubectl get svc "$SERVICE_NAME" -n "$NAMESPACE" &> /dev/null; then
+            ENDPOINTS=$(kubectl get endpoints "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.subsets[*].addresses[*].ip}' | wc -w)
+            if [ "$ENDPOINTS" -gt 0 ]; then
+              echo "  ✅ Service has active endpoints ($ENDPOINTS)"
+              SERVICE_HEALTHY=true
+            else
+              echo "  ❌ FAILED: Service has no endpoints"
+              SERVICE_HEALTHY=false
+            fi
+          else
+            echo "  ❌ FAILED: Service not found"
+            SERVICE_HEALTHY=false
+          fi
+          
+          # 4. HTTP health check
+          echo ""
+          echo "4️⃣ HTTP Health Check..."
+          if kubectl get svc "$SERVICE_NAME" -n "$NAMESPACE" &> /dev/null; then
+            POD_NAME=$(kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE_NAME" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+            
+            if [ -n "$POD_NAME" ]; then
+              HEALTH_RESPONSE=$(kubectl exec -n "$NAMESPACE" "$POD_NAME" -- curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health 2>/dev/null || echo "000")
+              if [ "$HEALTH_RESPONSE" = "200" ] || [ "$HEALTH_RESPONSE" = "302" ]; then
+                echo "  ✅ /health endpoint returned $HEALTH_RESPONSE"
+                HTTP_HEALTHY=true
+              else
+                echo "  ❌ FAILED: /health returned $HEALTH_RESPONSE"
+                HTTP_HEALTHY=false
+              fi
+            else
+              echo "  ❌ FAILED: No pods available"
+              HTTP_HEALTHY=false
+            fi
+          fi
+          
+          # Summary
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 PRODUCTION Health Check Summary:"
+          echo "  Pod Status:     $([ "$PODS_HEALTHY" = "true" ] && echo "✅" || echo "❌")"
+          echo "  Logs Status:    $([ "$LOGS_HEALTHY" = "true" ] && echo "✅" || echo "❌")"
+          echo "  Service Status: $([ "$SERVICE_HEALTHY" = "true" ] && echo "✅" || echo "❌")"
+          echo "  HTTP Status:    $([ "$HTTP_HEALTHY" = "true" ] && echo "✅" || echo "❌")"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          
+          if [ "$PODS_HEALTHY" = "true" ] && [ "$SERVICE_HEALTHY" = "true" ] && [ "$LOGS_HEALTHY" = "true" ] && [ "$HTTP_HEALTHY" = "true" ]; then
+            echo "✅ PRODUCTION application is HEALTHY"
+            echo "health_status=healthy" >> "$GITHUB_OUTPUT"
+          else
+            echo "❌ PRODUCTION health verification FAILED"
+            echo "health_status=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+      - name: Generate Installation Report (Production)
+        if: always()
+        id: prod-report
+        run: |
+          set -euo pipefail
+          
+          echo "📋 Generating PRODUCTION installation report..."
+          
+          NAMESPACE="${{ steps.prod-parse.outputs.instance }}"
+          APP="${{ steps.prod-parse.outputs.app }}"
+          INSTANCE="${{ steps.prod-parse.outputs.instance }}"
+          REPORT_FILE="/tmp/installation-report-$APP-$INSTANCE.md"
+          
+          cat > "$REPORT_FILE" <<EOF
+          # Installation Report (PRODUCTION)
+          
+          **Generated:** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          **Application:** $APP
+          **Instance:** $INSTANCE
+          **Environment:** PRODUCTION (Approval Required)
+          **Status:** ${{ steps.prod-helm-deploy.outcome }}
+          **Actor:** ${GITHUB_ACTOR}
+          **Helm Tests:** ${{ steps.prod-helm-tests.outcome }}
+          **Health Check:** ${{ steps.prod-health-check.outcome }}
+          
+          ## Deployment Summary
+          - Helm Deployment: ${{ steps.prod-helm-deploy.outputs.helm_status || 'N/A' }}
+          - Tests Status: ${{ steps.prod-helm-tests.outputs.test_status || 'N/A' }}
+          - Health Status: ${{ steps.prod-health-check.outputs.health_status || 'N/A' }}
+          
+          ## Approval
+          - Approved By: ${GITHUB_ACTOR}
+          - Approval Time: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - Repository: ${GITHUB_REPOSITORY}
+          - Commit: ${GITHUB_SHA}
+          EOF
+          
+          echo "report_file=$REPORT_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Installation Report (Production)
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: production-installation-report-${{ steps.prod-parse.outputs.app }}-${{ steps.prod-parse.outputs.instance }}
+          path: /tmp/installation-report-*.md
+          retention-days: 90
+
+      - name: Post Deployment Summary (Production)
+        if: always()
+        run: |
+          {
+            echo "## PRODUCTION Deployment Summary"
+            echo ""
+            echo "| Metric | Status |"
+            echo "|--------|--------|"
+            echo "| Helm Deployment | ${{ steps.prod-helm-deploy.outcome }} |"
+            echo "| Helm Tests | ${{ steps.prod-helm-tests.outcome }} |"
+            echo "| Health Check | ${{ steps.prod-health-check.outcome }} |"
+            echo "| Overall | ${{ job.status }} |"
+            echo ""
+            echo "### Approval Details"
+            echo "- Approved By: ${GITHUB_ACTOR}"
+            echo "- Environment: PRODUCTION"
+            echo "- Application: ${{ steps.prod-parse.outputs.app }}"
+            echo "- Instance: ${{ steps.prod-parse.outputs.instance }}"
+            echo "- Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_STEP_SUMMARY"

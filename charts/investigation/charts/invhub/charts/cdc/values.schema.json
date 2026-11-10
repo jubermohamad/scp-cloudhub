@@ -1,0 +1,867 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "connectors": {
+            "type": "object",
+            "properties": {
+                "customersScreeningWmlJdbcConnector": {
+                    "type": "object",
+                    "properties": {
+                        "autoRestart": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "config": {
+                            "type": "object",
+                            "properties": {
+                                "batchMaxRows": {
+                                    "type": "integer"
+                                },
+                                "dbTimezone": {
+                                    "type": "string"
+                                },
+                                "keyConverter": {
+                                    "type": "string"
+                                },
+                                "keyConverterSchemasEnable": {
+                                    "type": "boolean"
+                                },
+                                "mode": {
+                                    "type": "string"
+                                },
+                                "pollIntervalMs": {
+                                    "type": "integer"
+                                },
+                                "query": {
+                                    "type": "string"
+                                },
+                                "schemaPattern": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "tableTypes": {
+                                    "type": "object",
+                                    "properties": {
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "timestampColumnName": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "topicCreation": {
+                                    "type": "object",
+                                    "properties": {
+                                        "defaultCleanupPolicy": {
+                                            "type": "string"
+                                        },
+                                        "defaultCompressionType": {
+                                            "type": "string"
+                                        },
+                                        "defaultDeleteRetentionMs": {
+                                            "type": "integer"
+                                        },
+                                        "defaultPartitions": {
+                                            "type": "integer"
+                                        },
+                                        "defaultReplicationFactor": {
+                                            "type": "integer"
+                                        },
+                                        "enable": {
+                                            "type": "boolean"
+                                        }
+                                    }
+                                },
+                                "topicPrefix": {
+                                    "type": "string"
+                                },
+                                "transforms": {
+                                    "type": "object",
+                                    "properties": {
+                                        "keyField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "payloadField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "valueConverter": {
+                                    "type": "string"
+                                },
+                                "valueConverterSchemasEnable": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "state": {
+                            "type": "string"
+                        },
+                        "tasksMax": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "paymentFraudJdbcConnector": {
+                    "type": "object",
+                    "properties": {
+                        "autoRestart": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "config": {
+                            "type": "object",
+                            "properties": {
+                                "batchMaxRows": {
+                                    "type": "integer"
+                                },
+                                "dbTimezone": {
+                                    "type": "string"
+                                },
+                                "keyConverter": {
+                                    "type": "string"
+                                },
+                                "keyConverterSchemasEnable": {
+                                    "type": "boolean"
+                                },
+                                "mode": {
+                                    "type": "string"
+                                },
+                                "pollIntervalMs": {
+                                    "type": "integer"
+                                },
+                                "query": {
+                                    "type": "string"
+                                },
+                                "schemaPattern": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "timestampColumnName": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "topicCreation": {
+                                    "type": "object",
+                                    "properties": {
+                                        "defaultCleanupPolicy": {
+                                            "type": "string"
+                                        },
+                                        "defaultCompressionType": {
+                                            "type": "string"
+                                        },
+                                        "defaultDeleteRetentionMs": {
+                                            "type": "integer"
+                                        },
+                                        "defaultPartitions": {
+                                            "type": "integer"
+                                        },
+                                        "defaultReplicationFactor": {
+                                            "type": "integer"
+                                        },
+                                        "enable": {
+                                            "type": "boolean"
+                                        }
+                                    }
+                                },
+                                "topicPrefix": {
+                                    "type": "string"
+                                },
+                                "transforms": {
+                                    "type": "object",
+                                    "properties": {
+                                        "keyField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "payloadField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "valueConverter": {
+                                    "type": "string"
+                                },
+                                "valueConverterSchemasEnable": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "state": {
+                            "type": "string"
+                        },
+                        "tasksMax": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "subjectScoredJdbcConnector": {
+                    "type": "object",
+                    "properties": {
+                        "autoRestart": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "config": {
+                            "type": "object",
+                            "properties": {
+                                "batchMaxRows": {
+                                    "type": "integer"
+                                },
+                                "dbTimezone": {
+                                    "type": "string"
+                                },
+                                "keyConverter": {
+                                    "type": "string"
+                                },
+                                "keyConverterSchemasEnable": {
+                                    "type": "boolean"
+                                },
+                                "mode": {
+                                    "type": "string"
+                                },
+                                "pollIntervalMs": {
+                                    "type": "integer"
+                                },
+                                "query": {
+                                    "type": "string"
+                                },
+                                "schemaPattern": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "tableTypes": {
+                                    "type": "object",
+                                    "properties": {
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "timestampColumnName": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "topicCreation": {
+                                    "type": "object",
+                                    "properties": {
+                                        "defaultCleanupPolicy": {
+                                            "type": "string"
+                                        },
+                                        "defaultCompressionType": {
+                                            "type": "string"
+                                        },
+                                        "defaultDeleteRetentionMs": {
+                                            "type": "integer"
+                                        },
+                                        "defaultPartitions": {
+                                            "type": "integer"
+                                        },
+                                        "defaultReplicationFactor": {
+                                            "type": "integer"
+                                        },
+                                        "enable": {
+                                            "type": "boolean"
+                                        }
+                                    }
+                                },
+                                "topicPrefix": {
+                                    "type": "string"
+                                },
+                                "transforms": {
+                                    "type": "object",
+                                    "properties": {
+                                        "keyField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "payloadField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "valueConverter": {
+                                    "type": "string"
+                                },
+                                "valueConverterSchemasEnable": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "state": {
+                            "type": "string"
+                        },
+                        "tasksMax": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "subjectUpdatesJdbcConnector": {
+                    "type": "object",
+                    "properties": {
+                        "autoRestart": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "config": {
+                            "type": "object",
+                            "properties": {
+                                "batchMaxRows": {
+                                    "type": "integer"
+                                },
+                                "dbTimezone": {
+                                    "type": "string"
+                                },
+                                "keyConverter": {
+                                    "type": "string"
+                                },
+                                "keyConverterSchemasEnable": {
+                                    "type": "boolean"
+                                },
+                                "mode": {
+                                    "type": "string"
+                                },
+                                "pollIntervalMs": {
+                                    "type": "integer"
+                                },
+                                "query": {
+                                    "type": "string"
+                                },
+                                "schemaPattern": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "timestampColumnName": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "topicCreation": {
+                                    "type": "object",
+                                    "properties": {
+                                        "defaultCleanupPolicy": {
+                                            "type": "string"
+                                        },
+                                        "defaultCompressionType": {
+                                            "type": "string"
+                                        },
+                                        "defaultDeleteRetentionMs": {
+                                            "type": "integer"
+                                        },
+                                        "defaultPartitions": {
+                                            "type": "integer"
+                                        },
+                                        "defaultReplicationFactor": {
+                                            "type": "integer"
+                                        },
+                                        "enable": {
+                                            "type": "boolean"
+                                        }
+                                    }
+                                },
+                                "topicPrefix": {
+                                    "type": "string"
+                                },
+                                "transforms": {
+                                    "type": "object",
+                                    "properties": {
+                                        "keyField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "payloadField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "valueConverter": {
+                                    "type": "string"
+                                },
+                                "valueConverterSchemasEnable": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "state": {
+                            "type": "string"
+                        },
+                        "tasksMax": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "transactionScreeningJdbcConnector": {
+                    "type": "object",
+                    "properties": {
+                        "autoRestart": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "config": {
+                            "type": "object",
+                            "properties": {
+                                "batchMaxRows": {
+                                    "type": "integer"
+                                },
+                                "dbTimezone": {
+                                    "type": "string"
+                                },
+                                "keyConverter": {
+                                    "type": "string"
+                                },
+                                "keyConverterSchemasEnable": {
+                                    "type": "boolean"
+                                },
+                                "mode": {
+                                    "type": "string"
+                                },
+                                "pollIntervalMs": {
+                                    "type": "integer"
+                                },
+                                "query": {
+                                    "type": "string"
+                                },
+                                "schemaPattern": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "timestampColumnName": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "topicCreation": {
+                                    "type": "object",
+                                    "properties": {
+                                        "defaultCleanupPolicy": {
+                                            "type": "string"
+                                        },
+                                        "defaultCompressionType": {
+                                            "type": "string"
+                                        },
+                                        "defaultDeleteRetentionMs": {
+                                            "type": "integer"
+                                        },
+                                        "defaultPartitions": {
+                                            "type": "integer"
+                                        },
+                                        "defaultReplicationFactor": {
+                                            "type": "integer"
+                                        },
+                                        "enable": {
+                                            "type": "boolean"
+                                        }
+                                    }
+                                },
+                                "topicPrefix": {
+                                    "type": "string"
+                                },
+                                "transforms": {
+                                    "type": "object",
+                                    "properties": {
+                                        "keyField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "payloadField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "valueConverter": {
+                                    "type": "string"
+                                },
+                                "valueConverterSchemasEnable": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "state": {
+                            "type": "string"
+                        },
+                        "tasksMax": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "unusualActivitiesJdbcConnector": {
+                    "type": "object",
+                    "properties": {
+                        "autoRestart": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "config": {
+                            "type": "object",
+                            "properties": {
+                                "batchMaxRows": {
+                                    "type": "integer"
+                                },
+                                "dbTimezone": {
+                                    "type": "string"
+                                },
+                                "keyConverter": {
+                                    "type": "string"
+                                },
+                                "keyConverterSchemasEnable": {
+                                    "type": "boolean"
+                                },
+                                "mode": {
+                                    "type": "string"
+                                },
+                                "pollIntervalMs": {
+                                    "type": "integer"
+                                },
+                                "query": {
+                                    "type": "string"
+                                },
+                                "schemaPattern": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "timestampColumnName": {
+                                    "type": "object",
+                                    "properties": {
+                                        "oracle": {
+                                            "type": "string"
+                                        },
+                                        "postgres": {
+                                            "type": "string"
+                                        }
+                                    }
+                                },
+                                "topicCreation": {
+                                    "type": "object",
+                                    "properties": {
+                                        "defaultCleanupPolicy": {
+                                            "type": "string"
+                                        },
+                                        "defaultCompressionType": {
+                                            "type": "string"
+                                        },
+                                        "defaultDeleteRetentionMs": {
+                                            "type": "integer"
+                                        },
+                                        "defaultPartitions": {
+                                            "type": "integer"
+                                        },
+                                        "defaultReplicationFactor": {
+                                            "type": "integer"
+                                        },
+                                        "enable": {
+                                            "type": "boolean"
+                                        }
+                                    }
+                                },
+                                "topicPrefix": {
+                                    "type": "string"
+                                },
+                                "transforms": {
+                                    "type": "object",
+                                    "properties": {
+                                        "keyField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "payloadField": {
+                                            "type": "object",
+                                            "properties": {
+                                                "oracle": {
+                                                    "type": "string"
+                                                },
+                                                "postgres": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                },
+                                "valueConverter": {
+                                    "type": "string"
+                                },
+                                "valueConverterSchemasEnable": {
+                                    "type": "boolean"
+                                }
+                            }
+                        },
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "state": {
+                            "type": "string"
+                        },
+                        "tasksMax": {
+                            "type": "integer"
+                        }
+                    }
+                }
+            }
+        },
+        "global": {
+            "type": "object"
+        },
+        "kafkaConnect": {
+            "type": "object",
+            "properties": {
+                "bootstrapServers": {
+                    "type": "string"
+                },
+                "config": {
+                    "type": "object"
+                },
+                "image": {
+                    "type": "object",
+                    "properties": {
+                        "repository": {
+                            "type": "string"
+                        },
+                        "tag": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "logging": {
+                    "type": "object",
+                    "properties": {
+                        "level": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "replicas": {
+                    "type": "integer"
+                },
+                "template": {
+                    "type": "object",
+                    "properties": {
+                        "pod": {
+                            "type": "object",
+                            "properties": {
+                                "imagePullSecrets": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": {
+                                                "type": "string"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "trustedCertificateSecretName": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

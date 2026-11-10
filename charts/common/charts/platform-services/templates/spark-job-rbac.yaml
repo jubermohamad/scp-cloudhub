@@ -1,0 +1,76 @@
+{{- /*
+SPARK JOB RBAC, per environment (P14).
+
+The shared spark-operator watches ALL namespaces (`spark.jobNamespaces: [""]` on
+the operators release). This renders the identity its jobs run AS, in the
+namespace they run IN — one copy per environment, owned by that environment's
+release.
+
+WHY IT MOVED HERE. The operator chart can create this itself, but only by naming
+every job namespace in `spark.jobNamespaces` on the operators release. That list
+does not scale and is actively dangerous with more than one environment:
+
+  * every new environment (qa1…qa10) means UPGRADING the release that all the
+    others depend on, to add one string;
+  * the chart's own note is "Make sure the namespaces have already existed", and
+    the operators release installs BEFORE the umbrella that creates the
+    namespace — so the first install of a new environment fails with
+    `namespaces "sri-qa" not found`. Which is exactly what happened;
+  * and the list only grows.
+
+With `[""]` the operator watches everything and the chart renders NO
+per-namespace objects at all (its own templates skip the empty entry), so this
+is the piece that has to exist somewhere. Here it is owned by the environment
+that uses it, created and destroyed with it, and adding an environment touches
+nothing shared.
+
+Rules are copied deliberately from the operator chart's own spark/rbac.yaml
+(spark-operator 2.3.0) rather than invented: a driver pod creates its executor
+pods, the ConfigMap it ships them, its headless Service and any PVCs it claims.
+Diverging from upstream here would fail at job-submission time, not at install.
+
+NOT to be confused with `spark-operator-manipulator`, which detectionhub renders:
+that is the ServiceAccount the SparkApplication RUN TEMPLATES name verbatim, and
+it is a documented standing exception (docs/NAMING-MIGRATION.md risk #1).
+*/}}
+{{- if .Values.sparkJobRbac.enabled }}
+{{- $sa := .Values.sparkJobRbac.serviceAccountName }}
+{{- if not $sa }}
+{{- fail "sparkJobRbac.enabled is true but serviceAccountName is empty — spark drivers would run as `default`, which cannot create executor pods, and the failure appears only when a job is submitted." }}
+{{- end }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform-services.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $sa }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform-services.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods, configmaps, persistentvolumeclaims, services]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $sa }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform-services.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $sa }}
+{{- end }}

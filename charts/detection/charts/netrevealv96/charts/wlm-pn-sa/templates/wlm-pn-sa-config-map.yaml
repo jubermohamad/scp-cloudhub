@@ -1,0 +1,452 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-wlm-pn-sa-base-config-property"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-wlm-pn-sa-base-config-property"
+  annotations:
+    reloader.stakater.com/match: "true"
+data:
+  base_config.properties: |
+    server.name=ProcNodeSt
+    application.name={{ .Values.global.baseConfigProperties.applicationName }}
+    system.default.timezone=UTC
+    system.default.language={{ .Values.global.baseConfigProperties.systemDefaultLanguage }}
+    system.default.country={{ .Values.global.baseConfigProperties.systemDefaultCountry }}
+    system.encoding=UTF8
+    system.authentication=INTERNAL
+    saml.user.groupSync=true
+    mailserver={{ .Values.global.baseConfigProperties.mail.server }}
+    frommailid={{ .Values.global.baseConfigProperties.mail.fromMailId }}
+    mailpassword={{ .Values.global.baseConfigProperties.mail.password }}
+    mailuser={{ .Values.global.baseConfigProperties.mail.user }}
+    transaction.manager.name=
+    jndi.dataSource=java:/datasource/ApplicationBaseDS
+    jdbc.driver=org.hsqldb.jdbc.JDBCDriver
+    jdbc.url=jdbc:hsqldb:file:/opt/netreveal/standaloneHome/hsqldb/data/mydb;shutdown=true;sql.syntax_ora=true
+    hibernate.dialect=org.hibernate.dialect.HSQLDialect
+    jdbc.userid=SA
+    jdbc.passwd=
+    jdbc.schema=
+    hibernate.show_sql=false
+    hibernate.cache.use_query_cache=true
+    hibernate.cache.use_second_level_cache=true
+    max.threads.batch.processing=5
+    max.threads.batch.transformation=1
+    max.threads.list.import=1
+    dbloader.home=/opt/netreveal/standaloneHome/conf/monitoring/dbloader
+    dbloader.data=/opt/netreveal/standaloneHome/data/dbloader
+    notification.email.jndi=
+    notification.email.from={{ .Values.global.baseConfigProperties.mail.notificationEmailFrom }}
+    notification.email.subject=Notification
+    hibernate.hikariCP.autoCommit={{ .Values.baseConfigProperties.hibernate.hikari.autoCommit }}
+    hibernate.hikariCP.connectionTimeout={{ .Values.baseConfigProperties.hibernate.hikari.connectionTimeout }}
+    hibernate.hikariCP.idleTimeout={{ .Values.baseConfigProperties.hibernate.hikari.idleTimeout }}
+    hibernate.hikariCP.maxLifetime={{ .Values.baseConfigProperties.hibernate.hikari.maxLifetime }}
+    hibernate.hikariCP.minimumIdle={{ .Values.baseConfigProperties.hibernate.hikari.minimumIdle }}
+    hibernate.hikariCP.maximumPoolSize={{ .Values.baseConfigProperties.hibernate.hikari.maximumPoolSize }}
+    scenariomanager.gui.validation=false
+    scenariomanager.gui.debugger=true
+    scenariomanager.gui.debugger.maxrecords=100
+    scenariomanager.gui.background.gradient.begin.color=237,237,237
+    scenariomanager.gui.background.gradient.end.color=237,237,237
+    scenariomanager.gui.control.highlight.color=255,255,255
+    scenariomanager.gui.control.shadow.color=128,128,128
+    scenariomanager.gui.in.focus.color=247,0,74
+    scenariomanager.gui.out.of.focus.color=288,244,0
+    scenariomanager.gui.panel.background.color=237,237,237
+    scenariomanager.gui.panel.text.color=0,28,63
+    scenariomanager.gui.errorpanel.text.color=0,28,63
+    scenariomanager.gui.titlepanel.background.gradient.begin.color=70,103,144
+    scenariomanager.gui.titlepanel.background.gradient.end.color=70,103,144
+    scenariomanager.gui.titlepanel.text.color=255,255,255
+    scenariomanager.gui.row.sortable.header.color=237,237,237
+    scenariomanager.gui.row.sortable.header.text.color=70,103,144
+    scenariomanager.gui.selected.button.color=239,239,239
+    scenariomanager.gui.selected.row.color=240,173,69
+    scenariomanager.gui.table.row.color=209,229,251
+    scenariomanager.gui.toolbar.location=top
+    scenariomanager.gui.graph.logicaloperator.color=220,145,145
+    scenariomanager.gui.graph.numericaloperator.color=220,145,145
+    scenariomanager.gui.graph.identifier.color=145,145,220
+    scenariomanager.gui.graph.literal.color=145,220,145
+    scenariomanager.gui.graph.function.color=220,220,145
+    scenariomanager.gui.graph.listcontains.color=220,145,220
+    scenariomanager.gui.graph.layout=hierarchical
+    scenariomanager.gui.graph.orientation=left_to_right
+    scenariomanager.gui.graph.checkDefinition.layout=hvtree
+    scenariomanager.gui.graph.checkDefinition.orientation=top_to_bottom
+    scenariomanager.gui.graph.checkOverview.layout=hvtree
+    scenariomanager.gui.graph.checkOverview.orientation=top_to_bottom
+    scenariomanager.gui.graph.scenarioChain.layout=hvtree
+    scenariomanager.gui.graph.scenarioChain.orientation=top_to_bottom
+    scenariomanager.gui.graph.configurationVersion.layout=hierarchical
+    scenariomanager.gui.graph.configurationVersion.orientation=left_to_right
+    scenariomanager.gui.graph.layout.animate=false
+    kafka.topic.name.prefix={{ .Values.global.baseConfigProperties.kafka.topicNamePrefix }}
+    filtering.editable={{ .Values.baseConfigProperties.filteringEditable }}
+    filtering.editablelists={{ .Values.baseConfigProperties.filteringEditableLists }}
+    filtering.root.dir=/opt/netreveal/standaloneHome/conf/wlm
+    filtering.24x7.node.type=PROC
+    filtering.initialise.used.indexes=false
+    filtering.staging.dir=/opt/WLM/staging
+    filtering.24x7.staging.sublocation.indexes.dir=indexes
+    filtering.24x7.staging.sublocation.model.dir=model
+    filtering.24x7.wlm.local.repo.basedir=${filtering.root.dir}/localRepo
+    filtering.24x7.ags.fault.recovery.dir=${filtering.root.dir}/agsrecovery
+    filtering.24x7.ags.nonalert.fault.recovery.dir=${filtering.root.dir}/agsnonalertrecovery
+    filtering.24x7.ags.backup.recovery.interval={{ .Values.baseConfigProperties.filtering24x7AgsBackupRecorveryInterval }}
+    filter.serializedMessages.dir=${filtering.root.dir}/serializedMessages
+    filtering.build.used.mem.indexes=true
+    filtering.build.indexes.onstartup={{ .Values.baseConfigProperties.filteringBuildIndexesOnStartup }}
+    filtering.db.statement.batch.size={{ .Values.baseConfigProperties.filteringDbStatementBatchSize }}
+    filtering.settings.dir=${filtering.root.dir}/settings
+    filtering.alert.saver.extension.dir=${filtering.root.dir}/alertsaver
+    filtering.alert.saver.extension.config.group=
+    filtering.archive.root.dir=${filtering.root.dir}/archive
+    filtering.archive.lists.dir=${filtering.archive.root.dir}/lists
+    filtering.archive.lists=true
+    filtering.archive.batches.dir=${filtering.archive.root.dir}/batches
+    filtering.archive.batches=true
+    filtering.archive.wlmconfig.dir=${filtering.archive.root.dir}/wlmconfig
+    filtering.archive.wlmconfig=true
+    baseplatform.root.dir=${filtering.root.dir}
+    baseplatform.transliteration.dir=${baseplatform.root.dir}/trans/file
+    eim.entity.archive.dir=/opt/netreveal/standaloneHome/archives/attachments
+    workflow.enable.rule.scheduler=true
+    filtering.ftp.folder=filterImport
+    filtering.worldcheck.automatic.import.dir=${filtering.root.dir}/worldcheck
+    filtering.batch.watch.import.root.dir=${filtering.root.dir}/batchwatch
+    filtering.custom.list.import.root.dir=${filtering.root.dir}/listImport
+    filtering.shared.dir=${filtering.root.dir}/shared
+    filtering.reports.dir=${filtering.root.dir}/reports
+    filtering.templates.dir=${filtering.root.dir}/templates
+    filtering.number.fraction.separator.is.point=true
+    filtering.controller.closesession.rollback=false
+    org.quartz.scheduler.instanceName=FilteringScheduler
+    org.quartz.scheduler.instanceId=one
+    org.quartz.threadPool.class=org.quartz.simpl.SimpleThreadPool
+    org.quartz.threadPool.threadCount=5
+    org.quartz.threadPool.threadPriority=1
+    org.quartz.jobStore.misfireThreshold=5000
+    org.quartz.jobStore.class=org.quartz.simpl.RAMJobStore
+    filtering.statistics.watchlist.matching.skip.scoring=false
+    filtering.wc.list.automatic.build.on.import=true
+    filtering.adapter.name=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.logic.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeLogicImpl
+    filtering.realtime.classname.adapter.TrxAcqQueue=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.jmsservice.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeJMSService
+    filtering.default.encoding=UTF-8
+    filtering.xsl.dir=${filtering.root.dir}/config
+    filtering.gsv.transformation.encoding=default
+    filtering.eim.ags.alertSaver.sequenceName.ultimate_default=WLM-Alert-Seq
+    filtering.eim.ags.nonAlertSaver.sequenceName.ultimate_default=WLM-NonAlert-Seq
+    filtering.singlelookup.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.singlelookup.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.realtime.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.realtime.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.batch.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.batch.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.interactive.alert.saver.classname=com.norkom.wlm.business.alert.plugin.InteractiveSearchResultSaver
+    filtering.fpfa.list.automatic.build.on.import=true
+    filtering.fpfa.automatic.import.dir=${filtering.root.dir}/fpfa
+    filtering.gwl.automatic.import.dir=${filtering.root.dir}/gwl
+    filtering.gwl.list.automatic.build.on.import=true
+    norkom.reports.templates.dir=conf/templates/notifications
+    norkom.velocity.templates.dir=/conf/templates
+    services.errorhandling.enabled=true
+    services.errorhandling.primaryauditor.name=er_database
+    services.errorhandling.er_database.class=com.norkom.acquisition.business.errorauditors.DbAuditor
+    filtering.batch.recovery.location=${filtering.root.dir}/shared/batch-recovery
+    filtering.batch.dbrecovery.location=${filtering.root.dir}/batch/dbrecovery
+    velocity.runtime.log.logsystem.class=org.apache.velocity.runtime.log.NullLogSystem
+    database.type=HSQLDB
+    filtering.kafka.consumer.group.name=wlm-batch-consumer-group-proc
+    filtering.kafka.consumer.max.poll.interval.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollIntervalMs }}
+    filtering.kafka.consumer.max.poll.records={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollRecords }}
+    filtering.kafka.consumer.session.timeout.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerSessionTimeoutMs }}
+    filtering.batch.processing.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-process
+    filtering.batch.processing.kafka.node.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaNodeCount }}
+    filtering.batch.processing.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaConsumerCount }}
+    filtering.batch.processing.kafka.consumer.startup=false
+    filtering.batch.transformation.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-transform-dummy
+    filtering.batch.transformation.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaConsumerCount }}
+    filtering.batch.transformation.kafka.retries={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaRetries }}
+    filtering.batch.transformation.kafka.consumer.startup=false
+    filtering.list.import.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-list-import-dummy
+    filtering.list.import.kafka.consumer.count={{ .Values.baseConfigProperties.filteringListImportKafkaConsumerCount }}
+    filtering.list.import.kafka.consumer.startup=true
+    filtering.24x7.igs.reply.producer=IGS_REPLY_PRODUCER
+    filtering.24x7.igs.reply.consumer=MASTER_IGS_RESPONSE
+    filtering.24x7.wlm.igs.write.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcWriteSleepTime }}
+    filtering.24x7.wlm.proc.read.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcReadSleepTime }}
+    filtering.indexes.dir=${filtering.root.dir}/indexes
+    filtering.24x7.processing.group.name={{ .Values.baseConfigProperties.filtering24x7ProcessingGroupName }}
+    filtering.24x7.processing.node.name=${pod.name}
+    filtering.24x7.processing.node.registration.sequence.name=RegisterNodeSequence
+    filtering.24x7.processing.node.registration.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationStartDelay }}
+    filtering.24x7.processing.node.registration.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRetryInterval }}
+    filtering.24x7.processing.node.registration.correlation.sequence=CorrelationSequence
+    filtering.24x7.processing.node.registration.request.timeout={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRequestTimeout }}
+    filtering.24x7.processing.node.swift.mt.linking.job.enable={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobEnable }}
+    filtering.24x7.processing.node.swift.mt.linking.job.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval }}
+    filtering.24x7.processing.node.swift.mt.linking.job.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay }}
+    filtering.24x7.processing.node.swift.mt.linking.consumer.poll.timeout={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingConsumerPollTimeout }}
+    filtering.24x7.processing.node.swift.mt.linking.records.processing.limit={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingRecordsProcessingLimit }}
+    filtering.24x7.processing.node.swift.info.interim.sequence.name=WLM_ConsumerPN_Read24x7_SWIFT_INFO_INTERIM_Sequence
+    filtering.24x7.processing.node.swift.mt.linking.consumer.group.id=SwiftMTLinkingJob-KafkaConsumer
+    filtering.24x7.processing.node.swift.info.topic.name=${kafka.topic.name.prefix}nr-wlm-swift-info
+    filtering.24x7.processing.node.swift.info.interim.topic.name=${kafka.topic.name.prefix}nr-wlm-swift-info-interim
+    mailprotocol={{ .Values.global.baseConfigProperties.mail.protocol }}
+    services.errorhandling.secondaryauditor.name=er_file
+    services.errorhandling.er_file.class=com.norkom.acquisition.business.errorauditors.FileAuditor
+    services.errorhandling.er_file.path=/opt/netreveal/standaloneHome/logs/services/services-errors.txt
+    router.dhc.myNode=0
+    apps.performance.monitoring.class.list=
+    process.inbound.emails=false
+    installed.apps.vertical.wlmags=Y
+    kafka.producer.EIM-Default-Producer.bootstrap.servers={{ include "kafka.bootstrap.servers.service.name" . }}
+    {{- include "kafka.default.producer.security" (list $ . "/opt/netreveal/standaloneHome") }}
+    kafka.producer.EIM-Default-Producer.metrics.interval={{ .Values.baseConfigProperties.kafka.producer.EIMDefaultProducer.metricsInterval }}
+    kafka.producer.EIM-Default-Producer.interceptor.enabled={{ .Values.baseConfigProperties.kafka.producer.EIMDefaultProducer.interceptorEnabled }}
+    {{- if ne .Values.baseConfigProperties.kafka.consumers.bypass.node.registration.list "" }}
+    {{/* https://netreveal.atlassian.net/wiki/spaces/Eng/pages/266469706/WLMX-1514+-+Services+Manager+in+WLM+RT-PROC+Node+is+initialized+before+WLM+Core+is+ready+causing+loss+of+processing */}}
+    kafka.consumers.bypass.node.registration.list={{ .Values.baseConfigProperties.kafka.consumers.bypass.node.registration.list }}
+    {{- end }}
+    kafka.consumers.list=WLM_CounsumerPN_GetRegisterAck,WLM_CounsumerPN_ReadMsg,WLM_CounsumerPN_ReadSL,WLM_CounsumerPN_Read-swift-info-interim,WLM_Batch_Kafka_Processing,WLM_Batch_Kafka_Failure,WLMAGS_Prospect_Subject_In
+    kafka.bootstrap.servers={{ include "kafka.bootstrap.servers.service.name" . }}
+    {{- include "kafka.defult.consumer.security" (list $ . "/opt/netreveal/standaloneHome") }}
+    kafka.consumer.config.DEFAULT.max.poll.records=1
+    filtering.24x7.processing.node.swift.mt.linking.bootstrap.servers={{ include "kafka.bootstrap.servers.service.name" . }}
+    {{- include "kafka.filtering.24x7.processing.node.swift.mt.linking.security.protocol" (list $ . "/opt/netreveal/standaloneHome") }}
+    {{- include "kafka.filtering.security" (list $ . "/opt/netreveal/standaloneHome") }}
+    base.normalization.cache=true
+    datasource.dataSource.dbType=HSQLDB
+    {{- include "base.config.properties.custom.parameters" . | nindent 4 }}
+
+{{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.wlmPnSa }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-wlm-pn-sa-import-base-config-property"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-wlm-pn-sa-base-config-property"
+data:
+  base_config.properties: |
+    server.name=ProcNodeSt
+    application.name={{ .Values.global.baseConfigProperties.applicationName }}
+    system.default.timezone=UTC
+    system.default.language={{ .Values.global.baseConfigProperties.systemDefaultLanguage }}
+    system.default.country={{ .Values.global.baseConfigProperties.systemDefaultCountry }}
+    system.encoding=UTF8
+    system.authentication=INTERNAL
+    saml.user.groupSync=true
+    mailserver={{ .Values.global.baseConfigProperties.mail.server }}
+    frommailid={{ .Values.global.baseConfigProperties.mail.fromMailId }}
+    mailpassword={{ .Values.global.baseConfigProperties.mail.password }}
+    mailuser={{ .Values.global.baseConfigProperties.mail.user }}
+    transaction.manager.name=
+    jndi.dataSource=java:/datasource/ApplicationBaseDS
+    jdbc.driver=org.hsqldb.jdbc.JDBCDriver
+    jdbc.url=jdbc:hsqldb:file:/opt/netreveal/standaloneHome/hsqldb/data/mydb;shutdown=true;sql.syntax_ora=true
+    hibernate.dialect=org.hibernate.dialect.HSQLDialect
+    jdbc.userid=SA
+    jdbc.passwd=
+    jdbc.schema=
+    hibernate.show_sql=false
+    hibernate.cache.use_query_cache=true
+    hibernate.cache.use_second_level_cache=true
+    max.threads.batch.processing=5
+    max.threads.batch.transformation=1
+    max.threads.list.import=1
+    dbloader.home=/opt/netreveal/standaloneHome/conf/monitoring/dbloader
+    dbloader.data=/opt/netreveal/standaloneHome/data/dbloader
+    notification.email.jndi=
+    notification.email.from={{ .Values.global.baseConfigProperties.mail.notificationEmailFrom }}
+    notification.email.subject=Notification
+    hibernate.hikariCP.autoCommit={{ .Values.baseConfigProperties.hibernate.hikari.autoCommit }}
+    hibernate.hikariCP.connectionTimeout={{ .Values.baseConfigProperties.hibernate.hikari.connectionTimeout }}
+    hibernate.hikariCP.idleTimeout={{ .Values.baseConfigProperties.hibernate.hikari.idleTimeout }}
+    hibernate.hikariCP.maxLifetime={{ .Values.baseConfigProperties.hibernate.hikari.maxLifetime }}
+    hibernate.hikariCP.minimumIdle={{ .Values.baseConfigProperties.hibernate.hikari.minimumIdle }}
+    hibernate.hikariCP.maximumPoolSize={{ .Values.baseConfigProperties.hibernate.hikari.maximumPoolSize }}
+    scenariomanager.gui.validation=false
+    scenariomanager.gui.debugger=true
+    scenariomanager.gui.debugger.maxrecords=100
+    scenariomanager.gui.background.gradient.begin.color=237,237,237
+    scenariomanager.gui.background.gradient.end.color=237,237,237
+    scenariomanager.gui.control.highlight.color=255,255,255
+    scenariomanager.gui.control.shadow.color=128,128,128
+    scenariomanager.gui.in.focus.color=247,0,74
+    scenariomanager.gui.out.of.focus.color=288,244,0
+    scenariomanager.gui.panel.background.color=237,237,237
+    scenariomanager.gui.panel.text.color=0,28,63
+    scenariomanager.gui.errorpanel.text.color=0,28,63
+    scenariomanager.gui.titlepanel.background.gradient.begin.color=70,103,144
+    scenariomanager.gui.titlepanel.background.gradient.end.color=70,103,144
+    scenariomanager.gui.titlepanel.text.color=255,255,255
+    scenariomanager.gui.row.sortable.header.color=237,237,237
+    scenariomanager.gui.row.sortable.header.text.color=70,103,144
+    scenariomanager.gui.selected.button.color=239,239,239
+    scenariomanager.gui.selected.row.color=240,173,69
+    scenariomanager.gui.table.row.color=209,229,251
+    scenariomanager.gui.toolbar.location=top
+    scenariomanager.gui.graph.logicaloperator.color=220,145,145
+    scenariomanager.gui.graph.numericaloperator.color=220,145,145
+    scenariomanager.gui.graph.identifier.color=145,145,220
+    scenariomanager.gui.graph.literal.color=145,220,145
+    scenariomanager.gui.graph.function.color=220,220,145
+    scenariomanager.gui.graph.listcontains.color=220,145,220
+    scenariomanager.gui.graph.layout=hierarchical
+    scenariomanager.gui.graph.orientation=left_to_right
+    scenariomanager.gui.graph.checkDefinition.layout=hvtree
+    scenariomanager.gui.graph.checkDefinition.orientation=top_to_bottom
+    scenariomanager.gui.graph.checkOverview.layout=hvtree
+    scenariomanager.gui.graph.checkOverview.orientation=top_to_bottom
+    scenariomanager.gui.graph.scenarioChain.layout=hvtree
+    scenariomanager.gui.graph.scenarioChain.orientation=top_to_bottom
+    scenariomanager.gui.graph.configurationVersion.layout=hierarchical
+    scenariomanager.gui.graph.configurationVersion.orientation=left_to_right
+    scenariomanager.gui.graph.layout.animate=false
+    kafka.topic.name.prefix={{ .Values.global.baseConfigProperties.kafka.topicNamePrefix }}
+    filtering.editable=false
+    filtering.editablelists={{ .Values.baseConfigProperties.filteringEditableLists }}
+    filtering.root.dir=/opt/netreveal/standaloneHome/conf/wlm
+    filtering.24x7.node.type=PROC
+    filtering.initialise.used.indexes=false
+    filtering.staging.dir=/opt/WLM/staging
+    filtering.24x7.staging.sublocation.indexes.dir=indexes
+    filtering.24x7.staging.sublocation.model.dir=model
+    filtering.24x7.wlm.local.repo.basedir=${filtering.root.dir}/localRepo
+    filtering.24x7.ags.fault.recovery.dir=${filtering.root.dir}/agsrecovery
+    filtering.24x7.ags.nonalert.fault.recovery.dir=${filtering.root.dir}/agsnonalertrecovery
+    filtering.24x7.ags.backup.recovery.interval={{ .Values.baseConfigProperties.filtering24x7AgsBackupRecorveryInterval }}
+    filter.serializedMessages.dir=${filtering.root.dir}/serializedMessages
+    filtering.build.used.mem.indexes=true
+    filtering.build.indexes.onstartup=false
+    filtering.db.statement.batch.size={{ .Values.baseConfigProperties.filteringDbStatementBatchSize }}
+    filtering.settings.dir=${filtering.root.dir}/settings
+    filtering.alert.saver.extension.dir=${filtering.root.dir}/alertsaver
+    filtering.alert.saver.extension.config.group=
+    filtering.archive.root.dir=${filtering.root.dir}/archive
+    filtering.archive.lists.dir=${filtering.archive.root.dir}/lists
+    filtering.archive.lists=true
+    filtering.archive.batches.dir=${filtering.archive.root.dir}/batches
+    filtering.archive.batches=true
+    filtering.archive.wlmconfig.dir=${filtering.archive.root.dir}/wlmconfig
+    filtering.archive.wlmconfig=true
+    baseplatform.root.dir=${filtering.root.dir}
+    baseplatform.transliteration.dir=${baseplatform.root.dir}/trans/file
+    eim.entity.archive.dir=/opt/netreveal/standaloneHome/archives/attachments
+    workflow.enable.rule.scheduler=true
+    filtering.ftp.folder=filterImport
+    filtering.worldcheck.automatic.import.dir=${filtering.root.dir}/worldcheck
+    filtering.batch.watch.import.root.dir=${filtering.root.dir}/batchwatch
+    filtering.custom.list.import.root.dir=${filtering.root.dir}/listImport
+    filtering.shared.dir=${filtering.root.dir}/shared
+    filtering.reports.dir=${filtering.root.dir}/reports
+    filtering.templates.dir=${filtering.root.dir}/templates
+    filtering.number.fraction.separator.is.point=true
+    filtering.controller.closesession.rollback=false
+    org.quartz.scheduler.instanceName=FilteringScheduler
+    org.quartz.scheduler.instanceId=one
+    org.quartz.threadPool.class=org.quartz.simpl.SimpleThreadPool
+    org.quartz.threadPool.threadCount=5
+    org.quartz.threadPool.threadPriority=1
+    org.quartz.jobStore.misfireThreshold=5000
+    org.quartz.jobStore.class=org.quartz.simpl.RAMJobStore
+    filtering.statistics.watchlist.matching.skip.scoring=false
+    filtering.wc.list.automatic.build.on.import=true
+    filtering.adapter.name=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.logic.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeLogicImpl
+    filtering.realtime.classname.adapter.TrxAcqQueue=com.norkom.wlm.business.adapter.DefaultRealtimeFilteringAdapter
+    filtering.realtime.classname.jmsservice.TrxAcqQueue=com.norkom.wlm.business.realtime.DefaultRealtimeJMSService
+    filtering.default.encoding=UTF-8
+    filtering.xsl.dir=${filtering.root.dir}/config
+    filtering.gsv.transformation.encoding=default
+    filtering.eim.ags.alertSaver.sequenceName.ultimate_default=WLM-Alert-Seq
+    filtering.eim.ags.nonAlertSaver.sequenceName.ultimate_default=WLM-NonAlert-Seq
+    filtering.singlelookup.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.singlelookup.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.realtime.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.realtime.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.batch.alert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSAlertSaver
+    filtering.batch.nonalert.saver.classname=com.norkom.wlm.business.alert.plugin.AGSNonAlertSaver
+    filtering.interactive.alert.saver.classname=com.norkom.wlm.business.alert.plugin.InteractiveSearchResultSaver
+    filtering.fpfa.list.automatic.build.on.import=true
+    filtering.fpfa.automatic.import.dir=${filtering.root.dir}/fpfa
+    filtering.gwl.automatic.import.dir=${filtering.root.dir}/gwl
+    filtering.gwl.list.automatic.build.on.import=true
+    norkom.reports.templates.dir=conf/templates/notifications
+    norkom.velocity.templates.dir=/conf/templates
+    services.errorhandling.enabled=true
+    services.errorhandling.primaryauditor.name=er_database
+    services.errorhandling.er_database.class=com.norkom.acquisition.business.errorauditors.DbAuditor
+    filtering.batch.recovery.location=${filtering.root.dir}/shared/batch-recovery
+    filtering.batch.dbrecovery.location=${filtering.root.dir}/batch/dbrecovery
+    velocity.runtime.log.logsystem.class=org.apache.velocity.runtime.log.NullLogSystem
+    database.type=HSQLDB
+    filtering.kafka.consumer.group.name=wlm-batch-consumer-group-proc
+    filtering.kafka.consumer.max.poll.interval.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollIntervalMs }}
+    filtering.kafka.consumer.max.poll.records={{ .Values.baseConfigProperties.filteringKafkaConsumerMaxPollRecords }}
+    filtering.kafka.consumer.session.timeout.ms={{ .Values.baseConfigProperties.filteringKafkaConsumerSessionTimeoutMs }}
+    filtering.batch.processing.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-process
+    filtering.batch.processing.kafka.node.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaNodeCount }}
+    filtering.batch.processing.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchProcessingKafkaConsumerCount }}
+    filtering.batch.processing.kafka.consumer.startup=false
+    filtering.batch.transformation.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-batch-transform-dummy
+    filtering.batch.transformation.kafka.consumer.count={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaConsumerCount }}
+    filtering.batch.transformation.kafka.retries={{ .Values.baseConfigProperties.filteringBatchTransformationKafkaRetries }}
+    filtering.batch.transformation.kafka.consumer.startup=false
+    filtering.list.import.kafka.topic.name=${kafka.topic.name.prefix}nr-wlm-list-import-dummy
+    filtering.list.import.kafka.consumer.count={{ .Values.baseConfigProperties.filteringListImportKafkaConsumerCount }}
+    filtering.list.import.kafka.consumer.startup=true
+    filtering.24x7.igs.reply.producer=IGS_REPLY_PRODUCER
+    filtering.24x7.igs.reply.consumer=MASTER_IGS_RESPONSE
+    filtering.24x7.wlm.igs.write.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcWriteSleepTime }}
+    filtering.24x7.wlm.proc.read.sleep.time={{ .Values.baseConfigProperties.filtering24x7WlmProcReadSleepTime }}
+    filtering.indexes.dir=${filtering.root.dir}/indexes
+    filtering.24x7.processing.group.name={{ .Values.baseConfigProperties.filtering24x7ProcessingGroupName }}
+    filtering.24x7.processing.node.name=${pod.name}
+    filtering.24x7.processing.node.registration.sequence.name=RegisterNodeSequence
+    filtering.24x7.processing.node.registration.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationStartDelay }}
+    filtering.24x7.processing.node.registration.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRetryInterval }}
+    filtering.24x7.processing.node.registration.correlation.sequence=CorrelationSequence
+    filtering.24x7.processing.node.registration.request.timeout={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeRegistrationRequestTimeout }}
+    filtering.24x7.processing.node.swift.mt.linking.job.enable={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobEnable }}
+    filtering.24x7.processing.node.swift.mt.linking.job.retry.interval={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval }}
+    filtering.24x7.processing.node.swift.mt.linking.job.start.delay={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay }}
+    filtering.24x7.processing.node.swift.mt.linking.consumer.poll.timeout={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingConsumerPollTimeout }}
+    filtering.24x7.processing.node.swift.mt.linking.records.processing.limit={{ .Values.baseConfigProperties.filtering24x7ProcessingNodeSwiftMtLinkingRecordsProcessingLimit }}
+    filtering.24x7.processing.node.swift.info.interim.sequence.name=WLM_ConsumerPN_Read24x7_SWIFT_INFO_INTERIM_Sequence
+    filtering.24x7.processing.node.swift.mt.linking.consumer.group.id=SwiftMTLinkingJob-KafkaConsumer
+    filtering.24x7.processing.node.swift.info.topic.name=${kafka.topic.name.prefix}nr-wlm-swift-info
+    filtering.24x7.processing.node.swift.info.interim.topic.name=${kafka.topic.name.prefix}nr-wlm-swift-info-interim
+    mailprotocol={{ .Values.global.baseConfigProperties.mail.protocol }}
+    services.errorhandling.secondaryauditor.name=er_file
+    services.errorhandling.er_file.class=com.norkom.acquisition.business.errorauditors.FileAuditor
+    services.errorhandling.er_file.path=/opt/netreveal/standaloneHome/logs/services/services-errors.txt
+    router.dhc.myNode=0
+    apps.performance.monitoring.class.list=
+    process.inbound.emails=false
+    installed.apps.vertical.wlmags=Y
+    kafka.bootstrap.servers=localhost:9092
+    base.normalization.cache=true
+    datasource.dataSource.dbType=HSQLDB
+{{- end }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ .Release.Name }}-wlm-pn-sa-log4j2"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ .Release.Name }}-wlm-pn-sa-log4j2"
+data:
+  log4j2.xml: |
+{{- include "log4j2.xml" . | indent 4 }}

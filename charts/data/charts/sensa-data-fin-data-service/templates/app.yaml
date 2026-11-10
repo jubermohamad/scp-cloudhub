@@ -1,0 +1,122 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "finDataService.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "finDataService.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "finDataService.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "finDataService.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app
+spec:
+  replicas: {{ .Values.app.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: app
+    spec:
+      imagePullSecrets:
+        {{- include "finDataService.imagePullSecrets" . | nindent 8 }}
+      containers:
+        # One image, one role (see the Dockerfile comments): a single uvicorn
+        # process serves the compile/mapping API plus the file-event job
+        # surface (async in-process CSV→Kafka tasks). No API/worker split.
+        - name: app
+          image: {{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default (default dict .Values.global).imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: postgres-password
+            - name: DEST_DSN
+              value: {{ include "finDataService.destDsn" . }}
+            - name: ONTOLOGY_BASE_URL
+              value: {{ .Values.app.env.ontologyBaseUrl | quote }}
+            {{- if .Values.app.env.ontologyAuthToken }}
+            - name: ONTOLOGY_AUTH_TOKEN
+              value: {{ .Values.app.env.ontologyAuthToken | quote }}
+            {{- end }}
+            {{- /* Warehouse DSNs. The app reads one JDBCDSN_<database> per warehouse
+                   it loads into. The password is projected ONCE as
+                   WAREHOUSE_PG_PASSWORD and referenced as $(WAREHOUSE_PG_PASSWORD)
+                   so it is never written into a DSN literal — kubernetes expands
+                   it in the container, and the value stays in the Secret. */}}
+            {{- with .Values.app.warehouse }}
+            {{- if and .passwordSecret.name .host .user }}
+            - name: WAREHOUSE_PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .passwordSecret.name }}
+                  key: {{ .passwordSecret.key | default "password" }}
+            {{- range .databases }}
+            - name: JDBCDSN_{{ . }}
+              value: postgresql://{{ $.Values.app.warehouse.user }}:$(WAREHOUSE_PG_PASSWORD)@{{ $.Values.app.warehouse.host }}:{{ $.Values.app.warehouse.port | default 5432 }}/{{ . }}
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.app.env.kafkaBootstrapServers }}
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.app.env.kafkaBootstrapServers | quote }}
+            {{- end }}
+            {{- if .Values.app.env.minioEndpoint }}
+            - name: MINIO_ENDPOINT
+              value: {{ .Values.app.env.minioEndpoint | quote }}
+            - name: MINIO_SECURE
+              value: {{ .Values.app.env.minioSecure | default "false" | quote }}
+            # optional: a missing key must DEGRADE (file_event_configured goes false, so job
+            # start/:preview answer 503 and the compile surface is unaffected) rather than
+            # wedge the pod in CreateContainerConfigError. app-secret.yaml only writes these
+            # when secrets.create AND secrets.minioAccessKey are set, so setting just
+            # app.env.minioEndpoint would otherwise refuse to start.
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: minio-access-key
+                  optional: true
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: minio-secret-key
+                  optional: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.app.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10

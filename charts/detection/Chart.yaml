@@ -1,0 +1,13 @@
+apiVersion: v2
+name: detection
+description: Detection domain umbrella chart
+type: application
+version: 0.1.1
+appVersion: "0.1.0"
+dependencies:
+  - name: ai-store
+    version: 1.2.5
+    condition: ai-store.enabled
+  - name: detectionhub
+    version: 1.0.1-dev
+    condition: detectionhub.enabled

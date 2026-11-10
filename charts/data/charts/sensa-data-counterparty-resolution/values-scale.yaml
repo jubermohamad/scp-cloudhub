@@ -1,0 +1,82 @@
+# values-scale.yaml — overlay for the PO-demo 1M-transaction build on single-node minikube.
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# The PO demo is a SERVING-ONLY deploy that then triggers an on-demand build over a pre-generated
+# ~1M-transaction dataset and shows accuracy + throughput + blocking-reduction on the Evaluation page.
+#
+# Apply on top of values.yaml:
+#   helm upgrade --install cpr deploy/helm/cpr -f deploy/helm/cpr/values.yaml -f deploy/helm/cpr/values-scale.yaml
+#
+# THEN (host side, keep it running for the whole build — it maps the host dir into the minikube node):
+#   minikube mount "$CPR_DATA/1m":/data/1m      # $CPR_DATA = your host dataset dir (see deploy/README.md)
+#
+# THEN trigger the build (from a shell that can reach the API — e.g. via the ingress or port-forward):
+#   curl -sX POST http://cpr.local/api/builds -H 'content-type: application/json' \
+#        -d '{"input_location":"/data/1m","note":"PO demo 1M"}'
+#   # watch:  curl -s http://cpr.local/api/builds | jq   (or the Builds UI)
+# The dataset ships ground_truth.csv, so the build auto-evaluates → the Evaluation page shows P/R/F1 +
+# throughput + blocking-reduction once it completes.
+#
+# ⚠️ DISK HEADROOM. The minikube node's disk was ~93% full during authoring (≈23 GB free). A 1M build
+#    writes Spark checkpoints (shared workdir) + the Postgres tables below. Before the run, confirm
+#    free space (`minikube ssh -- df -h /`) and prune if needed (`minikube ssh -- docker system prune
+#    -af`), or expand the node disk. The hostPath dataset itself is NOT copied onto the node (it maps
+#    to the host dir), so it costs no node disk.
+#
+# SIZING RATIONALE (node = 8 CPU / 32 GB, single node → driver + all executors co-locate):
+#   driver 1c/4g + 3 executors × 2c/6g = 7 cores / 22 GB requested. Leaves ~1 CPU / ~10 GB for the
+#   CNPG Postgres, api, web, operators, kubelet. This is a PER-NODE rate on ONE node — the honest
+#   scale-out story is "raise executor.instances across more AKS nodes", which these knobs expose.
+
+# ── Storage + query backends (R69) — the two seams. Both default to `postgres` and both are stated
+# explicitly here so the profile is self-describing: flipping to Iceberg is a one-line change in this
+# file (plus `query.backend: iceberg`, since a read backend must match where the data lives — design
+# §8), not a --set to remember. `storage.iceberg.*` in values.yaml carries the catalog/warehouse.
+storage:
+  backend: postgres
+query:
+  backend: postgres
+
+# Serving-only: no install-time backfill — the demo triggers the build on demand (R38).
+backfill:
+  enabled: false
+  # These sizing/tuning knobs are still read by the api pod (api.builds) and injected into the
+  # on-demand build CR, so they size the 1M build even with backfill.enabled=false.
+  seedMode: scale
+  resetStore: true            # fresh store each run → throughput isn't confounded by prior data.
+  driver:
+    cores: 1
+    coreLimit: "1500m"
+    memory: "4g"
+  executor:
+    instances: 3              # ← the scale-out lever: raise across nodes on AKS.
+    cores: 2
+    memory: "6g"
+  sparkConf:
+    # Size to executor cores (3×2=6), ~4× as a sensible partition count. AQE coalesces the reduce side
+    # to the ~64MB advisory size, but the initial count still drives per-stage map-side task overhead,
+    # so match it to the cluster rather than pinning a blanket 200 (which measured ~1min slower than a
+    # core-matched value on a 1M build at the small serving footprint). Raise for larger clusters.
+    spark.sql.shuffle.partitions: "24"
+    spark.default.parallelism: "24"
+
+# On-demand build enabled; dataset mounted from the node hostPath (minikube mount target).
+api:
+  builds:
+    enabled: true
+    allowConcurrent: false
+    messages:
+      hostPath: /data/1m      # ← `minikube mount "$CPR_DATA/1m":/data/1m` (see deploy/README.md)
+      mountPath: /data/1m     # in-pod path; input_location in POST /builds is under here.
+
+# Bigger store + checkpoint volume for 1M (still modest given the disk headroom note above).
+postgres:
+  cnpg:
+    storage:
+      size: 8Gi
+    walStorage:
+      enabled: true
+      size: 2Gi
+
+sharedWorkdir:
+  persistence:
+    size: 10Gi                # Spark checkpoints/warehouse for a 1M run + metrics.json.

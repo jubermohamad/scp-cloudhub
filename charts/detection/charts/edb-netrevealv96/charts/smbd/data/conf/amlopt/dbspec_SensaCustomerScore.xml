@@ -1,0 +1,24 @@
+<!--
+  Copyright © SymphonyAI NetReveal UK Ltd 2023 
+-->
+<dbspec name="SensaCustomerScore" comments="Sensa Customer Score">
+
+    <source-query>
+    SELECT * 
+	FROM (
+		SELECT CUSTOMER_ID as CustomerID,
+			(select max(start_date) from amlorch_job_run where domain_code ='SUSPICIOUS_ACTIVITY' and process_name ='SENSA_MONTHLY_Processing' and status in ('RUNNING') ) as RunTimestamp,
+			coalesce ((select orgunit_code from customers c1 where c1.customer_id = scs.customer_id),'GRO') as OrganisationalUnit,
+			OVERALL_RISK_SCORE as OverallRiskScore,
+			ANOMALY_DETECTION_SCORE as AnomalyDetectionScore,
+			CHANGE_BEHAVIOUR_SCORE as ChangeInBehaviourScore,
+			HOTSPOT_SCORE as HotspotScore
+		FROM V_SM_SENSA_CUSTOMER_SCORE scs
+	) V_SM_SENSA_CUSTOMER_SCORE	
+    WHERE @WHERE@
+    </source-query>
+    <tablename>V_SM_SENSA_CUSTOMER_SCORE</tablename>
+
+    <timefield>RunTimestamp</timefield>
+	<column fieldname="RunTimestamp"		dataType="DATE" columnname="RunTimestamp" />
+</dbspec>

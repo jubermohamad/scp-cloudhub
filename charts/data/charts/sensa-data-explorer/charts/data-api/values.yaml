@@ -1,0 +1,119 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+replicaCount: 2
+
+image:
+  registry: symphonyfs.azurecr.io
+  repository: sensa-data-explorer/data-api   # matches CI push target (docker.yml image-name)
+  tag: main
+  # Always: the tag is a MUTABLE branch tag (CI overwrites it), so a pod
+  # restart must re-pull or it silently keeps running a stale image.
+  # (Pinned third-party images in this chart stay IfNotPresent — their
+  # tags are immutable, so re-pulling them buys nothing.)
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+imagePullSecrets:
+  - name: symphonyfs-acr-secret
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 8000
+
+# Postgres source the API reads.
+database:
+  # Real environments: set `existingSecret` (a Secret you manage) and leave `url` empty.
+  # Quick/dev installs: set `url` and the chart creates the Secret for you.
+  url: ""                   # postgresql://user:pass@host:5432/db
+  existingSecret: ""        # name of a Secret already holding the DSN
+  secretKey: DATABASE_URL   # key within the Secret that holds the DSN
+  schema: public
+
+# Writable store for ListOps' own state (audit log, labels, saved filters).
+# The source above stays read-only; this is the separate write path.
+writeStore:
+  # Leave both empty to use the same server as `database` with the schema below.
+  # Set them wherever the source is a pipeline-managed warehouse — our tables
+  # shouldn't live in something that gets dropped and rebuilt underneath us.
+  #
+  # Whichever database it points at, the role needs USAGE + CREATE on this schema
+  # and nothing at database level:
+  #   CREATE SCHEMA listops;
+  #   GRANT USAGE, CREATE ON SCHEMA listops TO <role>;
+  # Startup fails with an explicit message if the schema is missing and the role
+  # can't create it — which is what happens if you leave `url` empty and the
+  # source credentials are read-only.
+  url: ""                              # postgresql://user:pass@host:5432/db
+  existingSecret: ""                   # Secret already holding the write DSN
+  secretKey: DATA_API_WRITE_DATABASE_URL
+  schema: listops
+
+# Non-secret app settings -> container env.
+settings:
+  statementTimeoutMs: 15000
+  defaultLimit: 100
+  maxLimit: 1000
+  maxOffset: 100000    # reject offsets deeper than this (data.offset_too_deep)
+  rootPath: ""
+
+  # --- Identity ------------------------------------------------------------------
+  #
+  # `keycloak.issuer` is the switch, and the only source of identity there is. Set it
+  # and bearer tokens are checked against the realm's public keys, making the caller
+  # *verified*. Leave it empty and **every caller is anonymous** — reads still work,
+  # and anything requiring a user returns 401.
+  #
+  # For realm SRI on the dev instance:
+  #   issuer: https://sri-dev-keycloak.invhub.fseng.net/realms/SRI
+  keycloak:
+    issuer: ""
+    # Where to fetch signing keys. Empty derives it from the issuer, which is right
+    # whenever the two are reachable at the same hostname. Set it where they are not:
+    # tokens are minted at a public address while a pod may verify in-cluster, and the
+    # `iss` claim must match the former while the fetch goes to the latter.
+    jwksUrl: ""
+    # Expected `aud`. Keycloak keeps its own `account` audience alongside ours, so a
+    # real token carries a list and verification tests membership. Empty disables the
+    # check — a token minted for any client in the realm would then be accepted, so
+    # that is a decision to make deliberately rather than drift into.
+    audience: data-explorer
+    # Which `resource_access` key carries our roles. Client roles are keyed by the
+    # client that owns them, not the one the token was minted for, so this is our own
+    # client id whether the caller is standalone or embedded in the Ontology app.
+    clientId: data-explorer
+    timeoutSeconds: 5
+    # Rate-limits JWKS refetches, which an unknown `kid` triggers. Longer after a
+    # success (an unknown kid is then almost certainly bogus, so bound what a flood of
+    # junk tokens costs); shorter after a failure (the IdP may have blipped, and
+    # locking authentication out for the long window would be worse).
+    jwksRefreshCooldownSeconds: 10
+    jwksFailureCooldownSeconds: 2
+
+# Audit log. PRD VA-04 audits reads as well as writes, so the writer
+# batches and never blocks a request.
+audit:
+  maxQueue: 10000
+  batchSize: 200
+  flushIntervalSeconds: 0.5
+  # "drop" keeps serving and counts the loss loudly; "reject" fails the action rather
+  # than lose an entry PRD VA-04 requires. `reject` is arguably right for a regulated
+  # deployment — note it also means a write-store hiccup stops reads, since reads are
+  # audited too. If dropped entries are ever non-zero, required records were lost.
+  onOverflow: drop
+  # PRD 6.3: 7 years, aligned with AML record-keeping. This records the policy only —
+  # nothing enforces it yet, and a purge must record a chain watermark rather than
+  # just DELETE (see docs/architecture.md). The retention job has no ticket.
+  retentionDays: 2557
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

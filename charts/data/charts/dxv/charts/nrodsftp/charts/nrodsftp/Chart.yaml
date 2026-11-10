@@ -1,0 +1,7 @@
+apiVersion: v2
+name: nrodsftp
+description: A Helm chart for installing nrodsftp
+icon: https://helm.symphonysensa.com/symphonyai_sensa_netreveal_logo.jpg
+type: application
+version: 0.0.7
+appVersion: "v1.2.3"

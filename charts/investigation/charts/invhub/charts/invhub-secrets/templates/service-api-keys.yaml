@@ -1,0 +1,35 @@
+{{- $secretName := "invhub-service-api-keys" -}}
+{{- $existingSecret := (lookup "v1" "Secret" .Release.Namespace $secretName) -}}
+{{- $existingData := get (default dict $existingSecret) "data" | default dict -}}
+{{- $rotationId := dig "secrets" "rotationId" "" .Values.global -}}
+{{- $existingRotationId := dig "metadata" "annotations" "invhub.ai/rotation-id" "" (default dict $existingSecret) -}}
+{{- $shouldRotate := and (ne $rotationId "") (ne $rotationId $existingRotationId) -}}
+{{- $adoptExisting := dig "secrets" "adoptExisting" false .Values.global -}}
+{{- $ownedByRelease := and $existingSecret (eq (dig "metadata" "annotations" "meta.helm.sh/release-name" "" $existingSecret) .Release.Name) (eq (dig "metadata" "annotations" "meta.helm.sh/release-namespace" "" $existingSecret) .Release.Namespace) -}}
+{{- $serviceKeys := dict
+  "sensa-api-key-secret" "SENSA_API_KEY_SECRET"
+  "investigation-hub-service-account-api-key" "INVESTIGATION_HUB_SERVICE_ACCOUNT_API_KEY"
+  "investigation-hub-install-admin-user-api-key" "INVESTIGATION_HUB_INSTALL_ADMIN_USER_API_KEY"
+  "investigation-hub-copilot-service-user-api-key" "INVESTIGATION_HUB_COPILOT_SERVICE_USER_API_KEY"
+  "investigation-hub-disclosures-service-user-api-key" "INVESTIGATION_HUB_DISCLOSURES_SERVICE_USER_API_KEY"
+  "investigation-hub-transactions-service-user-api-key" "INVESTIGATION_HUB_TRANSACTIONS_SERVICE_USER_API_KEY"
+  "investigation-hub-entity-resolution-service-user-api-key" "INVESTIGATION_HUB_ENTITY_RESOLUTION_SERVICE_USER_API_KEY"
+  "investigation-hub-reporting-service-user-api-key" "INVESTIGATION_HUB_REPORTING_SERVICE_USER_API_KEY"
+-}}
+
+{{- if or (not $existingSecret) $ownedByRelease $adoptExisting }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  annotations:
+    "helm.sh/resource-policy": keep
+    {{- if ne $rotationId "" }}
+    invhub.ai/rotation-id: {{ $rotationId | quote }}
+    {{- end }}
+type: Opaque
+stringData:
+{{- range $secretKey, $envVarName := $serviceKeys }}
+  {{ $secretKey }}: {{ include "invhub-secrets.getApiKeyValue" (dict "key" $envVarName "secretKey" $secretKey "root" $ "existingData" $existingData "shouldRotate" $shouldRotate) | quote }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,21 @@
+<!--
+  Copyright © SymphonyAI NetReveal UK Ltd 2023
+-->
+<dbspec name="SensaAlertScore_DSG" comments="Sensa Alert Score DSG">
+
+    <source-query>
+    SELECT * 
+	FROM (
+		SELECT 
+			RUN_TIMESTAMP as RunTimestamp,
+			CUSTOMER_ID as CustomerID,
+			ORGUNIT_CODE as OrganisationalUnit
+		FROM v_sm_sensa_alert_score_dsg
+	) v_sm_sensa_alert_score_dsg	
+    WHERE @WHERE@
+    </source-query>
+    <tablename>v_sm_sensa_alert_score_dsg</tablename>
+	
+    <timefield>RunTimestamp</timefield>
+	<column fieldname="RunTimestamp"		dataType="DATE" columnname="RunTimestamp" />
+</dbspec>

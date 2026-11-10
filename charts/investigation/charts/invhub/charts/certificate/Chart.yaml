@@ -1,0 +1,6 @@
+apiVersion: v2
+name: certificate
+description: A Helm chart for ingress tls certificate
+type: application
+version: 0.27.0
+appVersion: v2026.07.1

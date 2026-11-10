@@ -1,0 +1,178 @@
+{{- if .Values.orchSvc.enabled }}
+{{- $sparkNs := .Values.orchSvc.sparkNamespace | default .Release.Namespace }}
+# Batch coordinator + data-plane submitter — closes deployment-checklist
+# blocker B2 (the live sri-dev orch was hand-`kubectl apply`ed from a
+# feature branch; ADOPTING it into Helm needs the meta.helm.sh/release-*
+# annotations first — docs/infra.md §cutover).
+#
+# The submitter Role/RoleBinding land in the SPARK JOB namespace
+# (orchSvc.sparkNamespace; empty → this release's namespace):
+# SparkApplication CRs + per-job script ConfigMaps are created THERE, and
+# S3_CREDS_REF / WAREHOUSE_PW_REF secretKeyRefs resolve there too — those
+# secrets must exist in that namespace, not next to the orchestrator.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-orch-svc
+  labels:
+    app: pipeline-orch-svc
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  # Release-scoped name: the job namespace is shared by other teams'
+  # submitters — a generic name would collide.
+  name: {{ .Release.Name }}-spark-submitter
+  namespace: {{ $sparkNs }}
+rules:
+  - apiGroups: ["sparkoperator.k8s.io"]
+    resources: ["sparkapplications"]
+    verbs: ["create", "get", "list", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-spark-submitter
+  namespace: {{ $sparkNs }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "finPipeline.prefix" . }}-orch-svc
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-spark-submitter
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-orch-svc
+  labels:
+    app: pipeline-orch-svc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pipeline-orch-svc
+  template:
+    metadata:
+      labels:
+        app: pipeline-orch-svc
+      {{- include "finPipeline.podAnnotations" . | nindent 6 }}
+    spec:
+      # MUST track the ServiceAccount's name above. Renaming the SA without this
+      # leaves the Deployment asking for one that no longer exists, and the
+      # ReplicaSet cannot create a single pod:
+      #   forbidden: error looking up service account sri-qa/pipeline-orch-svc
+      # The Deployment itself reports only ProgressDeadlineExceeded, so the real
+      # reason is one level down, on the ReplicaSet's events.
+      serviceAccountName: {{ include "finPipeline.prefix" . }}-orch-svc
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      containers:
+        - name: orch
+          image: {{ include "finPipeline.image" (dict "root" . "name" .Values.orchSvc.imageName "tag" .Values.orchSvc.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default (default dict .Values.global).imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: {{ .Values.orchSvc.port }}
+          env:
+            - name: POSTGRES_HOST
+              value: {{ .Values.postgres.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgres.port | quote }}
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: {{ .Values.kafka.bootstrapServers | quote }}
+            # Must match config-svc's KAFKA_TOPIC_PLAN — the orchestrator
+            # snapshots published plans from this topic.
+            - name: TOPIC_PLAN_PUBLISHED
+              value: {{ .Values.kafka.topicPlan | quote }}
+            # Where SparkApplications + their script ConfigMaps are created.
+            - name: POD_NAMESPACE
+              {{- if .Values.orchSvc.sparkNamespace }}
+              value: {{ .Values.orchSvc.sparkNamespace | quote }}
+              {{- else }}
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+              {{- end }}
+            - name: SPARK_RUNNER_IMAGE
+              value: {{ include "finPipeline.image" (dict "root" . "name" .Values.orchSvc.runnerImageName) }}
+            - name: SPARK_IMAGE_PULL_POLICY
+              value: {{ .Values.image.pullPolicy | quote }}
+            - name: SPARK_DRIVER_SA
+              value: {{ .Values.orchSvc.driverServiceAccount | quote }}
+            - name: SPARK_EXECUTOR_INSTANCES
+              value: {{ .Values.orchSvc.executorInstances | quote }}
+            {{- with .Values.orchSvc.s3Endpoint }}
+            # Stamped into every SparkApplication's hadoopConf (fs.s3a.*).
+            # Empty → no hadoopConf at all, and jobs can't reach the object
+            # store.
+            - name: S3_ENDPOINT
+              value: {{ . | quote }}
+            {{- end }}
+            - name: S3_CREDS_REF
+              value: {{ printf "%s:access_key:secret_key" .Values.orchSvc.s3CredsSecret | quote }}
+            {{- /* The KEY is configurable, not just the secret: these secrets are
+                   created out-of-band per environment and do not agree on a key
+                   name (`password` in one, `PG_PASSWORD` in another). Hardcoding
+                   one meant the only way to point at the other secret was to
+                   rename its key. */}}
+            - name: WAREHOUSE_PW_REF
+              value: {{ printf "%s:%s" .Values.orchSvc.warehouseSecret .Values.orchSvc.warehouseSecretKey | quote }}
+            - name: WAREHOUSE_USER
+              value: {{ .Values.orchSvc.warehouseUser | quote }}
+            {{- with .Values.orchSvc.warehouseTenantId }}
+            # Fills the data service's __TENANT_ID__ token at submit
+            # (app/run_context.py). Numeric: the coordinator casts it with int().
+            #
+            # ⚠ CONFIGURED PER ENVIRONMENT, NEVER DERIVED, and never copied between
+            # environments. It decides which tenant the loaded rows are attributed
+            # to, so a value carried over from another environment writes that
+            # tenant's id into this warehouse — the precise failure the data
+            # service tokenised its template to prevent.
+            #
+            # Leaving it UNSET is safe and is the correct default: a plan with no
+            # tokens (every plan frozen before the seam existed) runs untouched,
+            # and a plan that does ask for the token fails its submit naming this
+            # knob, before any driver pod exists.
+            - name: WAREHOUSE_TENANT_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.orchSvc.dataSvcUrl }}
+            # fs-fin-data-svc job API — arms the file_event_generator driver
+            # (app/file_events.py). Unset → that driver stays OFF.
+            - name: DATA_SVC_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: LEASE_SECONDS
+              value: {{ .Values.orchSvc.leaseSeconds | quote }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.postgres.existingSecret }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.orchSvc.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-orch-svc
+  labels:
+    app: pipeline-orch-svc
+spec:
+  selector:
+    app: pipeline-orch-svc
+  ports:
+    - port: {{ .Values.orchSvc.port }}
+      targetPort: {{ .Values.orchSvc.port }}
+{{- end }}

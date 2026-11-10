@@ -1,0 +1,40 @@
+1. Get the application URL by running these commands:
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- else if contains "NodePort" .Values.service.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "sri-micro-frontend.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- else if contains "LoadBalancer" .Values.service.type }}
+     NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+           You can watch the status of by running 'kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "sri-micro-frontend.fullname" . }}'
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "sri-micro-frontend.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo http://$SERVICE_IP:{{ .Values.service.port }}
+{{- else if contains "ClusterIP" .Values.service.type }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "sri-micro-frontend.fullname" . }} 3001:{{ .Values.service.port }}
+  echo "Visit http://127.0.0.1:3001 to use your application"
+{{- end }}
+{{- if .Values.auth.enabled }}
+
+2. Keycloak auth is ENABLED.
+{{- if .Values.auth.setup.enabled }}
+   The keycloak-setup Job creates/syncs the client "{{ .Values.auth.keycloakClientId }}"
+   (realm {{ .Values.auth.keycloakRealm }}) and its Command Centre roles on every
+   install/upgrade — check `kubectl logs job/{{ include "sri-micro-frontend.fullname" . }}-keycloak-setup`
+   if login fails. Assign the client roles (operator/analyst/investigator/
+   compliance/cco/admin) to users in Keycloak to grant dashboard roles.
+{{- else }}
+   Make sure the client "{{ .Values.auth.keycloakClientId }}"
+   (realm {{ .Values.auth.keycloakRealm }}) is public + PKCE and lists
+   {{ .Values.auth.appUrl }}/api/auth/callback in its redirect URIs
+   (or set auth.setup.* to have the chart manage the client itself).
+{{- end }}
+{{- else }}
+
+2. Keycloak auth is DISABLED — the app runs its cosmetic demo login and the
+   API proxies are unauthenticated. Set the auth.* values to turn it on.
+{{- end }}

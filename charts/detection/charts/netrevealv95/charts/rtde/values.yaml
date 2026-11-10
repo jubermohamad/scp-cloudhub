@@ -1,0 +1,385 @@
+# Setting the environment for the application (e.g., "qa" for quality assurance, "dev" for development, "prod" for production)
+app_env: "prod"
+# Specifies whether to use NodeSelector, if true - NodeSelector will be used.
+useNodeSelector: "false"
+# NodeSelector configuration, specifically targeting nodes with the specified label (Will work only if useNodeSelector is set to true) Node should also have the same label.
+nodeSelector:
+  rtde-node: "true"
+# Additional labels for SparkApplication
+labels:
+  app: rtde
+
+#DATABASE CONNECTION
+jdbc:
+  driver: "org.postgresql.Driver"
+  userid: ""
+  passwd: ""
+  encryptionMethod: "plainText"
+
+#KEY STORE
+keystore:
+  filename: ""
+  password: ""
+  key_password: ""
+
+solutionsParameters:
+  odddetarte:
+    driver:
+      cores: 1
+      coreLimit: "1000m"
+      memory: "2000m"
+    executor:
+      cores: 1
+      instances: 1
+      memory: "3000m"
+    smart:
+      # application.conf parameter
+      dateFormat: "yyyyMMdd"
+      # application.conf parameter
+      timestampFormat: "yyyyMMdd"
+      # application.conf parameter
+      multiValueSeparator: ","
+      # application.conf parameter
+      listToMap:
+        separator: ","
+        keyValueSeparator: ":"
+      # application.conf parameter
+      model:
+        optimizations: "false"
+    # application.conf parameter
+    processingmodel:
+      persistence:
+        type: "DB" #Options are: File, Topic, DB
+      refreshing:
+        signalType: "Topic"
+        topicSignal:
+          topicName: "nr-refresh_cdd"
+    kafka:
+      internal:
+        message:
+          format: "binary"
+      fetch:
+        message:
+          maxBytes: "1048576"
+      model:
+        message:
+          maxBytes: "10485760"
+      maxRequestSize: "1048576"
+      extraParameters: []
+    # list of additional parameters to be added to the application.conf
+    # Example: extraParameters: ["param1=value1", "param2=value2"]
+    applicationConf:
+      extraParameters: []
+    # list of additional parameters to be added to the environment.conf
+    # Example: extraParameters: ["param1=value1", "param2=value2"]
+    environmentConf:
+      extraParameters: []
+
+  obdetarte:
+    driver:
+      cores: 1
+      coreLimit: "1000m"
+      memory: "2000m"
+    executor:
+      cores: 3
+      instances: 1
+      memory: "3000m"
+    smart:
+      # application.conf parameter
+      dateFormat: "yyyyMMdd"
+      # application.conf parameter
+      timestampFormat: "yyyyMMdd"
+      # application.conf parameter
+      multiValueSeparator: ","
+      # application.conf parameter
+      listToMap:
+        separator: ","
+        keyValueSeparator: ":"
+      # application.conf parameter
+      output:
+        decoratorModelId: "true"
+      # application.conf parameter
+      model:
+        optimizations: "false"
+    # application.conf parameter
+    processingmodel:
+      persistence:
+        type: "DB"
+      score:
+        combiner:
+          concat:
+            separator: ""
+      refreshing:
+        signalType: "Topic"
+        topicSignal:
+          topicName: "nr-refresh_cdd"
+    kafka:
+      internal:
+        message:
+          format: "binary"
+      fetch:
+        message:
+          maxBytes: "1048576"
+      model:
+        message:
+          maxBytes: "10485760"
+      maxRequestSize: "1048576"
+      extraParameters: []
+    # list of additional parameters to be added to the application.conf
+    # Example: extraParameters: ["param1=value1", "param2=value2"]
+    applicationConf:
+      extraParameters: []
+    # list of additional parameters to be added to the environment.conf
+    # Example: extraParameters: ["param1=value1", "param2=value2"]
+    environmentConf:
+      extraParameters: []
+
+  ietwlmsparte:
+    driver:
+      cores: 1
+      coreLimit: "1000m"
+      memory: "2000m"
+    executor:
+      cores: 1
+      instances: 1
+      memory: "3000m"
+    smart:
+      # application.conf parameter
+      dateFormat: "yyyyMMddHHmmss"
+      # application.conf parameter
+      timestampFormat: "yyyyMMddHHmmss"
+      # application.conf parameter
+      multiValueSeparator: ","
+    # application.conf parameter
+    processingmodel:
+      persistence:
+        type: "DB" #Options are: File, Topic, DB
+      score:
+        combiner:
+          concat:
+            separator: ""
+    kafka:
+      internal:
+        message:
+          format: "json"
+      fetch:
+        message:
+          maxBytes: "1048576"
+      model:
+        message:
+          maxBytes: "10485760"
+      maxRequestSize: "1048576"
+      extraParameters: []
+    # list of additional parameters to be added to the application.conf
+    # Example: extraParameters: ["param1=value1", "param2=value2"]
+    applicationConf:
+      extraParameters: []
+    # list of additional parameters to be added to the environment.conf
+    # Example: extraParameters: ["param1=value1", "param2=value2"]
+    environmentConf:
+      extraParameters: []
+
+  ietwlmarte:
+    driver:
+      cores: 1
+      coreLimit: "1000m"
+      memory: "2000m"
+    executor:
+      cores: 1
+      instances: 1
+      memory: "3000m"
+    smart:
+      # application.conf parameter
+      dateFormat: "yyyyMMddHHmmss"
+      # application.conf parameter
+      timestampFormat: "yyyyMMddHHmmss"
+      # application.conf parameter
+      multiValueSeparator: ","
+      output:
+        decoratorModelId: ""
+      model:
+        optimizations: ""
+    # application.conf parameter
+    processingmodel:
+      persistence:
+        type: "DB" #Options are: File, Topic, DB
+      modelId: "-1"
+      score:
+        combiner:
+          concat:
+            separator: ""
+    kafka:
+      internal:
+        message:
+          format: "json"
+      fetch:
+        message:
+          maxBytes: "1048576"
+      model:
+        message:
+          maxBytes: "10485760"
+      maxRequestSize: "1048576"
+      extraParameters: []
+    applicationConf:
+      extraParameters: []
+    environmentConf:
+      extraParameters: []
+
+  cddaatarte:
+    driver:
+      cores: 1
+      coreLimit: "1000m"
+      memory: "2000m"
+    executor:
+      cores: 1
+      instances: 1
+      memory: "3000m"
+    smart:
+      # application.conf parameter
+      dateFormat: "yyyyMMdd"
+      # application.conf parameter
+      timestampFormat: "yyyyMMddHHmmss"
+      # application.conf parameter
+      output:
+        decoratorModelId: "true"
+      # application.conf parameter
+      model:
+        optimizations: "false"
+    # application.conf parameter
+    processingmodel:
+      persistence:
+        type: "DB" #Options are: File, Topic, DB
+      refreshing:
+        signalType: "Topic"
+        topicSignal:
+          topicName: "nr-refresh_cddaat"
+      score:
+        combiner:
+          concat:
+            separator: ""
+    kafka:
+      internal:
+        message:
+          format: "json"
+      fetch:
+        message:
+          maxBytes: "1048576"
+      model:
+        message:
+          maxBytes: "10485760"
+      maxRequestSize: "1048576"
+      extraParameters: []
+    # list of additional parameters to be added to the application.conf
+    # Example: extraParameters: ["param1=value1", "param2=value2"]
+    applicationConf:
+      extraParameters: []
+    # list of additional parameters to be added to the environment.conf
+    # Example: extraParameters: ["param1=value1", "param2=value2"]
+    environmentConf:
+      extraParameters: []
+
+#STORAGE
+storage:
+  # nfs_server_endpoint: "10.222.17.49"
+  nfs_server_dir: "/var/nfs_k8s/rtde"
+  storage: "5Gi"
+  # storageClassName: "nfs"
+  hostPathMinikube: "/opt/netreveal/rtde"
+
+# RTDE
+
+imageRepository: "nri-nrod-k8s-rtde"
+imageTag: "9.6.0.3-3.5.6-jdk17-20260323135942"
+imagePullPolicy: IfNotPresent
+mainClass: com.netreveal.smart.base.Smart
+mainApplicationFile: "local:///opt/rtde/lib/smart.jar"
+arguments: ""
+sparkVersion: "3.5.6"
+serviceAccount: spark-app
+timeToLiveSeconds: 10
+restartPolicy:
+  #type: OnFailure
+  type: Always
+  retries:
+    onFailureRetries: 30
+    onFailureRetryInterval: 10
+    onSubmissionFailureRetries: 20
+    onSubmissionFailureRetryInterval: 30
+sparkConf:
+  "spark.driver.extraClassPath": "local:///opt/rtde/lib/bcprov.jar:/opt/rtde/lib/h2.jar:local:///opt/rtde/lib/postgresql.jar"
+  "spark.executor.extraClassPath": "local:///opt/rtde/lib/bcprov.jar:/opt/rtde/lib/h2.jar:local:///opt/rtde/lib/postgresql.jar"
+  "spark.sql.shuffle.partitions": "1"
+  "spark.sql.codegen.wholeStage": "false"
+  "spark.sql.streaming.checkpointLocation": "/opt/rtde/checkpointlocation"
+  "spark.kubernetes.submission.connectionTimeout": "60000000"
+  "spark.kubernetes.submission.requestTimeout": "60000000"
+  "spark.kubernetes.driver.connectionTimeout": "60000000"
+  "spark.kubernetes.driver.requestTimeout": "60000000"
+
+driver:
+  javaOptions: "-Dsmart.home=/opt/rtde -Dlog4j.configuration=file:/opt/rtde/conf/log4j.properties"
+
+executor:
+  javaOptions: "-Dsmart.home=/opt/rtde -Dlog4j.configuration=file:/opt/rtde/conf/log4j.properties"
+
+monitoring:
+  exposeDriverMetrics: true
+  exposeExecutorMetrics: true
+  prometheus:
+    jmxExporterJar: "/opt/rtde/lib/jmx_prometheus_javaagent.jar"
+    port: 8090
+
+# Primary Volume, Release Name will be added to the volume name
+volumes:
+- name: rtde-data-pvc
+  persistentVolumeClaim:
+    claimName: rtde-data-pvc
+
+# Primary Volume Mounts, Release Name will be added to the each mount name
+volumemounts:
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/logs
+  subPath: logs
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/profile_output_location
+  subPath: profile_output_location
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/data
+  subPath: data
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/checkpointlocation
+  subPath: checkpointlocation
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/model_refreshing_signals
+  subPath: model_refreshing_signals
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/input_data
+  subPath: input_data
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/test_data
+  subPath: test_data
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/missingEmptyLists
+  subPath: missingEmptyLists
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/lists
+  subPath: lists
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/conf
+  subPath: conf
+- name: rtde-data-pvc
+  mountPath: /opt/pf-inline_profiles
+  subPath: pf-inline_profiles
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/output
+  subPath: output
+- name: rtde-data-pvc
+  mountPath: /opt/rtde/bfStore
+  subPath: bfStore
+
+
+# Extra Volume, For Testing Purposes
+extraVolumes: []
+
+# Extra VolumeMounts, For Testing Purposes
+extraVolumemounts: []

@@ -1,0 +1,42 @@
+# VENDORED from SymphonySensa/sensa-data-counterparty-resolution deploy/helm/cpr
+# @ 28e4886195c4 (main, 2026-08-11). Local deltas, re-apply on re-vendor:
+# chart renamed to the umbrella values key; cpr.fullname emits the platform
+# prefix (<release>-data-cpr); uninstall-hook Job gets TTL 7200.
+# NOTE: ships OPERATOR subcharts (spark-operator, cloudnative-pg) + a crds/
+# dir — on SRI clusters the operators layer already owns both; keep
+# sparkOperator.install=false and postgresOperator.install=false.
+apiVersion: v2
+name: sensa-data-counterparty-resolution
+description: >-
+  Counterparty Entity Resolution POC — demo-grade chart running the full Day-0 stack in Kubernetes:
+  Postgres serving store, a Spark Day-0 backfill Job (ingest → train Splink → resolve → §4b → COPY),
+  the FastAPI serving layer, and the React UI. Targets minikube; transferable to AKS via values-aks.yaml.
+type: application
+version: 0.1.2
+appVersion: "0.0.1"
+keywords:
+  - entity-resolution
+  - splink
+  - spark
+  - fastapi
+maintainers:
+  - name: Counterparty Resolution POC
+
+# The Kubeflow Spark Operator (subchart, from the upstream repo — the team's standard pattern for
+# operators). It installs the SparkApplication/ScheduledSparkApplication CRDs + controller so the
+# Day-0 backfill runs as a real distributed SparkApplication (driver + executors). Toggle with
+# `sparkOperator.install`. Apache-2.0.
+dependencies:
+  - name: spark-operator
+    version: 2.5.1
+    repository: "https://kubeflow.github.io/spark-operator/"
+    condition: sparkOperator.install
+  # CloudNativePG operator (subchart, from the upstream repo — the SAME pattern we vendor spark-operator
+  # with, and the house/product Postgres infra: matches NetReveal ER's er-db/postgres). It installs the
+  # postgresql.cnpg.io CRDs + controller so the serving store runs as a managed CNPG `Cluster` (HA /
+  # WAL / automatic failover) instead of a single demo pod. Toggle with `postgresOperator.install`
+  # (mirrors `sparkOperator.install`; set false when CNPG is already cluster-wide). Apache-2.0.
+  - name: cloudnative-pg
+    version: 0.26.1
+    repository: "https://cloudnative-pg.github.io/charts"
+    condition: postgresOperator.install

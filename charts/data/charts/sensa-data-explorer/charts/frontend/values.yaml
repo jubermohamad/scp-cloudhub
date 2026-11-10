@@ -1,0 +1,43 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+replicaCount: 2
+
+image:
+  registry: symphonyfs.azurecr.io
+  repository: sensa-data-explorer/frontend   # matches CI push target (docker.yml image-name)
+  tag: main
+  # Always: the tag is a MUTABLE branch tag (CI overwrites it), so a pod
+  # restart must re-pull or it silently keeps running a stale image.
+  # (Pinned third-party images in this chart stay IfNotPresent — their
+  # tags are immutable, so re-pulling them buys nothing.)
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+imagePullSecrets:
+  - name: symphonyfs-acr-secret
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Deploy-time pod annotations. The CD pipeline stamps the commit SHA here: a
+# rebuilt MUTABLE tag ("main") changes nothing in the pod spec, so without it
+# Helm sees no diff and the pod keeps running the stale image after a
+# same-branch redeploy. Learned from the Ontology chart, which hit exactly
+# this.
+podAnnotations: {}
+
+service:
+  type: ClusterIP
+  # nginx listens on 80 (see frontend/nginx/default.conf). This port is what a
+  # host portal points its proxy at — see README.md for the URL to configure.
+  port: 80
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 256Mi

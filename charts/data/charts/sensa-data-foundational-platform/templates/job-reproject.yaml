@@ -1,0 +1,94 @@
+{{- if .Values.jobs.reproject.enabled }}
+{{- /* Guarded on the GRAPH only, deliberately.
+       `MATCH (n) DETACH DELETE n` empties the whole Neo4j database — on a graph
+       shared with anything else that is cross-tenant data loss, so an external
+       graph needs the opt-in.
+       The ledger side (`TRUNCATE term_version`) is NOT guarded: term_version is
+       prism's own projection inside prism's own database, so on a shared
+       Postgres it cannot reach another product, and this job exists to rebuild
+       it. Guarding it would block the configuration the platform actually wants
+       — platform Postgres for the ledger, bundled graph. */}}
+{{- include "prism.destructiveGuard" (dict "ctx" $
+      "job" "reproject"
+      "allowPath" "jobs.reproject.allowExternalDestructive"
+      "allow" .Values.jobs.reproject.allowExternalDestructive
+      "targets" (list
+        (dict "external" (not .Values.infra.neo4j.enabled)
+              "store" "Neo4j graph"
+              "endpoint" (include "prism.neo4jUri" .)
+              "does" "MATCH (n) DETACH DELETE n over the ENTIRE database"))) }}
+# REPROJECT: rebuild the derived stores from truth, without touching truth.
+#
+# Run this when the DERIVATION changed rather than the world — a new bake rule
+# (e.g. resolved validity values, FK lookups) means existing physical_json was
+# computed by older code, and a fast-forward seed would only re-bake the
+# datasets the new records happen to touch, leaving the rest stale.
+#
+# Wipes the graph and TRUNCATEs term_version (both projections, both
+# rebuildable) but NEVER the `changeset` table — that is the source of truth and
+# only reset-world may replace it. Records arrive separately, via
+# scripts/sync_ledger.py; this job only rebuilds what is derived.
+#
+# NOT a helm hook: it is run on demand. A hook would re-run it on every upgrade,
+# which would wipe and rebuild the projections of a healthy environment.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "prism.fullname" . }}-reproject{{ with .Values.jobs.reproject.nameSuffix }}-{{ . }}{{ end }}
+  labels:
+    app: prism-reproject
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.jobs.reproject.backoffLimit }}
+  # 7200: a TTL shorter than helm's --wait reaps the completed Job before the
+  # watcher sees it, failing a release that actually succeeded.
+  ttlSecondsAfterFinished: {{ .Values.jobs.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app: prism-reproject
+        {{- include "prism.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "prism.imagePullSecrets" . | nindent 6 }}
+      {{- include "prism.scheduling" . | nindent 6 }}
+      containers:
+        - name: reproject
+          image: {{ include "prism.image" (dict "ctx" $ "name" "prism-api" "tag" .Values.api.image.tag "registry" .Values.api.image.registry "repository" .Values.api.image.repository) }}
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.api.image.pullPolicy) }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              python - << 'PYEOF'
+              import asyncio
+              import psycopg
+              from prism_api.config import Settings
+              from prism_api.db import create_driver
+
+              async def main() -> None:
+                  settings = Settings.from_env()
+                  driver = create_driver(settings)
+                  async with driver.session(database="neo4j") as session:
+                      while True:  # batched: a full-graph delete in one tx can OOM neo4j
+                          rec = await (await session.run(
+                              "MATCH (n) WITH n LIMIT 5000 DETACH DELETE n RETURN count(*) AS d"
+                          )).single()
+                          if rec is None or int(rec["d"]) == 0:
+                              break
+                  await driver.close()
+                  print("graph projection wiped")
+                  async with await psycopg.AsyncConnection.connect(settings.ledger_pg_dsn) as conn:
+                      await conn.execute("TRUNCATE term_version")
+                  print("version projection wiped (changeset table untouched)")
+
+              asyncio.run(main())
+              PYEOF
+              python scripts/load_constraints.py
+              python scripts/replay.py
+          env:
+            - name: PYTHONPATH
+              value: /app
+            {{- include "prism.graphAndLedgerEnv" . | nindent 12 }}
+{{- end }}

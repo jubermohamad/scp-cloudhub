@@ -1,0 +1,30 @@
+{{- $mt := index .Values "model_training_tool" | default dict }}
+{{- $mtEnabled := default false $mt.enabled }}
+{{- $mon := index .Values "monitoring_tool" | default dict }}
+{{- $monEnabled := default false $mon.enabled }}
+{{- $mlflowInternal := and (index .Values "internalServices") (index .Values "internalServices" "enabled") (index .Values "internalServices" "mlflow") (index .Values "internalServices" "mlflow" "enabled") }}
+{{- if and .Values.postgres.enabled (or $mlflowInternal $mtEnabled $monEnabled) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "model-store.componentName" (list . "postgres-mlflow-init") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+data:
+  {{- if $mlflowInternal }}
+  # Runs on first postgres init (when PGDATA is empty). Creates mlflow + mlflow_auth
+  # so they exist before MLflow tracking's upgrade-db-auth init container runs.
+  01-create-mlflow-dbs.sql: |
+    SELECT 'CREATE DATABASE mlflow' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'mlflow')\gexec
+    SELECT 'CREATE DATABASE mlflow_auth' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'mlflow_auth')\gexec
+  {{- end }}
+  {{- if $mtEnabled }}
+  02-create-model-training.sql: |
+    SELECT 'CREATE DATABASE model_training' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'model_training')\gexec
+  {{- end }}
+  {{- if $monEnabled }}
+  03-create-model-monitoring.sql: |
+    SELECT 'CREATE DATABASE model_monitoring' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'model_monitoring')\gexec
+  {{- end }}
+{{- end }}

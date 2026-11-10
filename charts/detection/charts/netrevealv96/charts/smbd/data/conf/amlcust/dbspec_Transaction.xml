@@ -1,0 +1,87 @@
+<!--  
+  © 2019 BAE Systems Applied Intelligence (Ireland) Limited. All rights Reserved.
+-->
+<!-- Transaction Record Specification -->
+<!-- ******************************** -->
+<dbspec name="Transaction" comments="Transactions from TRANSACTIONS table">
+
+    <!-- Read Transaction data from TRANSACTIONS table -->
+    <source-query>
+     SELECT *
+     FROM (
+     SELECT 
+          RUN_DATE as TxnDate
+        , ORIGINATION_DATE as RegisterDate
+        , TXN_AMOUNT_ORIG as AmountCurrency
+        , CURRENCY_CODE_BASE as Currency
+        , TXN_AMOUNT_BASE as AmountBaseCurrency
+        , CREDIT_DEBIT_CODE as CreditOrDebit
+        , SOURCE_TXN_UNIQUE_ID as TransactionID
+        , TXN_SOURCE_TYPE_CODE as TransactionType
+        , ACCOUNT_ID as AccountID
+        , ACCOUNT_TYPE_CODE as AccountType
+        , PRIMARY_CUSTOMER_ID as CustomerID
+        , CUSTOMER_SEGMENT_1 as CustomerSegment
+        , BRANCH_ID as BranchID
+        , EMPLOYEE_ID as EmployeeID
+        , COUNTER_PARTY_COUNTRY_CODE as SecondPartyCountry
+        , COUNTER_PARTY_ACCOUNT_ID as SecondPartyAccount
+        , COUNTER_PARTY_ACCOUNT_NAME as SecondPartyName
+        , COUNTER_PARTY_ACCOUNT_BIC as SecondPartyBIC
+        , ACCOUNT_BALANCE as AccountBalance
+        , ORG_UNIT_CODE as OrganisationalUnit
+        , ACCOUNT_SOURCE_REF_ID as AccountSourceRefID
+        , PRIMARY_CUST_SRCE_REF_ID as CustomerSourceRefID
+        , CARD_ID as CardID
+        , SOURCE_TXN_NUM as SourceTxnNum
+		, LOCAL_TIMESTAMP as LocalTimestamp
+    FROM V_SM_TRANSACTIONS
+    ) V_SM_TRANSACTIONS
+    WHERE @WHERE@
+	ORDER BY TxnDate, TransactionID
+    </source-query>
+    <tablename>  V_SM_TRANSACTIONS  </tablename>
+    <bad-tablename> SM_TRANSACTIONS_BAD </bad-tablename>
+
+    <!-- Source Limit Fields  -->
+    <!-- <limit-field name="TxnDate"     operator="between"/> -->
+    <!-- Not Supported
+    <limit-field name="TxnDate"     operator="equals"/>
+    -->
+    
+    <!-- Navigation Fields -->
+    <timefield>TxnDate</timefield>
+    <!-- Not Supported
+    <timefieldIncludeTime> false </timefieldIncludeTime>
+    <keyfield>  TransactionID        </keyfield>
+    -->
+    
+    <!-- Column to Read from the ResultSet -->
+        <column fieldname="TxnDate"		    dataType="DATE"      columnname="TxnDate" />
+
+        <!-- Not Supported
+	<column fieldname="RegisterDate"            dataType="INFODATE"  columnname="ORIGINATION_DATE" />
+	<column fieldname="AmountCurrency"          dataType="DBAMOUNT"  columnname="TXN_AMOUNT_ORIG" />
+	<column fieldname="Currency"                dataType="DBTEXT"    columnname="CURRENCY_CODE_BASE" />
+	<column fieldname="AmountBaseCurrency"      dataType="DBAMOUNT"  columnname="TXN_AMOUNT_BASE" />
+	<column fieldname="CreditOrDebit"           dataType="DBTEXT"    columnname="CREDIT_DEBIT_CODE" />
+	<column fieldname="TransactionID"           dataType="DBTEXT"    columnname="SOURCE_TXN_UNIQUE_ID" />
+	<column fieldname="TransactionType"         dataType="DBTEXT"    columnname="TXN_SOURCE_TYPE_CODE" />
+	<column fieldname="AccountID"               dataType="DBTEXT"    columnname="ACCOUNT_ID" />
+	<column fieldname="AccountType"             dataType="DBTEXT"    columnname="ACCOUNT_TYPE_CODE" />
+	<column fieldname="CustomerID"              dataType="DBTEXT"    columnname="PRIMARY_CUSTOMER_ID" />
+	<column fieldname="CustomerSegment"         dataType="DBTEXT"    columnname="CUSTOMER_SEGMENT_1" />
+	<column fieldname="BranchID"                dataType="DBTEXT"    columnname="BRANCH_ID" />
+	<column fieldname="EmployeeID"              dataType="DBTEXT"    columnname="EMPLOYEE_ID" />
+	<column fieldname="SecondPartyCountry"      dataType="DBTEXT"    columnname="COUNTER_PARTY_COUNTRY_CODE" />
+	<column fieldname="SecondPartyAccount"      dataType="DBTEXT"    columnname="COUNTER_PARTY_ACCOUNT_ID" />
+	<column fieldname="SecondPartyName"         dataType="DBTEXT"    columnname="COUNTER_PARTY_ACCOUNT_NAME" />
+	<column fieldname="SecondPartyBIC"          dataType="DBTEXT"    columnname="COUNTER_PARTY_ACCOUNT_BIC" />
+	<column fieldname="AccountBalance"          dataType="DBAMOUNT"  columnname="ACCOUNT_BALANCE" />
+	<column fieldname="OrganisationalUnit"      dataType="DBTEXT"    columnname="ORG_UNIT_CODE" />
+	<column fieldname="AccountSourceRefID"      dataType="DBTEXT"    columnname="ACCOUNT_SOURCE_REF_ID" />
+	<column fieldname="CustomerSourceRefID"     dataType="DBTEXT"    columnname="PRIMARY_CUST_SRCE_REF_ID" />
+	<column fieldname="CardID"                  dataType="DBTEXT"    columnname="CARD_ID" />
+	<column fieldname="SourceTxnNum"            dataType="DBTEXT"    columnname="SOURCE_TXN_NUM" />
+	-->
+</dbspec>

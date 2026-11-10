@@ -1,0 +1,10 @@
+# GitHub integration config overlay
+# Load this alongside the main config when GITHUB_TOKEN is set:
+#   yarn start --config app-config.yaml --config app-config.github.yaml
+# Or in Docker, mount it as an additional config file.
+
+integrations:
+  github:
+    - host: github.com
+      apiBaseUrl: https://api.github.com
+      token: ${GITHUB_TOKEN}

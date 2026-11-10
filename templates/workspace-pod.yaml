@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${WORKSPACE_POD_NAME}
+  namespace: ${WORKSPACE_NAMESPACE}
+  labels:
+    app: sri-workspace
+    developer: ${DEVELOPER_ID}
+    component: ${COMPONENT_ID}
+spec:
+  containers:
+  - name: dev-environment
+    image: ${WORKSPACE_IMAGE}
+    command: ["/bin/bash"]
+    args: ["-c", "while true; do sleep 30; done;"]
+    resources:
+      requests:
+        cpu: "2"
+        memory: "4Gi"
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+    env:
+    - name: GITHUB_PAT
+      valueFrom:
+        secretKeyRef:
+          name: ${GITHUB_SECRET_NAME}
+          key: ${GITHUB_SECRET_KEY}
+    - name: ONEPASSWORD_ACCOUNT
+      value: "${ONEPASSWORD_ACCOUNT}"
+    volumeMounts:
+    - name: workspace-storage
+      mountPath: /workspace
+    - name: docker-socket
+      mountPath: /var/run/docker.sock
+    - name: kubeconfig
+      mountPath: /home/developer/.kube
+    ports:
+    - containerPort: 8080
+    - containerPort: 8000
+
+  - name: postgres-sidecar
+    image: postgres:15.4
+    env:
+    - name: POSTGRES_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: postgres-credentials
+          key: password
+    - name: POSTGRES_DB
+      value: invhub_copilot_dev
+    ports:
+    - containerPort: 5432
+
+  - name: kafka-sidecar
+    image: bitnami/kafka:3.6
+    env:
+    - name: KAFKA_CFG_NODE_ID
+      value: "0"
+    - name: KAFKA_CFG_PROCESS_ROLES
+      value: controller,broker
+    ports:
+    - containerPort: 9092
+
+  - name: temporal-sidecar
+    image: temporalio/auto-setup:1.21
+    env:
+    - name: POSTGRES_HOST
+      value: localhost
+    - name: POSTGRES_PORT
+      value: "5432"
+    ports:
+    - containerPort: 7233
+  volumes:
+  - name: workspace-storage
+    persistentVolumeClaim:
+      claimName: ${WORKSPACE_PVC_NAME}
+  - name: docker-socket
+    hostPath:
+      path: /var/run/docker.sock
+      type: Socket
+  - name: kubeconfig
+    secret:
+      secretName: ${KUBECONFIG_SECRET_NAME}

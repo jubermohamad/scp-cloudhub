@@ -1,0 +1,126 @@
+{{/*
+The data-mapping UI (data-process-ui): the nginx-served front end for this
+service, built from data-mapping-ui/ by this repo's own CI
+(image-name: sensa-data-fin-data-service/data-process-ui), so it ships and
+versions WITH the API it talks to.
+
+It had no chart at all. It reached clusters as a hand-applied manifest
+(k8s/aks/dev_profile/data-process-ui.yaml), which is why it exists in
+sri-dev-pipeline, data-engine-jhart and feature-cdc-test and was simply absent
+from any environment nobody had applied it to by hand.
+
+Modelled on the running dev object rather than invented: nginx listening on 8080,
+no env, no probes, one pull secret. The Service targets 8080 because that is what
+the container actually listens on (verified in-pod), not because the manifest said
+so — the dev Deployment declares no ports at all.
+*/}}
+{{- if .Values.dataProcessUi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "finDataService.fullname" . }}-data-process-ui
+  labels:
+    {{- include "finDataService.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-process-ui
+spec:
+  replicas: {{ .Values.dataProcessUi.replicas }}
+  selector:
+    matchLabels:
+      # name IS in the selector deliberately: instance+component alone match a
+      # sibling chart's pods in a shared namespace — the same defect this chart's
+      # postgres Service had.
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: data-process-ui
+      app.kubernetes.io/name: {{ include "finDataService.fullname" . }}-data-process-ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: data-process-ui
+        app.kubernetes.io/name: {{ include "finDataService.fullname" . }}-data-process-ui
+    spec:
+      imagePullSecrets:
+        {{- include "finDataService.imagePullSecrets" . | nindent 8 }}
+      containers:
+        - name: data-process-ui
+          # <registry>/<repository>/data-process-ui — a SUBPATH of the api's
+          # repository, and it tracks image.tag unless overridden, so the UI and
+          # the API it calls cannot silently drift apart.
+          image: {{ .Values.image.registry }}/{{ .Values.image.repository }}/{{ .Values.dataProcessUi.imageName }}:{{ .Values.dataProcessUi.tag | default .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default (default dict .Values.global).imagePullPolicy | default "Always" }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.dataProcessUi.port }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.dataProcessUi.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "finDataService.fullname" . }}-data-process-ui
+  labels:
+    {{- include "finDataService.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-process-ui
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: data-process-ui
+    app.kubernetes.io/name: {{ include "finDataService.fullname" . }}-data-process-ui
+  ports:
+    - name: http
+      port: {{ .Values.dataProcessUi.port }}
+      targetPort: http
+{{- if .Values.dataProcessUi.ingress.enabled }}
+---
+{{/* Path-based, with the rewrite the dev ingress uses: the app is served at the
+     root of its own nginx, so the prefix has to be stripped before it arrives. */}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "finDataService.fullname" . }}-data-process-ui
+  labels:
+    {{- include "finDataService.labels" . | nindent 4 }}
+  annotations:
+    {{- /* The rewrite is only needed for a SUB-PATH. On a dedicated host the app
+           owns the root and a plain `/` is correct — and simpler to reason about.
+           Note a sub-path only works if the bundle's asset paths are relative:
+           this UI requests its chunks from /assets/*, so under a sub-path on a
+           shared host the browser would fetch <host>/assets/* and miss it
+           entirely. That is why the SRI platform gives it its own hostname, the
+           same way the CRA widget UI has one. */}}
+    {{- if ne (trimSuffix "/" .Values.dataProcessUi.ingress.path) "" }}
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    {{- end }}
+    {{- with .Values.dataProcessUi.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.dataProcessUi.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.dataProcessUi.ingress.tlsSecret }}
+  tls:
+    - hosts: [{{ $.Values.dataProcessUi.ingress.host | quote }}]
+      secretName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ required "dataProcessUi.ingress.host is required when its ingress is enabled" .Values.dataProcessUi.ingress.host | quote }}
+      http:
+        paths:
+          {{- $p := trimSuffix "/" .Values.dataProcessUi.ingress.path }}
+          - path: {{ if $p }}{{ printf "%s(/|$)(.*)" $p }}{{ else }}/{{ end }}
+            pathType: {{ if $p }}ImplementationSpecific{{ else }}Prefix{{ end }}
+            backend:
+              service:
+                name: {{ include "finDataService.fullname" . }}-data-process-ui
+                port:
+                  number: {{ .Values.dataProcessUi.port }}
+{{- end }}
+{{- end }}

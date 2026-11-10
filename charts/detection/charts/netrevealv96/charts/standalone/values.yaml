@@ -1,0 +1,405 @@
+pod:
+  standaloneDockerImage: "nri-nrod-k8s-sa:s1-c9.4.0.0__r9.4.0.0__v9.4.0.35-20260312061440"
+  samlStandaloneDockerImage: "nri-nrod-k8s-sa:s1-saml-c9.4.0.0__r9.4.0.0__v9.4.0.35-20260312061440"
+  psqlDockerImage: "nri-nrod-k8s-db:16.10-20250917073342"
+  replicas: 1
+  java:
+    scheduleRunnerHeapMax: "4096M"
+    scheduleRunnerHeapMin: "2048M"
+    standaloneMaxRam: "6g"
+    importExportHeapMax: "2048M"
+    importExportHeapMin: "2048M"
+    # Email debug options: -Dsmtp.debug=true -Dmail.debug=true
+    extraJavaOpts: "-Dmail.smtp.ssl.enable=true -Dmail.smtp.ssl.trust=*"
+    switchOnDebug: false
+  livenessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    successThreshold: 1
+    timeoutSeconds: 5
+  readinessProbe:
+    failureThreshold: 3
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    successThreshold: 1
+    timeoutSeconds: 5
+  resources:
+    requests:
+      memory: "5Gi"
+      cpu: "4000m"
+    limits:
+      memory: "7Gi"
+      cpu: "6000m"
+pvc:
+  applicationLogsStorage: 10Gi
+  confWlmStorage: 10Gi
+  dataStorage: 20Gi
+  overrideStorage: 10Mi
+pv:
+  hostPath: "/var/nfs_k8s/standalone"
+  hostPathWlmIndexes: "/var/nfs_k8s"
+  hostPathMinikube: "/opt/netreveal/standalone"
+
+log4j2:
+  functionstatsLogLevel: "info"
+  messagestatsLogLevel: "info"
+  overrideLog4j2: ""
+
+# Values for schema provisioning job
+dbInit:
+  ttlSecondsAfterFinished: 7200
+  baseConfigProperties:
+    hibernate:
+      hikari:
+        maximumPoolSize: "100"
+  licence:
+    clientName: "INTERNAL"
+    projectCode: "NR Engineering"
+    licenceKey: ""
+  java:
+    importExportHeapMinMax: "6144M"
+
+override:
+  # week
+  ttlSecondsAfterFinished: 604800
+
+#SideCar configuration
+sideCar:
+  acqFeedbackFilesMoveCron: "*/2 * * * *"
+  badFileZipTimestampEnabled: "false"  #true|false
+  acqEnvelopeExtractorCron: "*/2 * * * *"
+  amloptEnvelopeExtractorCron: "*/2 * * * *"
+  wlmMoverCron: "*/2 * * * *"
+  wlmArchiveCleanerCron: "0 22 1 * *"
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "350Mi"
+      cpu: "350m"
+  houseKeeping:
+    wlm:
+      archive:
+        # Enter number in days, for example for 180 days enter - 179, Script will check files that have been
+        # more than 179 days ago, which includes 180 days and beyond.
+        period: 179
+  readinessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  livenessProbe:
+    initialDelaySeconds: 120
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+baseConfigProperties:
+  # filtering.batch.transformer.max_row_count
+  filteringBatchTransformerMaxRowCount: "5000"
+  # filtering.batch.processor.max_processing_row_amount
+  filteringBatchProcessorMaxProcessingRowAmount: "250"
+  # filtering.build.indexes.onstartup
+  filteringBuildIndexesOnStartup: "false"
+  # filtering.editable
+  filteringEditable: "false"
+  # filtering.editablelists
+  filteringEditableLists: "true"
+  # filtering.db.statement.batch.size
+  filteringDbStatementBatchSize: "100"
+  # filtering.kafka.consumer.max.poll.interval.ms
+  filteringKafkaConsumerMaxPollIntervalMs: "1800000"
+  # filtering.kafka.consumer.max.poll.records
+  filteringKafkaConsumerMaxPollRecords: "1"
+  # filtering.kafka.consumer.session.timeout.ms
+  filteringKafkaConsumerSessionTimeoutMs: "300000"
+  # filtering.batch.processing.kafka.node.count
+  filteringBatchProcessingKafkaNodeCount: "4"
+  # filtering.batch.processing.kafka.consumer.count
+  filteringBatchProcessingKafkaConsumerCount: "5"
+  # filtering.batch.transformation.kafka.consumer.count
+  filteringBatchTransformationKafkaConsumerCount: "1"
+  # filtering.batch.transformation.kafka.retries
+  filteringBatchTransformationKafkaRetries: "3"
+  # filtering.list.import.kafka.consumer.count
+  filteringListImportKafkaConsumerCount: "1"
+  # filtering.24x7.ags.backup.recovery.interval
+  filtering24x7AgsBackupRecorveryInterval: "300000"
+  # filtering.24x7.wlm.alert.duplication.expiry.time
+  # 86400000= 24hrs
+  # Keep this value empty to not define this parameter in the base_config.properties file
+  # https://netreveal.atlassian.net/wiki/spaces/Eng/pages/313393457/WLMX-1915+-+Handling+duplicate+alerts+Implementation
+  filtering24x7WlmAlertDuplicationExpiryTime: ""
+  # filtering.24x7.wlm.alert.duplication.interval
+  # Keep this value empty to not define this parameter in the base_config.properties file
+  # https://netreveal.atlassian.net/wiki/spaces/Eng/pages/313393457/WLMX-1915+-+Handling+duplicate+alerts+Implementation
+  filtering24x7WlmAlertDuplicationInterval: ""
+  # filtering.24x7.wlm.igs.write.sleep.time
+  filtering24x7WlmProcWriteSleepTime: "1000"
+  # filtering.24x7.wlm.proc.read.sleep.time
+  filtering24x7WlmProcReadSleepTime: "60000"
+  # filtering.24x7.processing.group.name
+  filtering24x7ProcessingGroupName: "WLM Processing Group"
+  # wlm.batch.proc.group.name
+  wlmBatchProcGrouName: "WLM Processing Group"
+  # filtering.24x7.processing.node.registration.start.delay
+  filtering24x7ProcessingNodeRegistrationStartDelay: "60000"
+  # filtering.24x7.processing.node.registration.retry.interval
+  filtering24x7ProcessingNodeRegistrationRetryInterval: "600000"
+  # filtering.24x7.processing.node.registration.request.timeout
+  filtering24x7ProcessingNodeRegistrationRequestTimeout: "5"
+  # filtering.24x7.processing.node.swift.mt.linking.job.enable
+  filtering24x7ProcessingNodeSwiftMtLinkingJobEnable: "false"
+  # filtering.24x7.processing.node.swift.mt.linking.job.retry.interval
+  filtering24x7ProcessingNodeSwiftMtLinkingJobRetryInerval: "15000"
+  # filtering.24x7.processing.node.swift.mt.linking.job.start.delay
+  filtering24x7ProcessingNodeSwiftMtLinkingJobStartDelay: "120000"
+  # filtering.24x7.processing.node.swift.mt.linking.consumer.poll.timeout
+  filtering24x7ProcessingNodeSwiftMtLinkingConsumerPollTimeout: "1000"
+  # filtering.24x7.processing.node.swift.mt.linking.records.processing.limit
+  filtering24x7ProcessingNodeSwiftMtLinkingRecordsProcessingLimit: "10000"
+  mail:
+    # process.inbound.emails
+    processInboundEmails: "false"
+  # Solution configuration
+  amlcbdet:
+    tagging:
+      enabled: "false"
+  amlcustdet:
+    tagging:
+      enabled: "false"
+  amldet:
+    tagging:
+      enabled: "true"
+  amlopt:
+    smbd:
+      alert:
+        prefix: "SIM"
+  installed:
+    apps:
+      vertical:
+        amlorch_cluster: "N"
+  kafka:
+    producer:
+      # kafka.producer.EIM-Default-Producer.interceptor.enabled
+      EIMDefaultProducer:
+        interceptorEnabled: "false"
+        # kafka.producer.EIM-Default-Producer.metrics.interval
+        metricsInterval: "1200"
+    consumer:
+      CDDAAS_ApplicationAdaptation:
+        failure:
+          strategy: "RETRY"
+      CDDAGS_ScoredCustomers:
+        failure:
+          strategy: "RETRY"
+        max:
+          poll:
+            records: "50"
+      CDDCPS_Subjects:
+        failure:
+          strategy: "RETRY"
+        max:
+          poll:
+            records: "50"
+      CDDSPS_RiskScores:
+        failure:
+          strategy: "RETRY"
+        max:
+          poll:
+            records: "50"
+  aap:
+    protocol: "https"
+    port: "6789"
+  hibernate:
+    hikari:
+      autoCommit: "true"
+      connectionTimeout: "30000"
+      idleTimeout: "600000"
+      maxLifetime: "1800000"
+      minimumIdle: "3"
+      maximumPoolSize: "50"
+
+  # Project specific base_config.properties parameters. When it is defined as empty string then no new parameters are added into this file.
+  # To define new parameters please define it as follows:
+  # extraParameters: |
+  #   param1=value1
+  #   param2="value2"
+  #   param3=value3
+  extraParameters: ""
+
+acquisition:
+  # Test AAP.  For production please don't update these parameters
+  amlth:
+    amlsa:
+      updateAlertStatus: "N"
+
+factiva:
+  job:
+    enableDailyJob: false
+    enableWeeklyJob: false
+    dailySchedule: "0 8 * * *"
+    weeklySchedule: "0 8 * * 1"
+    ttlSecondsAfterFinished: 7776000
+    successfulJobsHistoryLimit: 10
+    failedJobsHistoryLimit: 10
+    pod:
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "250m"
+        limits:
+          memory: "1024Mi"
+          cpu: "500m"
+  pvc:
+    pvcStorage: "10Gi"
+  pv:
+    hostPath: "/var/nfs_k8s/factiva"
+    hostPathMinikube: "/opt/netreveal/factiva"
+  factivaParameters:
+    customFactivaInUse: "FALSE"
+    customFactivaFilePrefix: ""
+    checkWatchListIngestion: "FALSE"
+    watchListTriggerOnlyAfterBatchFinishes: "TRUE"
+    watchListBatchCompleteCheckRetryXTimes: "3"
+    watchListBatchCompleteCheckRetryIntervalSeconds: "3600"
+    watchListLoadRunningCheckRequired: "FALSE"
+    watchListLoadRunningCheckRetryXTimes: "10"
+    watchListLoadRunningCheckRetryIntervalInSeconds: "1800"
+    username: ""
+    password: ""
+    url: ""
+
+worldcheck:
+  job:
+    enableDailyJob: false
+    enableSmartDeleteJob: false
+    enableWeeklyJob: false
+    dailySchedule: "0 8 * * *"
+    smartDeleteSchedule: "30 9 * * *"
+    weeklySchedule: "0 10 * * 1"
+    ttlSecondsAfterFinished: 7776000
+    successfulJobsHistoryLimit: 10
+    failedJobsHistoryLimit: 10
+    pod:
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "250m"
+        limits:
+          memory: "1024Mi"
+          cpu: "500m"
+  worldcheckParameters:
+    envelopeCheckerEnabled: "FALSE"
+    username: ""
+    password: ""
+
+appsSchemaImportJob:
+  job:
+    enableJob: false
+    schedule: "0 * * * *"
+    ttlSecondsAfterFinished: 7776000
+    successfulJobsHistoryLimit: 10
+    failedJobsHistoryLimit: 10
+    pod:
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "250m"
+        limits:
+          memory: "1024Mi"
+          cpu: "500m"
+  script:
+    batches: 100
+
+dbextract:
+  job:
+    enableHourlyJob: false
+    enableDailyJob: false
+    enableWeeklyJob: false
+    enableMonthlyJob: false
+    hourlySchedule: "0 9-17 * * *"
+    dailySchedule: "0 14 * * *"
+    weeklySchedule: "0 16 * * 6"
+    monthlySchedule: "0 16 1 * *"
+    ttlSecondsAfterFinished: 7776000
+    successfulJobsHistoryLimit: 10
+    failedJobsHistoryLimit: 10
+    pod:
+      resources:
+        requests:
+          memory: "512Mi"
+          cpu: "250m"
+        limits:
+          memory: "1024Mi"
+          cpu: "500m"
+  script:
+    # Log level for the dbextract script
+    # info|debug
+    logLevel: "info"
+    # Add query limit to the SQLs
+    # true|false
+    addQueryLimit: "true"
+    # Query limit value
+    queryLimit: "1000000"
+    # Avoid sending datafiles of 0 size if 'sendEmptyFiles' is set to 'false'
+    sendEmptyFiles: "false"
+    # Select which db URL to use: "ro" - for ReadOnly, "rw" - for ReadWrite
+    dbConnectionType: "ro"
+    # Perfix for the output zip file name
+    zipFileName: "netreveal"
+    # Prefix for extracted file name, defaults to none. Example: nrodExtract_
+    extractFilePrefix: ""
+    # Extention for extracted file, defaults to csv
+    extractFileExtention: "csv"
+    # Maximum number of retries for a retryable error in SQL execution
+    maxRetries: 3
+    # Initial wait time before retrying a failed SQL execution (in seconds)
+    baseRetryDelay: 60
+    # Maximum wait time between retries (in seconds)
+    maxRetryDelay: 300
+    hourly:
+      # Text File that contains lines of SQLS to run
+      # Deprecated: Use 'inputFilePaths' instead.
+      inputFileName: ""
+      # List of input files to be used in the SQLs
+      # The path inside of the 'input' folder. For multi-org, the path should be 'orgName/fileName'
+      inputFilePaths: []
+        # - "dbextract_hourly.txt"
+        # - "orgUnit1/dbextract_hourly.txt"
+        # - "org-unit-2/dbextract_hourly.txt"
+        # - "org_unit_3/dbextract_hourly.txt"
+    daily:
+      # Text File that contains lines of SQLS to run
+      # Deprecated: Use 'inputFilePaths' instead.
+      inputFileName: ""
+      # List of input files to be used in the SQLs
+      # The path inside of the 'input' folder. For multi-org, the path should be 'orgName/fileName'
+      inputFilePaths: []
+        # - "dbextract_daily.txt"
+        # - "orgUnit1/dbextract_daily.txt"
+        # - "org-unit-2/dbextract_daily.txt"
+        # - "org_unit_3/dbextract_daily.txt"
+    weekly:
+      # Text File that contains lines of SQLS to run
+      # Deprecated: Use 'inputFilePaths' instead.
+      inputFileName: ""
+      # List of input files to be used in the SQLs
+      # The path inside of the 'input' folder. For multi-org, the path should be 'orgName/fileName'
+      inputFilePaths: []
+        # - "dbextract_weekly.txt"
+        # - "orgUnit1/dbextract_weekly.txt"
+        # - "org-unit-2/dbextract_weekly.txt"
+        # - "org_unit_3/dbextract_weekly.txt"
+    monthly:
+      # Text File that contains lines of SQLS to run
+      # Deprecated: Use 'inputFilePaths' instead.
+      inputFileName: ""
+      # List of input files to be used in the SQLs
+      # The path inside of the 'input' folder. For multi-org, the path should be 'orgName/fileName'
+      inputFilePaths: []
+        # - "dbextract_monthly.txt"
+        # - "orgUnit1/dbextract_monthly.txt"
+        # - "org-unit-2/dbextract_monthly.txt"
+        # - "org_unit_3/dbextract_monthly.txt"

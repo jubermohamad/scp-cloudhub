@@ -1,0 +1,22 @@
+nameOverride: ""
+fullnameOverride: "flows"
+
+config:
+  releaseId: ""
+  tenant: ""
+  authClientId: ""
+  url: ""
+  narrativeAgentDeploymentId: ""
+  initialSummaryDeploymentId: ""
+  initialSummaryCaseDeploymentId: ""
+  emailAgentDeploymentId: ""
+  webResearchAgentDeploymentId: ""
+  evidenceBoardAgentDeploymentId: ""
+  disclosureSubmissionAgentDeploymentId: ""
+  ecddAgentDeploymentId: ""
+  austracSmrSubmissionAgentDeploymentId: ""
+  investigationNotesWebhookId: ""
+
+secrets:
+  username: ""
+  password: ""

@@ -1,0 +1,394 @@
+apiVersion: v2
+name: invhub
+description: A Helm chart for installing Investigations Hub
+type: application
+version: 1.397.6
+appVersion: "v2026.07.8"
+dependencies:
+  - name: opensearch
+    version: 2.17.0
+    repository: https://opensearch-project.github.io/helm-charts
+    condition: infra.enabled
+  - name: opensearch
+    alias: observability-opensearch
+    version: 2.17.0
+    repository: https://opensearch-project.github.io/helm-charts
+    tags:
+      - logs
+  - name: opensearch-dashboards
+    version: 2.15.1
+    repository: https://opensearch-project.github.io/helm-charts
+    condition: opensearch-dashboards.enabled
+  - name: opensearch-extensions
+    version: ">=0.0.1"
+    repository: file://./charts/opensearch-extensions
+    condition: infra.enabled
+  - name: fluentd
+    version: 0.5.0
+    repository: https://fluent.github.io/helm-charts
+    condition: fluentd.enabled
+  - name: kafka-cluster
+    version: ">=0.0.1"
+    repository: file://./charts/kafka-cluster
+    # own condition (was infra.enabled, shared with every infra dep) so the
+    # bundled Kafka can be disabled in favour of a shared platform cluster
+    condition: kafka-cluster.enabled
+  - name: kafka-ui
+    version: 1.5.0
+    repository: https://kafbat.github.io/helm-charts
+    condition: infra.enabled
+  - name: tenant
+    alias: minioop
+    version: 5.0.11
+    repository: https://operator.min.io/
+    # P7: own condition (was infra.enabled, shared with every infra dep) so
+    # this bundled instance can be disabled in favour of the shared platform
+    # one without losing the rest of invhub's infrastructure.
+    condition: minioop.enabled
+  - name: minioop-extensions
+    version: ">=0.0.1"
+    repository: file://./charts/minioop
+    # P7: own condition (was infra.enabled, shared with every infra dep) so
+    # this bundled instance can be disabled in favour of the shared platform
+    # one without losing the rest of invhub's infrastructure.
+    condition: minioop-extensions.enabled
+  - name: common
+    repository: https://charts.bitnami.com/bitnami
+    tags:
+      - bitnami-common
+    version: 2.13.4
+    condition: infra.enabled
+  - name: redis
+    version: 20.13.5
+    repository: https://charts.bitnami.com/bitnami
+    # P7: own condition (was infra.enabled, shared with every infra dep) so
+    # this bundled instance can be disabled in favour of the shared platform
+    # one without losing the rest of invhub's infrastructure.
+    condition: redis.enabled
+  - name: invhub-secrets
+    version: ">=0.0.1"
+    repository: file://./charts/invhub-secrets
+    condition: infra.enabled
+  - name: mockserver
+    version: 0.27.1
+    repository: file://./charts/mockserver
+    condition: mockserver.enabled
+  - name: reporting-dashboard
+    version: 0.22.1
+    repository: file://./charts/reporting-dashboard
+    condition: reporting-dashboard.enabled
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: reporting-dashboard-ingress
+    condition: reporting-dashboard.enabled
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: invhub-ingress
+    condition: infra.enabled
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: pgadmin-ingress
+    condition: infra.enabled
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: copilot-ingress
+    condition: infra.enabled
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: minio-ingress
+    condition: infra.enabled
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: opensearch-dashboards-ingress
+    condition: infra.enabled
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: keycloak-ingress
+    tags:
+      - keycloak
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: swagger-ingress
+    condition: infra.enabled
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: api-notifications-ingress
+    condition: infra.enabled
+  - name: certificate
+    version: ">=0.0.1"
+    repository: file://./charts/certificate
+    alias: ingress-tls
+    condition: ingress-tls.enabled
+  - name: cluster-issuer
+    version: ">=0.0.1"
+    repository: file://./charts/cluster-issuer
+    condition: infra.enabled
+  - name: clamavd
+    version: 0.28.1
+    repository: file://./charts/clamavd
+    condition: infra.enabled
+  - name: api
+    version: 0.51.1
+    repository: file://./charts/api
+    condition: api.enabled
+  - name: api
+    alias: event-data-ingestion
+    version: ">=0.0.1"
+    repository: file://./charts/api
+    tags:
+      - separate-api-responsibilities
+  - name: api
+    alias: api-data-ingestion
+    version: ">=0.0.1"
+    repository: file://./charts/api
+    tags:
+      - separate-api-responsibilities
+  - name: api
+    alias: api-for-ui
+    version: ">=0.0.1"
+    repository: file://./charts/api
+    tags:
+      - separate-api-responsibilities
+  - name: api
+    alias: search-indexing
+    version: ">=0.0.1"
+    repository: file://./charts/api
+    tags:
+      - separate-api-responsibilities
+  - name: flows
+    version: ">=0.0.1"
+    repository: file://./charts/flows
+    condition: infra.enabled
+  - name: disc-api
+    version: 0.36.1
+    repository: file://./charts/disc-api
+    condition: disc-api.enabled
+  - name: transac-api
+    version: 0.30.1
+    repository: file://./charts/transac-api
+    tags:
+      - transactions-api
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: transac-api-ingress
+    tags:
+      - transactions-api
+  - name: disc-web
+    version: 0.34.1
+    repository: file://./charts/disc-web
+    condition: disc-web.enabled
+  - name: web
+    version: 0.35.1
+    repository: file://./charts/web
+    condition: web.enabled
+  - name: web
+    version: 0.35.1
+    repository: file://./charts/web
+    alias: webv2
+    tags:
+      - webv2
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: webv2-ingress
+    tags:
+      - webv2
+  - name: cdc
+    version: ">=0.0.1"
+    repository: file://./charts/cdc
+    condition: cdc.enabled
+  - name: nginx-docs
+    version: 0.27.1
+    repository: file://./charts/nginx-docs
+    alias: help
+    condition: help.enabled
+  - name: nginx-docs
+    version: 0.27.1
+    repository: file://./charts/nginx-docs
+    alias: graphql-api-docs
+    condition: graphql-api-docs.enabled
+  - name: copilot
+    alias: context-engine
+    version: ">=0.0.1"
+    repository: file://./charts/copilot
+    condition: copilot.enabled
+  - name: copilot
+    alias: websearch
+    version: ">=0.0.1"
+    repository: file://./charts/copilot
+    condition: copilot.enabled
+  - name: copilot-common
+    version: ">=0.0.1"
+    repository: file://./charts/copilot-common
+    tags:
+      - copilotv2
+  - name: copilotv2
+    version: 0.31.1
+    repository: file://./charts/copilotv2
+    tags:
+      - copilotv2
+  - name: copilot-data-adapter
+    version: 0.31.1
+    repository: file://./charts/copilot-data-adapter
+    tags:
+      - copilotv2
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: copilotv2-ingress
+    tags:
+      - copilotv2
+  - name: cn-postgres
+    alias: cn-postgres-copilotv2
+    version: ">=0.0.1"
+    repository: file://./charts/cn-postgres
+    tags:
+      - copilotv2
+  - name: cn-postgres
+    alias: cn-postgres-copilot-data-adapter
+    version: ">=0.0.1"
+    repository: file://./charts/cn-postgres
+    tags:
+      - copilotv2
+  - name: terrarium
+    version: 0.29.1
+    repository: file://./charts/terrarium
+    condition: copilot.enabled
+  - name: copilot
+    alias: interaction-engine
+    version: ">=0.0.1"
+    repository: file://./charts/copilot
+    condition: copilot.enabled
+  - name: backups
+    alias: backups
+    version: ">=0.0.1"
+    repository: file://./charts/backups
+    condition: infra.enabled
+  - name: copilot
+    alias: prompt-engine
+    version: ">=0.0.1"
+    repository: file://./charts/copilot
+    condition: copilot.enabled
+  - name: keycloak
+    version: 0.1.1
+    repository: https://charts.bitnami.com/bitnami
+    tags:
+      - keycloak
+  - name: opentelemetry
+    version: ">=0.0.1"
+    repository: file://./charts/opentelemetry
+    tags:
+      - traces
+  - name: jaeger
+    version: ">=0.0.1"
+    repository: file://./charts/jaeger
+    tags:
+      - traces
+  - name: tempo-distributed
+    version: 1.6.10
+    repository: https://grafana.github.io/helm-charts
+    tags:
+      - traces
+  - name: minio
+    alias: tempo-minio
+    version: 12.1.3
+    repository: https://charts.bitnami.com/bitnami
+    tags:
+      - traces
+  - name: grafana-dashboards
+    alias: grafana-dashboards
+    version: ">=0.0.1"
+    repository: file://./charts/grafana-dashboards
+    tags:
+      - metrics
+      - traces
+      - logs
+  - name: grafana
+    version: "6.60.3"
+    repository: https://grafana.github.io/helm-charts
+    tags:
+      - metrics
+      - traces
+      - logs
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: observability-ingress
+    tags:
+      - metrics
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: jaeger-ingress
+    tags:
+      - traces
+  - name: cn-postgres
+    version: ">=0.0.1"
+    repository: file://./charts/cn-postgres
+    # P7: own condition (was infra.enabled, shared with every infra dep) so
+    # this bundled instance can be disabled in favour of the shared platform
+    # one without losing the rest of invhub's infrastructure.
+    condition: cn-postgres.enabled
+  - name: cn-postgres
+    alias: cn-postgres-invhub
+    version: ">=0.0.1"
+    repository: file://./charts/cn-postgres
+    tags:
+      - invhub-db-migration
+  - name: cn-postgres
+    alias: cn-postgres-transactions
+    version: ">=0.0.1"
+    repository: file://./charts/cn-postgres
+    tags:
+      - transactions-api
+  - name: cn-postgres
+    alias: cn-postgres-keycloak
+    version: ">=0.0.1"
+    repository: file://./charts/cn-postgres
+    tags:
+      - keycloak
+  - name: cn-postgres
+    alias: cn-postgres-ai-doc-centre
+    version: ">=0.0.1"
+    repository: file://./charts/cn-postgres
+    tags:
+      - ai-doc-centre
+  - name: cn-postgres
+    alias: cn-postgres-copilot
+    version: ">=0.0.1"
+    repository: file://./charts/cn-postgres
+    # P7: own condition. Was copilot.enabled, which is the switch for the copilot
+    # ENGINES — so the bundled cluster could not be retired without also turning
+    # off the very services that need a database.
+    condition: cn-postgres-copilot.enabled
+  - name: pgadmin4
+    version: 1.62.0
+    repository: https://helm.runix.net
+    condition: infra.enabled
+  - name: langfuse
+    version: 0.2.0
+    repository: https://langfuse.github.io/langfuse-k8s
+    tags:
+      - langfuse
+  - name: ingress
+    version: ">=0.0.1"
+    repository: file://./charts/ingress
+    alias: langfuse-ingress
+    tags:
+      - langfuse
+  - name: cn-postgres
+    alias: cn-postgres-langfuse
+    version: ">=0.0.1"
+    repository: file://./charts/cn-postgres
+    tags:
+      - langfuse

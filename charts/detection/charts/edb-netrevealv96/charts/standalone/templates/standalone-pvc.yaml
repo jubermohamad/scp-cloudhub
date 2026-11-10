@@ -1,0 +1,171 @@
+{{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+{{ $currentScope := .}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-standalone-logs-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "standalone.pvcApplicationLogsStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "standalone") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "standalone-logs" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/standalone-{{ $i }}/logs
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/standalone-{{ $i }}/logs
+  {{- end }}
+{{- end }}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-standalone-conf-wlm-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "standalone.pvcConfWlmStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "standalone") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "standalone-conf-wlm" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/standalone-{{ $i }}/conf/wlm
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/standalone-{{ $i }}/conf/wlm
+  {{- end }}
+{{- end -}}
+
+{{- range $i, $e := until (.Values.pod.replicas | int) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ $.Release.Name }}-standalone-data-{{ $i }}
+  labels:
+    resource/type: pv
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  {{- with $currentScope }}
+  storageClassName: {{ include "storage.storageClassName" . }}
+  {{- end }}
+  capacity:
+    {{- with $currentScope }}
+    storage: {{ include "standalone.pvcDataStorage" . }}
+    {{- end }}
+  accessModes:
+    - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    {{- with $currentScope }}
+    {{- $stsName := include "generate.name.with.release.name" (list $ . "standalone") }}
+    name: {{ include "generate.name.with.release.name" (list $ . (printf "%s-%s-%d" "standalone-data" $stsName $i)) | quote }}
+    {{- end }}
+  {{- if eq $.Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/standalone-{{ $i }}/data
+  {{- else }}
+  nfs:
+    server: {{ $.Values.global.pv.host }}
+    path: {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/standalone-{{ $i }}/data
+  {{- end }}
+{{- end -}}
+{{- end }}
+
+{{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ .Release.Name }}-standalone-override-volume
+  labels:
+    resource/type: pv
+  {{- if .Values.global.database.testBackupMode }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- end }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  storageClassName: {{ include "storage.storageClassName" . }}
+  capacity:
+    storage: {{ include "standalone.pvcOverrideStorage" . }}
+  accessModes:
+  - ReadWriteOnce
+  claimRef:
+    namespace: {{ $.Values.global.namespace }}
+    kind: PersistentVolumeClaim
+    name: {{ include "generate.name.with.release.name" (list $ . "standalone-override-volume-claim") | quote }}
+  {{- if eq .Values.global.clusterType "minikube" }}
+  hostPath:
+    path: {{ $.Values.pv.hostPathMinikube }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/override
+  {{- else }}
+  nfs:
+    server: {{ .Values.global.pv.host }}
+    path:  {{ $.Values.pv.hostPath }}/{{ $.Release.Name }}-{{ $.Values.global.namespace }}/override
+  {{- end }}
+
+{{- end }}
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "generate.name.with.release.name" (list $ . "standalone-override-volume-claim") | quote }}
+  {{- if .Values.global.database.testBackupMode }}
+  annotations:
+    helm.sh/resource-policy: keep
+  {{- include "storage.pvc.annotations" (list $ . "without-annotation-label" (include "storage.storageClassName" .)) | indent 2 }}
+  {{- else }}
+  {{- include "storage.pvc.annotations" (list $ . "with-annotation-label" (include "storage.storageClassName" .)) | indent 2 }}
+  {{- end }}
+  labels:
+    resource/type: pvc
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  storageClassName: {{ include "storage.storageClassName" . }}
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ include "standalone.pvcOverrideStorage" . }}
+{{- if (or (eq .Values.global.clusterType "nfs") (eq .Values.global.clusterType "minikube")) }}
+  volumeName: {{ .Release.Name }}-standalone-override-volume
+{{- end }}

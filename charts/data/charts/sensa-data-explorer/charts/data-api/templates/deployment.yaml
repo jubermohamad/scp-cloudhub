@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "data-api.fullname" . }}
+  labels:
+    {{- include "data-api.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "data-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "data-api.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: data-api
+          image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data-api.secretName" . }}
+                  key: {{ .Values.database.secretKey }}
+            - name: DATA_API_DB_SCHEMA
+              value: {{ .Values.database.schema | quote }}
+            {{- if or .Values.writeStore.url .Values.writeStore.existingSecret }}
+            - name: DATA_API_WRITE_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "data-api.writeStore.secretName" . }}
+                  key: {{ .Values.writeStore.secretKey }}
+            {{- end }}
+            - name: DATA_API_WRITE_DB_SCHEMA
+              value: {{ .Values.writeStore.schema | quote }}
+            - name: DATA_API_STATEMENT_TIMEOUT_MS
+              value: {{ .Values.settings.statementTimeoutMs | quote }}
+            - name: DATA_API_DEFAULT_LIMIT
+              value: {{ .Values.settings.defaultLimit | quote }}
+            - name: DATA_API_MAX_LIMIT
+              value: {{ .Values.settings.maxLimit | quote }}
+            - name: DATA_API_MAX_OFFSET
+              value: {{ .Values.settings.maxOffset | quote }}
+            - name: DATA_API_ROOT_PATH
+              value: {{ .Values.settings.rootPath | quote }}
+            {{- with .Values.settings.keycloak }}
+            {{- if .issuer }}
+            - name: DATA_API_KEYCLOAK_ISSUER
+              value: {{ .issuer | quote }}
+            {{- if .jwksUrl }}
+            - name: DATA_API_KEYCLOAK_JWKS_URL
+              value: {{ .jwksUrl | quote }}
+            {{- end }}
+            - name: DATA_API_KEYCLOAK_AUDIENCE
+              value: {{ .audience | quote }}
+            - name: DATA_API_KEYCLOAK_CLIENT_ID
+              value: {{ .clientId | quote }}
+            - name: DATA_API_KEYCLOAK_TIMEOUT_S
+              value: {{ .timeoutSeconds | quote }}
+            - name: DATA_API_JWKS_REFRESH_COOLDOWN_S
+              value: {{ .jwksRefreshCooldownSeconds | quote }}
+            - name: DATA_API_JWKS_FAILURE_COOLDOWN_S
+              value: {{ .jwksFailureCooldownSeconds | quote }}
+            {{- end }}
+            {{- end }}
+            - name: DATA_API_AUDIT_MAX_QUEUE
+              value: {{ .Values.audit.maxQueue | quote }}
+            - name: DATA_API_AUDIT_BATCH_SIZE
+              value: {{ .Values.audit.batchSize | quote }}
+            - name: DATA_API_AUDIT_FLUSH_INTERVAL_S
+              value: {{ .Values.audit.flushIntervalSeconds | quote }}
+            - name: DATA_API_AUDIT_ON_OVERFLOW
+              value: {{ .Values.audit.onOverflow | quote }}
+            - name: DATA_API_AUDIT_RETENTION_DAYS
+              value: {{ .Values.audit.retentionDays | quote }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}

@@ -1,0 +1,132 @@
+# values-50m.yaml — overlay for a 50M-transaction (97M-observation) build on single-node minikube.
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# Layered ON TOP of the serving profile, which already sets backfill.enabled=false + builds.enabled:
+#
+#   minikube start --driver=docker --cpus=8 --memory=24g --disk-size=150g
+#   helm install cpr deploy/helm/cpr -f deploy/helm/cpr/values-serving.yaml -f deploy/helm/cpr/values-50m.yaml
+#   curl -sX POST http://cpr.local/api/builds -H 'content-type: application/json' \
+#        -d '{"kind":"backfill","input_location":"/data/50m/base","reset_store":true}'
+#   # then the delta, on top of the standing store (no reset):
+#   curl -sX POST http://cpr.local/api/builds -H 'content-type: application/json' \
+#        -d '{"kind":"incremental","input_location":"/data/50m/delta"}'
+#
+# The dataset (generate first; ~100s, needs the full GLEIF file for name diversity at this scale):
+#   export CPR_GLEIF_FILE=<path>/gleif_names.csv     # tools/gleif_preprocess.py output, ~1.9M names
+#   uv run python tools/canonical_scale.py gen --n-bg 1000000 --partitions 8 --seed 42 \
+#        --volume-scale 2.07 --individuals 0.05 --delta 0.01 --out $CPR_DATA/50m
+#
+# `--individuals 0.05` is not cosmetic. Individuals get Faker names, businesses get real GLEIF ones,
+# and the pools differ by 5x: GLEIF has 1,907,133 distinct names, Faker's en_GB space only ~402,000
+# (measured). At the 0.25 default a 1M-entity book draws 62% of the Faker pool and individual names
+# repeat heavily; at 0.05 it draws 12%. `--n-bg 1000000 --volume-scale 2.07` reaches 50M transactions
+# through ~50 txns per entity rather than 2M entities, which keeps BOTH pools comfortable.
+#
+# ⚠️ `/data/50m` is a COMPOUND dataset — point builds at `.../base` and `.../delta`, never the root
+#    (the root is not itself a canonical dataset, so input_format=auto falls back to XML and matches
+#    nothing; `EmptyIngestError` now refuses that rather than emptying the store).
+
+# ── MEASURED on this exact configuration (8 CPU / 24g node, 2026-08-07) ──────────────────────────
+#   Day-0   48,624,091 txns / 97,248,182 observations -> 1,260,524 entities (true 1,230,597, 1.02x)
+#           79.8 min end to end · 22,246 rec/s · P=0.9999911 R=0.9240 F1=0.9605 · 0 executor failures
+#   Day-1   945,486-observation delta into that store
+#           18.6 min · 868 rec/s · +472,743 txns and +2,186 -2 entities, both reconciling EXACTLY
+#           · 2 golden-LEI merges · 0 executor failures
+#
+#   Recall is flat-to-improving with scale on clean data: 0.9126 at 1M, 0.9075 at 10M, 0.9240 here.
+#   Day-1 cost tracks the DELTA, not the standing store: 4.8x the delta cost 4.9x the wall-clock while
+#   the store underneath grew 2.7x — the index-backed probe doing what it exists to do.
+#
+#   Both timings above are the SECOND measurement of this configuration, and both improved against the
+#   first (Day-0 85.1 min / 20,542 rec/s, Day-1 22.9 min / 693 rec/s) while reproducing the accuracy
+#   and the reconciliation EXACTLY. Two changes account for it, and both scale with volume rather than
+#   being fixed wins — which is why they are recorded here and not only at 10M:
+#     · dropping ix_txn_debtor/ix_txn_creditor (nothing read them) took the txn_profile_links swap
+#       from 664.94s to 442.91s. The same change was worth only ~19s at 10M: the cost it removes is
+#       per-row index maintenance over 48.6M rows, so it grows with the table.
+#     · rewriting the Day-1 candidate probe as a UNION (a bitmap OR could not use ix_prof_iban /
+#       ix_prof_lei, so the probe scanned the whole store) was +25.3% here against +15% at 10M — the
+#       saving tracks the STANDING STORE, which is 2.7x bigger here, not the delta.
+#
+#   Durations are `finished_at - started_at` from build_registry and are trustworthy only from
+#   b7ac4c4 onward: before it, started_at was stamped on first OBSERVATION of RUNNING, so queue time
+#   leaked in unpredictably (12.3s on one 10M build, 339.6s on an identical one). Earlier recorded
+#   figures on this file were submit-to-finish and remain comparable; per-build rows from before that
+#   commit are not.
+
+backfill:
+  driver:
+    cores: 1
+    memory: "4g"              # driver heap scales with PLAN STRUCTURE x iterations, not row count
+  executor:
+    instances: 2
+    cores: 2
+    memory: "4g"
+  sparkConf:
+    # partitions ≈ observations / 150_000. This is the setting that decides whether a build survives:
+    # 16 (measured-optimal at 1M) gives 1.26M rows per partition at 10M and OOMKills executors.
+    spark.sql.shuffle.partitions: "640"
+    spark.default.parallelism: "640"
+
+api:
+  builds:
+    enabled: true
+    allowConcurrent: false
+    messages:
+      hostPath: /data
+
+# ── Storage, from MEASURED usage rather than extrapolation ───────────────────────────────────────
+# Measured after Day-0 + Day-1: Postgres 19 GB, WAL 4.1 GB. 45Gi/8Gi leaves room for a re-run over a
+# populated store (the export stages before it swaps, so a table exists twice at the moment of swap).
+postgres:
+  cnpg:
+    storage:    { size: 45Gi }
+    walStorage: { enabled: true, size: 8Gi }
+    # Postgres only uses what it is told it may use — limits alone change nothing. maintenance_work_mem
+    # is what an index REBUILD consumes, and every swap now rebuilds the target's secondary indexes.
+    parameters:
+      shared_buffers: "1536MB"
+      maintenance_work_mem: "512MB"
+      work_mem: "64MB"
+      max_wal_size: "4GB"     # must stay BELOW walStorage.size — CNPG's webhook enforces this
+
+# Spark checkpoints for a 97M-observation build. `materialize()` writes reliable checkpoints (obs,
+# reps, attr, preds, final), so this holds several representations of the observation frame; measured
+# peak 15 GB. The build now deletes its own tree on completion (backfill_entrypoint._stop_spark) —
+# before that fix 16 builds had leaked 39 GB onto a volume declaring 2Gi, because hostpath enforces
+# no quota and reliable checkpoints deliberately outlive their SparkContext.
+sharedWorkdir:
+  persistence:
+    size: 40Gi
+
+# ⚠️ NODE DISK is the constraint this file cannot express, and the one that nearly killed the run.
+#    Peak usage during Day-0 was ~67 GB, of which the LARGEST item is invisible to every PVC above:
+#
+#      Spark shuffle scratch (per-executor /var/data, on the node's filesystem)   31 GB
+#      checkpoints (cpr-shared)                                                   15 GB
+#      Postgres + WAL                                                             23 GB
+#      staged dataset                                                            1.6 GB
+#
+#    Shuffle scratch scales with shuffle VOLUME, not with any declared size, so it does not appear in
+#    `kubectl get pvc` and was missing from the original projection. Free space bottomed at 12 GB on a
+#    node started with ~79 GB free. Start the node with --disk-size=150g and keep 80 GB genuinely
+#    free. Note also that a staged dataset costs disk TWICE (host copy + node copy) on a single-machine
+#    minikube, since the node's filesystem is backed by the host's.
+#
+#    ⚠️ AND CHECK DOCKER BUILD CACHE FIRST — the trap on the re-run. `/`, `/var` and `/data` are the
+#    SAME partition, and the PVCs above use the `standard` (hostpath) class, which enforces NO quota:
+#    the 45Gi/8Gi/40Gi are labels, not limits. So anything on the host competes directly with the run.
+#    The worst offender is invisible unless you look for it: a session of
+#    `minikube image build --build-opt=no-cache` had left 89.57 GB of buildkit cache under
+#    /var/lib/docker. Free space read 64 GB against a ~57 GB projected need — a 7 GB margin, tighter
+#    than the 12 GB that "nearly killed" the first run — and `du` on the datasets shows nothing,
+#    because they are only ~2 GB. Diagnose with `docker system df` (look at the RECLAIMABLE column)
+#    and clear it with:
+#
+#      docker builder prune -af       # regenerable cache only: no images, no volumes, no data
+#
+#    That took free space 59 GB -> 101 GB and the run then peaked with ~44 GB to spare. Do NOT reach
+#    for `docker image prune` on a shared workstation — those images may be someone's actual work.
+#
+#    Worth knowing: free space AFTER a full Day-0 + Day-1 is the same as before it (101 GB -> 101 GB),
+#    so the checkpoint tree really is cleaned up (backfill_entrypoint._stop_spark). The pressure is
+#    entirely transient peak, not accumulation.

@@ -1,0 +1,22 @@
+# CloudHub Native defaults for EDB Hybrid Manager.
+image:
+  repository: docker.enterprisedb.com/pgai-platform/hybrid-manager
+  tag: latest
+  pullPolicy: IfNotPresent
+imagePullSecrets:
+  - name: regcred
+replicaCount: 1
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+ingress:
+  enabled: false
+  host: ""
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 2Gi

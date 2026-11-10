@@ -1,0 +1,144 @@
+<smart>
+	<topics>
+		<topic name="nr-wlm_spalert_matches_to_score" format="SVM_MSG_XML" type="kafka">
+			<fields>
+				<field name="MatchKey" type="string"/>
+				<field name="ListType" type="string"/>
+				<field name="EventType" type="string"/>
+				<field name="MatchScore" type="int"/> 
+				<field name="SubjectLastName" type="string"/>
+				<field name="SubjectFirstName" type="string"/>
+				<field name="SubjectCorporateName" type="string"/>
+				<field name="SubjectDob" type="string"/>
+				<field name="SubjectOccupation" type="string"/>
+				<field name="SubjectRole" type="string"/>
+				<field name="WpLastName" type="string"/>
+				<field name="WpFirstName" type="string"/>
+				<field name="WpId" type="string"/>
+				<field name="WpDob" type="string"/>
+				<field name="WpCountries" type="multivalue"/>
+				<field name="WpOccupation" type="multivalue"/>
+				<field name="WpCategory" type="string"/>
+				<field name="LastNameFlag" type="string"/>
+				<field name="AliasNameFlag" type="string"/>
+				<field name="FirstNameFlag" type="string"/>
+				<field name="AlternativeSpellingFlag" type="string"/>
+				<field name="CorporateNameFlag" type="string"/>
+				<field name="CorporateAliasFlag" type="string"/>
+				<field name="CorporateRegisterDateFlag" type="string"/>
+				<field name="CitizenshipFlag" type="string"/>
+				<field name="LocationFlag" type="string"/>
+				<field name="CountryFlag" type="string"/>
+				<field name="FullDobFlag" type="string"/>
+				<field name="PartialDobFlag" type="string"/>
+				<field name="CheckNamePEPFlag" type="string"/>
+				<field name="IsDeceasedFlag" type="string"/>
+				<field name="MatchInfoDobFlag" type="string"/>
+				<field name="DobEstimatedFlag" type="string"/>
+				<field name="DobDifference" type="int"/>
+				<field name="TruePositiveMatchCurrentSubjectCount" type="int"/> 
+				<field name="TruePositiveMatchDiffrentSubjectCount" type="int"/> 
+				<field name="FalsePositiveMatchCount" type="int"/>  			</fields>
+		</topic>
+		<topic name="nr-wlm_spalert_to_score" format="SVM_MSG_XML" type="kafka">
+			<fields>
+				<field name="AlertKey" type="string"/>
+				<field name="FalsePositiveAlertsCount" type="int"/> 
+				<field name="EventType" type="string"/>
+				<field name="MatchScore" type="int"/>
+			</fields>
+		</topic> 
+	</topics>
+
+	<mappings>
+		<mapping name="SPMatchScoredMap">
+			<field name="WLMMatch_MatchKey" alias="MatchKey"/>
+		</mapping>
+		<mapping name="SPEntityScoredMap">
+			<field name="SPAlert_AlertKey" alias="AlertKey"/>
+			<field name="SPAlert_MatchScore" alias="MatchScore"/>
+		</mapping> 
+	</mappings>
+
+	<filters>
+		<filter name="SPMatchScoredFilter">
+			<field name="MatchKey"/>
+			<field name="CheckQuality_score"/>
+			<field name="CheckQuality_score_contributions"/>
+			<field name="Wp_score"/>
+			<field name="Wp_score_contributions"/>
+		</filter>
+		<filter name="SPEntityScoredFilter">
+			<field name="AlertKey"/>
+			<field name="MatchScore"/>
+			<field name="Entity_score"/>
+			<field name="Entity_score_contributions"/>
+		</filter> 
+		<filter name="SPAlertScoredFilter">
+			<field name="AlertKey"/>
+			<field name="Alert_score"/>
+			<field name="Entity_score"/>
+			<field name="Entity_score_contributions"/>
+		</filter> 
+	</filters>
+	
+	<combiners>
+		<combiner name="SPAlertScoreCombiner" type="NUMERIC" resultName="Alert_score">
+			<field name="Entity_score"/>
+			<field name="MatchScore"/>
+		</combiner> 
+	</combiners> 
+	
+	<processes>
+		<process name="SPMatch_rescore" dataSource="WLMMatch" trigger="BATCH" intervalSeconds="0" outputMode="update">
+			<inputTopics>
+				<inputTopic name="nr-wlm_spalert_matches_to_score"/>
+			</inputTopics>
+			<services>
+				<service type="parse"/>
+				<service type="datalabel">
+					<apply name="*"/>
+				</service>
+				<service type="detect"/>
+				<service type="score"/>
+				<service type="filter_columns">
+					<apply name="SPMatchScoredFilter"/>
+				</service> 
+				<service type="map_columns_names">
+					<apply name="SPMatchScoredMap"/>
+				</service> 
+			</services>
+			<outputTopics>
+				<outputTopic name="nr-wlm_spalert_matches_get_score" rootName="WLMMatch"/>
+			</outputTopics>
+		</process>
+		<process name="SPAlert_rescore" dataSource="SPAlert" trigger="BATCH" intervalSeconds="0" outputMode="update">
+			<inputTopics>
+				<inputTopic name="nr-wlm_spalert_to_score"/>
+			</inputTopics>
+			<services>
+				<service type="parse"/>
+				<service type="datalabel">
+					<apply name="*"/>
+				</service>
+				<service type="detect"/>
+				<service type="score"/>
+				<service type="filter_columns">
+					<apply name="SPEntityScoredFilter"/>
+				</service> 			
+				<service type="map_columns_names">
+					<apply name="SPEntityScoredMap"/>
+				</service> 
+				<service type="column_combiner">
+					<apply name="SPAlertScoreCombiner"/>
+				</service>
+				<service type="filter_columns">
+					<apply name="SPAlertScoredFilter"/>
+				</service>
+			</services>
+			<outputTopics>
+				<outputTopic name="nr-wlm_spalert_get_score" rootName="WLMAlert"/>
+			</outputTopics>
+		</process> 
+	</processes>
+</smart>

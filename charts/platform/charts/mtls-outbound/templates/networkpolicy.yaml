@@ -1,0 +1,106 @@
+{{- if .Values.networkPolicy.enabled }}
+
+---
+# Default Deny All Egress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Namespace }}-default-deny-egress
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress: []
+
+---
+# Allow DNS (kube-dns only)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Namespace }}-allow-dns
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+---
+# Allow Pods → HAProxy Only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Namespace }}-allow-egress-haproxy
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: haproxy-egress
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+
+---
+# Allow HAProxy → External CIDRs
+{{- if .Values.networkPolicy.externalCidrs }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Namespace }}-allow-haproxy-external
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app: haproxy-egress
+  policyTypes:
+    - Egress
+  egress:
+{{- range .Values.networkPolicy.externalCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+      ports:
+        - protocol: TCP
+          port: 443  # External services typically use 443
+{{- end }}
+{{- end }}
+
+---
+# Optional — Allow Internal CIDRs
+{{- if .Values.networkPolicy.internalCidrs }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Namespace }}-allow-internal
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+{{- range .Values.networkPolicy.internalCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . }}
+{{- end }}
+{{- end }}
+
+{{- end }}

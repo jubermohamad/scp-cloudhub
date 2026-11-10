@@ -1,0 +1,39 @@
+{{- if .Values.global.kubePrometheusStackPresent }}
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-er-monitor
+  labels:
+    release: {{ .Values.global.prometheus.release }}
+  namespace: {{ include "er.namespace" . }}
+spec:
+  endpoints:
+    - interval: 5s
+      port: metrics
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-er-spark
+  namespaceSelector:
+    matchNames:
+      - {{ include "er.namespace" . }}
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-er-metrics
+  namespace: {{ include "er.namespace" . }}
+  labels:
+    app: {{ .Release.Name }}-er-spark
+    service: {{ .Release.Name }}-er-metrics
+spec:
+  ports:
+    - name: metrics
+      port: {{ .Values.monitoring.prometheus.port }}
+  clusterIP: None
+  selector:
+    app: {{ .Release.Name }}-er-spark
+
+{{- end }}

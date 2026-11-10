@@ -1,0 +1,16 @@
+# Example configuration for PostgreSQL database
+global:
+  remoteDataDbType: "postgres"
+  remoteDataDbHost: "your-postgres-host"
+  remoteDataDbName: "invhub"
+  remoteDataDbPort: "5432"
+  remoteDataDbUsername: "apps"
+  remoteDataDbPassword: "your-password"
+
+connectors:
+  subjectUpdatesJdbcConnector:
+    enabled: true
+    state: stopped
+  customersScreeningWmlJdbcConnector:
+    enabled: true
+    state: stopped

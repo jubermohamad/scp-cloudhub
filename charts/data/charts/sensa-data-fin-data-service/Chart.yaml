@@ -1,0 +1,6 @@
+apiVersion: v2
+name: sensa-data-fin-data-service
+description: Sensa Data Engine — mapping/compile/execute service (sensa-data-fin-data-service)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

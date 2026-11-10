@@ -1,0 +1,4 @@
+apiVersion: v2
+name: trident-backend
+version: 0.1.0
+description: Deploy TridentBackendConfig for NetApp Trident with Azure NetApp Files backend

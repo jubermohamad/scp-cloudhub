@@ -1,0 +1,121 @@
+# Data Export Hub agent: one Deployment (replicas: 1) per AKS cluster.
+# Every value here is non-secret. Credentials come from Azure Workload Identity
+# (see README.md for the identity, role assignments and registration steps).
+
+# Namespace for all namespaced resources.
+namespace: cloudhub-system
+
+# Required: the cluster name as registered in CloudHub.
+clusterName: ""
+
+# Optional agent name reported in heartbeats (default: <clusterName>-data-export-agent).
+agentName: ""
+
+controlPlane:
+  # Required: CloudHub base URL, e.g. https://cloudhub.example.com
+  url: ""
+  # Entra scope of the CloudHub API (app ID URI + /.default).
+  scope: "api://cloudhub-data-export/.default"
+
+postgres:
+  # Required: read replica host, e.g. myserver-replica.postgres.database.azure.com
+  host: ""
+  port: 5432
+  # Required: database name.
+  database: ""
+  # Required: the PostgreSQL role mapped to the managed identity (AAD principal name).
+  user: ""
+  # disable | require | verify-ca | verify-full
+  sslMode: verify-full
+  # Optional CA bundle for verify-ca/verify-full, mounted from a ConfigMap.
+  sslRootCert:
+    configMapName: ""
+    key: ca.pem
+
+workloadIdentity:
+  # Required: client ID of the user-assigned managed identity.
+  clientId: ""
+  # Optional tenant ID annotation (defaults to the cluster's tenant).
+  tenantId: ""
+
+serviceAccount:
+  name: data-export-agent
+  annotations: {}
+
+image:
+  repository: cloudhub.azurecr.io/data-export-agent
+  # Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+logLevel: info
+healthPort: 8080
+
+# How long an in-flight job may run after SIGTERM before it is failed as retryable.
+# terminationGracePeriodSeconds is derived as shutdownGraceSeconds + terminationGraceBufferSeconds.
+shutdownGraceSeconds: 300
+terminationGraceBufferSeconds: 60
+
+# Scratch space for export files (deleted after each job). Size it for the
+# largest single export file.
+workDir:
+  path: /work
+  sizeLimit: 20Gi
+  # Set to "Memory" to use tmpfs (counts against the memory limit).
+  medium: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Passed as NODE_OPTIONS; keep the heap below the memory limit.
+nodeOptions: "--max-old-space-size=768"
+
+podLabels: {}
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+# Additional non-secret environment variables.
+extraEnv: []
+
+rbac:
+  # ClusterRole allowing get on namespace kube-system and GET /version, used
+  # for the cluster fingerprint reported in heartbeats. Without it the agent
+  # works but omits kubernetesVersion/clusterUid.
+  create: true
+
+networkPolicy:
+  # Egress-only policy. Vanilla NetworkPolicy cannot match FQDNs, so the
+  # defaults allow the needed ports to any address; narrow `to` with CIDRs
+  # (PG subnet, private endpoints) where possible.
+  enabled: false
+  dns:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  egress:
+    # Control plane, Entra ID, ADLS, Key Vault, Kubernetes API (AKS uses 443).
+    - ports: [443]
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+    # PostgreSQL read replica.
+    - ports: [5432]
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+    # SFTP destinations.
+    - ports: [22]
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0

@@ -1,0 +1,109 @@
+x-buildkit-env: &buildkit-env
+  DOCKER_BUILDKIT: "1"
+  COMPOSE_DOCKER_CLI_BUILD: "1"
+  BUILDKIT_INLINE_CACHE: "1"
+  BUILDX_NO_DEFAULT_ATTESTATIONS: "1"
+
+services:
+  frontend:
+    image: platform_cloudhub-frontend
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        APP_BASE_URL: ${APP_BASE_URL:-http://localhost:3000}
+        BACKEND_BASE_URL: ${BACKEND_BASE_URL:-${APP_BASE_URL:-http://localhost:3000}}
+        AUTH_ENVIRONMENT: development
+        CLOUDHUB_VERSION: ${CLOUDHUB_VERSION:-dev}
+    environment:
+      BACKEND_ORIGIN: http://backend:7007
+      <<: *buildkit-env
+    ports:
+      - "0.0.0.0:3000:80"
+    depends_on:
+      backend:
+        condition: service_started
+
+  backend:
+    image: platform_cloudhub-backend
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      args:
+        CLOUDHUB_VERSION: ${CLOUDHUB_VERSION:-dev}
+    environment:
+      <<: *buildkit-env
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: backstage
+      POSTGRES_PASSWORD: backstage
+      POSTGRES_DB: cloudhub
+      PGSSLMODE: disable
+      APP_BASE_URL: http://localhost:3000
+      BACKEND_BASE_URL: http://localhost:7007
+      APP_CONFIG_app_title: CloudHub
+      APP_CONFIG_auth_environment: development
+      BACKEND_SECRET: ${BACKEND_SECRET:-cloudhub-local-backend-secret}
+      APP_CONFIG_backend_baseUrl: http://localhost:7007
+      APP_CONFIG_backend_database_client: pg
+      APP_CONFIG_backend_database_connection_ssl: false
+      APP_CONFIG_backend_listen_host: 0.0.0.0
+      APP_CONFIG_backend_listen_port: 7007
+      APP_CONFIG_auth_providers_microsoft_production_callbackUrl: http://localhost:3000/api/auth/microsoft/handler/frame
+      APP_CONFIG_auth_providers_microsoft_development_callbackUrl: http://localhost:3000/api/auth/microsoft/handler/frame
+      NODE_ENV: production
+      AUTH_MICROSOFT_CALLBACK_URL: http://localhost:3000/api/auth/microsoft/handler/frame
+      AUTH_MICROSOFT_CLIENT_ID: ${AUTH_MICROSOFT_CLIENT_ID:-}
+      AUTH_MICROSOFT_CLIENT_SECRET: ${AUTH_MICROSOFT_CLIENT_SECRET:-}
+      AUTH_MICROSOFT_TENANT_ID: ${AUTH_MICROSOFT_TENANT_ID:-}
+      OP_SERVICE_ACCOUNT_TOKEN: ${OP_SERVICE_ACCOUNT_TOKEN:-}
+      CLOUDHUB_ENABLE_GUEST_AUTH: ${CLOUDHUB_ENABLE_GUEST_AUTH:-false}
+      GPU_ENTRA_GROUP_ID: ${GPU_ENTRA_GROUP_ID:-}
+      GPU_GRAPH_ENABLED: ${GPU_GRAPH_ENABLED:-false}
+      CLOUDHUB_NETWORKS_JSON: ${CLOUDHUB_NETWORKS_JSON:-}
+      COST_AUTOMATION_STORAGE_CONNECTION_STRING: UseDevelopmentStorage=true
+      CLOUDHUB_WORKSPACE_AKS_SUBSCRIPTION_ID: ${CLOUDHUB_WORKSPACE_AKS_SUBSCRIPTION_ID:-}
+      CLOUDHUB_WORKSPACE_AKS_RESOURCE_GROUP: ${CLOUDHUB_WORKSPACE_AKS_RESOURCE_GROUP:-}
+      CLOUDHUB_WORKSPACE_AKS_CLUSTER_NAME: ${CLOUDHUB_WORKSPACE_AKS_CLUSTER_NAME:-}
+      CLOUDHUB_WORKSPACE_NAMESPACE: ${CLOUDHUB_WORKSPACE_NAMESPACE:-cloudhub-workspaces}
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "0.0.0.0:7007:7007"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 60s
+    command: >
+      postgres
+        -c log_checkpoints=off
+        -c log_autovacuum_min_duration=-1
+        -c log_min_messages=WARNING
+        -c log_min_error_statement=ERROR
+    environment:
+      POSTGRES_USER: backstage
+      POSTGRES_PASSWORD: backstage
+      POSTGRES_DB: cloudhub
+      PGDATABASE: cloudhub
+      LANG: C.UTF-8
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "0.0.0.0:${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U backstage -d cloudhub
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  pgdata:

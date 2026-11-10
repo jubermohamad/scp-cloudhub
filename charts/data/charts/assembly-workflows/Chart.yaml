@@ -1,0 +1,10 @@
+apiVersion: v2
+appVersion: 0.10.0
+description: Assembly Platform Workflows Module — visual workflow authoring with AI
+  agents, LLM gateway, and Temporal-based execution.
+kubeVersion: '>=1.27.0'
+maintainers:
+- name: Assembly Platform Team
+name: assembly-workflows
+type: application
+version: 0.18.7

@@ -1,0 +1,2 @@
+CREATE ROLE apps_import LOGIN PASSWORD '{{ .Values.global.baseConfigProperties.clusterdb.nrImportUserPassword | default .Values.global.baseConfigProperties.clusterdb.AppPassword }}';
+CREATE SCHEMA apps_import AUTHORIZATION apps_import;

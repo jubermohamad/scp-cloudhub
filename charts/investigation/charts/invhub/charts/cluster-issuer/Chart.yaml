@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cluster-issuer
+description: A Helm chart to deploy cert-manager issuers
+type: application
+version: 0.25.0
+appVersion: v2026.07.1

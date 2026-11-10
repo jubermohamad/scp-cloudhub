@@ -1,0 +1,18 @@
+# Patterns to ignore when building packages.
+.DS_Store
+.git/
+.gitignore
+.idea/
+.vscode/
+*.tmproj
+*.swp
+*.bak
+*.orig
+*~
+
+# Packaged charts must never contain another package.
+*.tgz
+
+# Repo/CI material, not part of the deployable chart.
+tests/
+RELEASE-NOTES.md

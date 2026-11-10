@@ -1,0 +1,116 @@
+{{- $hasCalico := .Capabilities.APIVersions.Has "crd.projectcalico.org/v1/NetworkPolicy" -}}
+{{- if and $hasCalico .Values.redis.calicoNetworkPolicy.enabled }}
+---
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-policy
+  namespace: {{ .Release.Namespace }}
+spec:
+  types:
+    {{- if .Values.redis.calicoNetworkPolicy.ingress }}
+    - Ingress
+    {{- end }}
+    - Egress
+  selector: app.kubernetes.io/name == 'redis'
+  {{- if .Values.redis.calicoNetworkPolicy.ingress }}
+  {{- with  .Values.redis.calicoNetworkPolicy.ingress }}
+  ingress:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.redis.calicoNetworkPolicy.egress }}
+  {{- with  .Values.redis.calicoNetworkPolicy.egress }}
+  egress:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+---
+{{- end }}
+
+{{- if and $hasCalico .Values.minioop.calicoNetworkPolicy.enabled }}
+---
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: minioop-policy
+  namespace: {{ .Release.Namespace }}
+spec:
+  types:
+    {{- if .Values.minioop.calicoNetworkPolicy.ingress }}
+    - Ingress
+    {{- end }}
+    - Egress
+  selector: v1.min.io/tenant == 'minio'
+  {{- if .Values.minioop.calicoNetworkPolicy.ingress }}
+  {{- with  .Values.minioop.calicoNetworkPolicy.ingress }}
+  ingress:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.minioop.calicoNetworkPolicy.egress }}
+  {{- with  .Values.minioop.calicoNetworkPolicy.egress }}
+  egress:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+---
+{{- end }}
+
+{{- if and $hasCalico .Values.opensearch.calicoNetworkPolicy.enabled }}
+---
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: opensearch-policy
+  namespace: {{ .Release.Namespace }}
+spec:
+  types:
+    {{- if .Values.opensearch.calicoNetworkPolicy.ingress }}
+    - Ingress
+    {{- end }}
+    - Egress
+  selector: app.kubernetes.io/name == 'opensearch'
+  {{- if .Values.opensearch.calicoNetworkPolicy.ingress }}
+  {{- with  .Values.opensearch.calicoNetworkPolicy.ingress }}
+  ingress:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.opensearch.calicoNetworkPolicy.egress }}
+  {{- with  .Values.opensearch.calicoNetworkPolicy.egress }}
+  egress:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+---
+{{- end }}
+
+{{- if and $hasCalico .Values.keycloak.calicoNetworkPolicy.enabled }}
+---
+apiVersion: crd.projectcalico.org/v1
+kind: NetworkPolicy
+metadata:
+  name: keycloak-policy
+  namespace: {{ .Release.Namespace }}
+spec:
+  types:
+    {{- if .Values.keycloak.calicoNetworkPolicy.ingress }}
+    - Ingress
+    {{- end }}
+    - Egress
+  selector: app.kubernetes.io/name == 'keycloak'
+  {{- if .Values.keycloak.calicoNetworkPolicy.ingress }}
+  {{- with  .Values.keycloak.calicoNetworkPolicy.ingress }}
+  ingress:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.keycloak.calicoNetworkPolicy.egress }}
+  {{- with  .Values.keycloak.calicoNetworkPolicy.egress }}
+  egress:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+---
+{{- end }}

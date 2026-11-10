@@ -1,0 +1,112 @@
+apiVersion: v2
+name: edb-common-res
+description: Common resources base stack for EDB PostgreSQL-backed clusters (CloudHub-vendored).
+icon: https://helm.symphonyfs.net/symphonyai_sensa_netreveal_logo.jpg
+type: application
+version: 2.1.3
+appVersion: "2.1.0"
+
+dependencies:
+  - name: cert-manager
+    version: 1.19.4
+    repository: https://charts.jetstack.io
+    condition: cert-manager.enabled
+
+  - name: strimzi-kafka-operator
+    version: 0.50.1
+    repository: oci://quay.io/strimzi-helm
+    condition: strimzi-kafka-operator.enabled
+
+  - name: storageclass
+    version: 1.0.2
+    repository: file://./charts/storageclass
+    condition: storageclass.enabled
+
+  - name: reloader
+    version: 2.2.8
+    repository: https://stakater.github.io/stakater-charts
+    condition: reloader.enabled
+
+  - name: ingress-nginx
+    version: 4.14.3
+    repository: https://kubernetes.github.io/ingress-nginx
+    condition: ingress-nginx.enabled
+
+  - name: cloudnative-pg
+    version: 0.27.1
+    repository: https://cloudnative-pg.github.io/charts
+    condition: cloudnative-pg.enabled
+
+  - name: edb-postgres-distributed-for-kubernetes
+    #alias: edb-pg4k
+    version: "1.2.0"
+    repository: "https://enterprisedb.github.io/edb-postgres-for-kubernetes-charts/"
+    condition: edb-postgres-distributed-for-kubernetes.enabled
+
+  - name: operator
+    alias: minio-operator
+    version: 5.0.18
+    repository: https://operator.min.io/
+    condition: minio-operator.enabled
+
+  - name: argo-workflows
+    version: 0.47.4
+    repository: "https://argoproj.github.io/argo-helm"
+    condition: global.nrSubChartSwitches.enableER
+
+  - name: cluster-issuers
+    version: ">=0.0.1"
+    repository: file://./charts/cluster-issuers
+    condition: cluster-issuers.enabled
+
+  - name: opentelemetry-operator
+    version: 0.40.0
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+    tags:
+      - traces
+
+  - name: jaeger-operator
+    version: 2.49.0
+    repository: https://jaegertracing.github.io/helm-charts
+    tags:
+      - traces
+
+  - name: kube-prometheus
+    alias: prometheus
+    version: 8.30.1
+    repository: https://charts.bitnami.com/bitnami
+    tags:
+      - metrics
+
+  - name: scupper-operator
+    version: 2.1.3
+    repository: file://./charts/scupper-operator
+    condition: scupper-operator.enabled
+
+  # USER REQUIREMENT: "all opertore fromm common-rse" — every cluster-wide
+  # operator ships from THIS layer, so the operators release owns all of them and
+  # a product release owns none.
+  #
+  # P9 moved this out of detectionhub (where it was `dethub-spark-operator`)
+  # because a product chart must not own an operator that outlives it. But it
+  # landed as a dependency of the PARENT `common` chart rather than here, so in
+  # the two-release split it still installed with the PRODUCT release: `helm get
+  # manifest` showed it 45 times in the umbrella and 0 times in the operators
+  # release. That reproduced the exact coupling P9 set out to remove, one level
+  # up — uninstalling products would take a cluster-scoped operator and its
+  # webhooks with it. Moving it here finishes that migration.
+  #
+  # Its Mutating/ValidatingWebhookConfigurations are CLUSTER-scoped, so the
+  # ownership handover between releases needs the old objects deleted first;
+  # AKS's admissionsenforcer also disputes field ownership on these two.
+  # 2.3.0-sri.1 is upstream 2.3.0 PLUS one local patch: the webhook configuration
+  # templates render webhook.{mutating,validating}WebhookConfigurationAnnotations.
+  # Upstream has no such keys — the values we set under those names had been
+  # silently ignored since they were written, which is why the objects kept
+  # appearing WITHOUT admissions.enforcer/disabled despite the values saying
+  # otherwise. Re-apply the patch (documented inside the templates) when
+  # upgrading the vendored tgz.
+  - name: spark-operator
+    version: 2.3.0-sri.1
+    repository: file://./charts
+    condition: spark-operator.enabled

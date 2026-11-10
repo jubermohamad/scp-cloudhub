@@ -1,0 +1,21 @@
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: ${WORKSPACE_POD_NAME}-vpa
+  namespace: ${WORKSPACE_NAMESPACE}
+spec:
+  targetRef:
+    apiVersion: v1
+    kind: Pod
+    name: ${WORKSPACE_POD_NAME}
+  updatePolicy:
+    updateMode: Auto
+  resourcePolicy:
+    containerPolicies:
+    - containerName: workspace
+      minAllowed:
+        cpu: "1"
+        memory: 2Gi
+      maxAllowed:
+        cpu: "8"
+        memory: 16Gi

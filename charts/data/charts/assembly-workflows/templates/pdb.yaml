@@ -1,0 +1,234 @@
+{{- /*
+One rule for this whole file: a PodDisruptionBudget exists only where there is
+more than one replica to protect.
+
+A PDB over a SINGLE replica cannot protect availability — evicting the only pod
+is an outage either way — but it does permit zero disruptions, which converts a
+brief, recoverable outage into a drain that hangs forever:
+
+    Drain node ... failed evicting postgres-...
+    blocked by pdb postgres-pdb (MinAvailable: 1) (ExpectedPods: 1)
+
+That blocked the Calico rollout (#2111) on assembly-perf-small, and it blocks
+Kubernetes upgrades, node resizing and autoscaler consolidation just as hard.
+assembly-perf-medium carried four such PDBs, each at `disruptionsAllowed: 0`.
+
+The ten application PDBs below already gated on `replicas > 1`; the infra ones
+did not, which is how this shipped. Two conventions in one file is the bug, so
+the gate is now applied uniformly and `tests/test_pdb_cannot_block_a_drain.py`
+holds it there by computing `disruptionsAllowed` from the RENDERED replica count.
+
+Note percentages round UP here (`maxUnavailable: 25%` of 2 replicas is 1, not 0
+— verified against a live cluster), so the `25%` budgets are safe at 2 replicas.
+*/ -}}
+{{- if .Values.podDisruptionBudgets.enabled }}
+{{- if gt (int .Values.apisix.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-apisix-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: assembly-apisix
+{{- end }}
+---
+{{- if gt (int .Values.frontend.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-frontend-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: assembly-frontend
+{{- end }}
+---
+{{- if gt (int .Values.userProject.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-core-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: assembly-core
+{{- end }}
+---
+{{- if gt (int .Values.agents.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-engine-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: assembly-engine
+{{- end }}
+---
+{{- if gt (int .Values.agentsWorker.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-engine-worker-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: assembly-engine-worker
+{{- end }}
+---
+{{- if gt (int .Values.agentsCodeWorker.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-engine-code-worker-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: assembly-engine-code-worker
+{{- end }}
+---
+{{- if gt (int .Values.sandboxTrigger.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-sandbox-trigger-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: assembly-sandbox-trigger
+{{- end }}
+---
+{{- if gt (int .Values.sandboxExecute.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-sandbox-execute-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: assembly-sandbox-execute
+{{- end }}
+---
+{{- if gt (int .Values.llmGateway.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-llm-gateway-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: assembly-llm-gateway
+{{- end }}
+---
+{{- if and .Values.agentsSubflowWorker.enabled (gt (int .Values.agentsSubflowWorker.replicas) 1) }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-engine-subflow-worker-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: assembly-engine-subflow-worker
+{{- end }}
+---
+{{- /*
+`temporal` (auto-setup) is hardcoded `replicas: 1` in infra.yaml with no values
+key, so a PDB here could only ever be self-blocking. Deliberately not rendered.
+*/ -}}
+{{- if and .Values.infra.enabled (eq .Values.infra.temporal.mode "split") }}
+{{- if gt (int .Values.infra.temporal.split.frontend.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-frontend-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: assembly-temporal-frontend
+{{- end }}
+---
+{{- if gt (int .Values.infra.temporal.split.history.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-history-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: assembly-temporal-history
+{{- end }}
+---
+{{- if gt (int .Values.infra.temporal.split.matching.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-matching-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: assembly-temporal-matching
+{{- end }}
+---
+{{- if gt (int .Values.infra.temporal.split.worker.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-worker-pdb
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: assembly-temporal-worker
+{{- end }}
+{{- end }}
+{{- /*
+`postgres`, `redis` and `postgres-temporal` are all hardcoded `replicas: 1` in
+infra.yaml with no values key to raise them. Their PDBs were therefore ALWAYS
+self-blocking, on every overlay — these three plus temporal-worker are the four
+measured at `disruptionsAllowed: 0` on assembly-perf-medium. Single-replica
+stateful infra cannot be protected by a PDB; it can only be made undrainable by
+one, so none is rendered.
+*/ -}}
+{{- end }}

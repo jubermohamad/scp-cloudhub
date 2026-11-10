@@ -1,0 +1,27 @@
+<!--
+  Copyright © SymphonyAI NetReveal UK Ltd 2023 
+-->
+<dbspec name="SensaAlertScore" comments="Sensa Alert Score">
+
+    <source-query>
+    SELECT * 
+	FROM (
+		SELECT 
+			ALERT_KEY as AlertID,
+			RUN_TIMESTAMP as RunTimestamp,
+			CUSTOMER_ID as CustomerID,
+			ORGUNIT_CODE as OrganisationalUnit,
+			OVERALL_RISK_SCORE as OverallRiskScore,
+			ANOMALY_DETECTION_SCORE as AnomalyDetectionScore,
+			CHANGE_BEHAVIOUR_SCORE as ChangeInBehaviourScore,
+			RISK_SIMILARITY_SCORE as RiskSimilarityScore,
+			HOTSPOT_SCORE as HotspotScore
+		FROM V_SM_SENSA_ALERT_SCORE
+	) V_SM_SENSA_ALERT_SCORE	
+    WHERE @WHERE@
+    </source-query>
+    <tablename>V_SM_SENSA_ALERT_SCORE</tablename>
+	
+    <timefield>RunTimestamp</timefield>
+	<column fieldname="RunTimestamp"		dataType="DATE" columnname="RunTimestamp" />
+</dbspec>

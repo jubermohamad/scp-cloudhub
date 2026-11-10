@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "copilot-common.fullname" . }}
+  labels:
+    {{- include "copilot-common.labels" . | nindent 4 }}
+  annotations:
+    checksum/config: {{ toYaml .Values.config | sha256sum }}
+data:
+  AZURE_OPENAI_ENDPOINT: {{ .Values.config.azureOpenAIEndpoint | default "" | quote }}
+  AZURE_OPENAI_API_VERSION: {{ .Values.config.azureOpenAIApiVersion | default "" | quote }}
+  OPENAI_API_VERSION: {{ .Values.config.openAIApiVersion | default "" | quote }}
+  AZURE_DEPLOYMENT_NAME: {{ .Values.config.azureDeploymentName | default "" | quote }}
+  AZURE_EMBEDDINGS_ENDPOINT: {{ .Values.config.azureEmbeddingsEndpoint | default "" | quote }}
+  AZURE_EMBEDDINGS_DEPLOYMENT: {{ .Values.config.azureEmbeddingsDeployment | default "" | quote }}
+  AZURE_EMBEDDINGS_MODEL: {{ .Values.config.azureEmbeddingsModel | default "" | quote }}
+  OPENAI_ENDPOINT_EMBEDDING: {{ .Values.config.azureEmbeddingsEndpoint | default "" | quote }}
+  OPENAI_MODEL_NAME_EMBEDDING: {{ .Values.config.azureEmbeddingsModel | default "" | quote }}
+  AZURE_DEPLOYMENT_NAME_EMBEDDING: {{ .Values.config.azureEmbeddingsDeployment | default "" | quote }}
+  OPENAI_API_VERSION_EMBEDDING: {{ .Values.config.openAIApiVersion | default "" | quote }}
+  EMBED_ENDPOINT: {{ .Values.config.azureEmbeddingsEndpoint | default "" | quote }}
+  EMBED_MODEL: {{ .Values.config.azureEmbeddingsModel | default "" | quote }}
+  AZURE_DEPLOYMENT_NAME_SUPERVISOR: {{ .Values.config.azureDeploymentNameSupervisor | default "gpt-4.1" | quote }}
+  AZURE_OPENAI_API_VERSION_SUPERVISOR: {{ .Values.config.azureOpenAIApiVersionSupervisor | default "2025-01-01-preview" | quote }}
+  AZURE_OPENAI_TEMPERATURE: "0.0"
+  AZURE_OPENAI_TEMPERATURE_SUPERVISOR: "0.0"
+  

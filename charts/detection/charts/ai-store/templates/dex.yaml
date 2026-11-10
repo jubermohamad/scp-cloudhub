@@ -1,0 +1,151 @@
+{{- if .Values.dex.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "model-store.componentName" (list . "dex-config") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: dex
+    {{- include "model-store.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    issuer: ${DEX_ISSUER}
+    storage:
+      type: memory
+    web:
+      http: 0.0.0.0:5556
+    enablePasswordDB: true
+    staticPasswords:
+      - email: "${DEX_STATIC_USER_EMAIL}"
+        hash: {{ .Values.dex.staticPasswordHash | default "$2b$12$y08twUiFvG7mMyjOJD7/eOxii7enSycfkWKjC7qA/fPqP9CWnVKPy" | quote }}
+        username: "${DEX_STATIC_USER_USERNAME}"
+        userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"
+    staticClients:
+      - id: "${DEX_OAUTH2_PROXY_CLIENT_ID}"
+        secretEnv: DEX_OAUTH2_PROXY_CLIENT_SECRET
+        redirectURIs:
+          - "${DEX_OAUTH2_PROXY_REDIRECT_URI}"
+        name: "ModelHub"
+    {{- if .Values.dex.microsoft.enabled }}
+    connectors:
+      - type: microsoft
+        id: microsoft
+        name: "Microsoft"
+        config:
+          clientID: "${DEX_MICROSOFT_CLIENT_ID}"
+          clientSecret: "${DEX_MICROSOFT_CLIENT_SECRET}"
+          redirectURI: "${DEX_MICROSOFT_REDIRECT_URI}"
+          tenant: common
+          domainHint: "${DEX_MICROSOFT_DOMAIN_HINT}"
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "model-store.componentName" (list . "dex") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: dex
+    {{- include "model-store.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dex
+  template:
+    metadata:
+      labels:
+        app: dex
+        {{- include "model-store.labels" . | nindent 8 }}
+    spec:
+      {{- include "model-store.imagePullSecrets" . | nindent 6 }}
+      initContainers:
+        - name: render-dex-config
+          image: "{{ .Values.dex.initImage.repository }}:{{ .Values.dex.initImage.tag }}"
+          imagePullPolicy: {{ .Values.dex.initImage.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - sh
+            - -c
+            - |
+              set -euo pipefail
+              apk add --no-cache gettext >/dev/null
+              envsubst '${DEX_ISSUER} ${DEX_STATIC_USER_EMAIL} ${DEX_STATIC_USER_USERNAME} ${DEX_OAUTH2_PROXY_CLIENT_ID} ${DEX_OAUTH2_PROXY_REDIRECT_URI}{{ if .Values.dex.microsoft.enabled }} ${DEX_MICROSOFT_CLIENT_ID} ${DEX_MICROSOFT_CLIENT_SECRET} ${DEX_MICROSOFT_REDIRECT_URI} ${DEX_MICROSOFT_DOMAIN_HINT}{{ end }}' < /config-tpl/config.yaml > /etc/dex/config.yaml
+          env:
+            - name: DEX_ISSUER
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.global.secretName }}, key: dex-issuer}
+            - name: DEX_STATIC_USER_EMAIL
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.global.secretName }}, key: dex-static-user-email}
+            - name: DEX_STATIC_USER_USERNAME
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.global.secretName }}, key: dex-static-user-username}
+            - name: DEX_OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.global.secretName }}, key: dex-oauth2-proxy-client-id}
+            - name: DEX_OAUTH2_PROXY_REDIRECT_URI
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.global.secretName }}, key: dex-oauth2-proxy-redirect-uri}
+            {{- if .Values.dex.microsoft.enabled }}
+            - name: DEX_MICROSOFT_CLIENT_ID
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.global.secretName }}, key: dex-microsoft-client-id}
+            - name: DEX_MICROSOFT_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.global.secretName }}, key: dex-microsoft-client-secret}
+            - name: DEX_MICROSOFT_REDIRECT_URI
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.global.secretName }}, key: dex-microsoft-redirect-uri}
+            - name: DEX_MICROSOFT_DOMAIN_HINT
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.global.secretName }}, key: dex-microsoft-domain-hint}
+            {{- end }}
+          volumeMounts:
+            - name: dex-config-rendered
+              mountPath: /etc/dex
+            - name: dex-config-tpl
+              mountPath: /config-tpl
+              readOnly: true
+      containers:
+        - name: dex
+          image: "{{ .Values.dex.image.repository }}:{{ .Values.dex.image.tag }}"
+          imagePullPolicy: {{ .Values.dex.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          command: ["dex", "serve", "/etc/dex/config.yaml"]
+          ports:
+            - containerPort: 5556
+              protocol: TCP
+          env:
+            - name: DEX_OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: {name: {{ .Values.global.secretName }}, key: dex-oauth2-proxy-client-secret}
+          volumeMounts:
+            - name: dex-config-rendered
+              mountPath: /etc/dex
+              readOnly: true
+            - name: dex-config-tpl
+              mountPath: /config-tpl
+              readOnly: true
+      volumes:
+        - name: dex-config-tpl
+          configMap:
+            name: {{ include "model-store.componentName" (list . "dex-config") }}
+        - name: dex-config-rendered
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "model-store.componentName" (list . "dex") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: dex
+    {{- include "model-store.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 5556
+      targetPort: 5556
+  selector:
+    app: dex
+{{- end }}

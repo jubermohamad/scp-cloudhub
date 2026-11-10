@@ -1,0 +1,155 @@
+# assembly-aks-demo — chart-native reproduction of the LIVE demo deployment.
+#
+# Demo does NOT run from this chart today: it is a set of hand-applied manifests in
+# namespace `assembly-platform-workflows-v2` (the older `assembly-platform-workflows`
+# and `assembly-infra` namespaces are retired — every deployment there is scaled to 0,
+# except that namespace's APISIX, which is still the public LoadBalancer edge and
+# proxies to v2; see docs/FIELD_NOTES.md on mirroring /api routes into it).
+#
+# This overlay was derived by reading the live namespace (helm has no release there):
+# its ConfigMap `assembly-workflows-config`, Secret `assembly-workflows-secrets`,
+# Deployments, Services and PVCs. It is NOT deployed by any workflow — it exists so the
+# chart can be diffed against demo and so a future migration has a starting point.
+#
+# Secrets resolve from the 1Password `Assembly` item, section `assembly-aks-demo`
+# (the live Secret's SCREAMING_CASE keys normalized to this chart's paths).
+#
+# GAPS — demo needs these and the chart cannot express them yet (tracked, not silently
+# dropped): pgbouncer (demo runs one in front of postgres; chart has no template),
+# temporal-ui, the mcp-hub Service's dynamic port range (demo exposes 9000-9100 for
+# deployed MCP servers; chart exposes 8011 only), FILE_SEARCH_S3_* env (referenced in
+# chart comments but emitted by no template) and KEYCLOAK_BACKEND_CLIENT_SECRET.
+# Until those land, this overlay reproduces demo MINUS those components.
+#
+# DELIBERATE DEVIATION — resources. 17 of demo's 18 deployments set NO resource
+# requests/limits at all (only minio does), so they run as BestEffort. This overlay does
+# NOT reproduce that: BestEffort pods are the first evicted under node pressure, so
+# copying it faithfully would make a chart-managed demo less stable than the chart's
+# defaults, not more faithful. Replicas ARE 1:1 (every deployment runs 1).
+
+global:
+  # Live value is ENVIRONMENT=development, so the production-only validations
+  # (MinIO defaults, :latest tags) do not apply here.
+  environment: development
+
+image:
+  registry: assemblyrgacr.azurecr.io
+  # Live tags: every service on 0.18.0 except the engine, which carries a hotfix build.
+  tag: "0.18.0"
+  createPullSecret:
+    enabled: true
+    registry: assemblyrgacr.azurecr.io
+    username: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/common/image__createPullSecret__username
+    password: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/common/image__createPullSecret__password
+  pullSecrets:
+    - name: assemblyrgacr-secret
+
+# Demo bundles its own Postgres/Redis/Keycloak/Temporal in-namespace.
+infra:
+  enabled: true
+  postgres:
+    password: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/infra__postgres__password
+    # Demo's data lives in assembly_db, NOT the chart default workflows_db. Pointing a
+    # deploy at the default would come up against an empty database rather than fail.
+    databaseName: assembly_db
+    storage: 20Gi
+  keycloak:
+    adminPassword: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/infra__keycloak__adminPassword
+  temporal:
+    # Live: temporalio/auto-setup (single-pod), not the split deployment.
+    mode: auto-setup
+
+externalInfra:
+  temporal:
+    # NOT the chart default `default` — demo namespaces its Temporal per environment.
+    namespace: assembly-platform-workflows-v2
+  keycloak:
+    realm: assembly-platform
+
+minio:
+  enabled: true
+  rootUser: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/minio__rootUser
+  rootPassword: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/minio__rootPassword
+  image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+  storage: 20Gi
+
+secrets:
+  jwtSecret: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/secrets__jwtSecret
+  fernetKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/secrets__fernetKey
+  internalServiceApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/secrets__internalServiceApiKey
+  # The four below are fail-closed requirements of this chart that demo's manifest-era
+  # Secret never had; generated into the vault when this overlay was written.
+  sandboxInternalServiceApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/secrets__sandboxInternalServiceApiKey
+  workspaceManagerInternalServiceApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/secrets__workspaceManagerInternalServiceApiKey
+  bootstrapAdminPassword: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/secrets__bootstrapAdminPassword
+  llmGateway:
+    userKeysInternalApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/secrets__llmGateway__userKeysInternalApiKey
+    adminKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/secrets__llmGateway__adminKey
+  azureFoundry:
+    apiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/secrets__azureFoundry__apiKey
+  tavilyApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-demo/secrets__tavilyApiKey
+
+apisix:
+  replicas: 1
+  # Live apisix here is ClusterIP on :80 — the retired namespace's APISIX LoadBalancer
+  # is the public edge and proxies in, which is why new /api routes must be mirrored
+  # there by hand or they 503 at the public URL.
+  service:
+    type: ClusterIP
+  tls:
+    # Terminated at the edge APISIX, not this one; publicHostname is still required so
+    # the Keycloak issuer matches the live KEYCLOAK_EXPECTED_ISSUER.
+    enabled: false
+    publicHostname: assembly-aks-demo.uksouth.cloudapp.azure.com
+
+agentsCodeWorker:
+  # Live CODE_INTERPRETER_EXECUTION_TARGET=sandbox-service.
+  codeExecutionTarget: sandbox-service
+  replicas: 1
+  # SECURITY (#1372): a multi-tenant demo must not run custom_code via in-process
+  # exec() — keep it sandboxed. Carried over from the previous overlay; guarded by
+  # tests/test_trusted_code_inprocess_fail_closed.py.
+  trustedCodeInprocess: false
+
+# Live: WORKFLOW_RESOURCE_LIMITS_ENABLED=false.
+workflowResourceLimits:
+  enabled: false
+
+# Single replica across the board (live), and no HPA.
+agents:
+  replicas: 1
+  hpa:
+    enabled: false
+agentsWorker:
+  replicas: 1
+agentsSubflowWorker:
+  replicas: 1
+core:
+  replicas: 1
+llmGateway:
+  replicas: 1
+mcpHub:
+  replicas: 1
+sandboxTrigger:
+  replicas: 1
+sandboxExecute:
+  replicas: 1
+  # SECURITY, both carried over and test-guarded — users run networked code here:
+  #   egressFilter  — tests/test_egress_filter_values.py
+  #   PREVIEW_REQUIRE_ACCESS_TOKEN — confused-deputy on the content proxy (#1352)
+  egressFilter:
+    enabled: true
+    dnsIP: "10.0.0.10"
+  requireNsjail: true
+  extraEnv:
+    - name: PREVIEW_REQUIRE_ACCESS_TOKEN
+      value: "true"
+frontend:
+  replicas: 1
+
+networkPolicies:
+  # Demo runs Calico; no NetworkPolicy objects exist in the live namespace.
+  enabled: false
+
+podDisruptionBudgets:
+  enabled: false

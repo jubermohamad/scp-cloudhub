@@ -1,0 +1,7 @@
+apiVersion: v2
+name: common
+appVersion: "9.4.0.0"
+description: Common configuration (certificates, PVC etc.).
+# netreveal chart version: 1.0.12
+version: 1.0.1
+type: application

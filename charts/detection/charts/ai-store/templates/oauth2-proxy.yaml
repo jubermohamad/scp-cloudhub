@@ -1,0 +1,124 @@
+{{- if .Values.oauth2Proxy.enabled }}
+{{- /*
+  TM-2 / AC-450: constrain post-login redirects. oauth2-proxy default-denies
+  cross-host ?rd= targets unless whitelistDomains lists them, and cookieDomain
+  scopes the session cookie across subdomains. These must be configured
+  together: a cross-subdomain cookie without a redirect allowlist (or a
+  redirect allowlist without the matching cookie scope) is a misconfigured
+  perimeter. Fail the install rather than ship it half-configured. Set both to
+  a constrained leading-dot parent (e.g. .example.com) that covers only the
+  modelhub/training/monitoring hosts, or leave both empty (default-deny).
+*/}}
+{{- if or (and .Values.oauth2Proxy.cookieDomain (not .Values.oauth2Proxy.whitelistDomains)) (and .Values.oauth2Proxy.whitelistDomains (not .Values.oauth2Proxy.cookieDomain)) }}
+{{- fail "TM-2/AC-450: oauth2Proxy.whitelistDomains and oauth2Proxy.cookieDomain must be set together (both to a constrained leading-dot parent, or both empty)." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "model-store.componentName" (list . "oauth2-proxy") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: oauth2-proxy
+    {{- include "model-store.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oauth2-proxy
+  template:
+    metadata:
+      labels:
+        app: oauth2-proxy
+        {{- include "model-store.labels" . | nindent 8 }}
+    spec:
+      {{- include "model-store.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: oauth2-proxy
+          image: "{{ .Values.oauth2Proxy.image.repository }}:{{ .Values.oauth2Proxy.image.tag }}"
+          imagePullPolicy: {{ .Values.oauth2Proxy.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 4180
+              protocol: TCP
+          env:
+            - name: OAUTH2_PROXY_PROVIDER
+              value: oidc
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: oauth2-proxy-client-id
+            - name: OAUTH2_PROXY_OIDC_ISSUER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: oauth2-proxy-oidc-issuer-url
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: oauth2-proxy-client-secret
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: oauth2-proxy-cookie-secret
+            - name: OAUTH2_PROXY_EMAIL_DOMAINS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: oauth2-proxy-email-domains
+            - name: OAUTH2_PROXY_COOKIE_SECURE
+              value: "true"
+            - name: OAUTH2_PROXY_COOKIE_SAMESITE
+              value: {{ .Values.oauth2Proxy.cookieSameSite | quote }}
+            - name: OAUTH2_PROXY_COOKIE_HTTPONLY
+              value: {{ print .Values.oauth2Proxy.cookieHttpOnly | quote }}
+            {{- if .Values.oauth2Proxy.cookieCsrfSameSite }}
+            - name: OAUTH2_PROXY_COOKIE_CSRF_SAMESITE
+              value: {{ .Values.oauth2Proxy.cookieCsrfSameSite | quote }}
+            {{- end }}
+            - name: OAUTH2_PROXY_CODE_CHALLENGE_METHOD
+              value: S256
+            - name: OAUTH2_PROXY_REDIRECT_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.global.secretName }}
+                  key: oauth2-proxy-redirect-url
+            - name: OAUTH2_PROXY_HTTP_ADDRESS
+              value: 0.0.0.0:4180
+            - name: OAUTH2_PROXY_UPSTREAMS
+              value: http://{{ include "model-store.componentName" (list . "frontend") }}.{{ include "model-store.namespace" . }}.svc.cluster.local:80
+            - name: OAUTH2_PROXY_REVERSE_PROXY
+              value: "true"
+            - name: OAUTH2_PROXY_SET_XAUTHREQUEST
+              value: "true"
+            - name: OAUTH2_PROXY_PASS_AUTHORIZATION_HEADER
+              value: "true"
+            - name: OAUTH2_PROXY_PASS_USER_HEADERS
+              value: "true"
+            {{- if .Values.oauth2Proxy.whitelistDomains }}
+            - name: OAUTH2_PROXY_WHITELIST_DOMAINS
+              value: {{ .Values.oauth2Proxy.whitelistDomains | quote }}
+            {{- end }}
+            {{- if .Values.oauth2Proxy.cookieDomain }}
+            - name: OAUTH2_PROXY_COOKIE_DOMAIN
+              value: {{ .Values.oauth2Proxy.cookieDomain | quote }}
+            {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "model-store.componentName" (list . "oauth2-proxy-service") }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    app: oauth2-proxy
+    {{- include "model-store.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 4180
+  selector:
+    app: oauth2-proxy
+{{- end }}

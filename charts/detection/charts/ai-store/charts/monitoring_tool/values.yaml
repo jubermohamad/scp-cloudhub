@@ -1,0 +1,84 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+enabled: true
+replicaCount: 1
+
+# Cron scheduler worker (src.run_scheduler). Polls due schedules and triggers jobs.
+scheduler:
+  enabled: true
+  replicaCount: 1
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: ""
+
+image:
+  repository: "<acr_host>/monitoring-tool"
+  tag: "<monitoring_api_image_tag>"
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+podAnnotations: {}
+
+uvProjectEnvironment: "/app/.venv"
+
+workerImage:
+  repository: "<acr_host>/monitoring-package"
+  tag: "<monitoring_worker_image_tag>"
+
+# Optional ACR base URL for worker-image OCI referrer lookup (metrics catalog). Empty = app uses MONITORING_WORKER_IMAGE registry only.
+ociRegistryUrl: ""
+
+# Optional ai-store /api/v1 base for sync_label_store. Prefer extraEnv AI_STORE_API_URL in env-specific overlays (same pattern as MTT extraEnv).
+aiStoreApiUrl: ""
+
+service:
+  type: ClusterIP
+  httpPort: 9000
+  mcpPort: 8002
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+secretKeys:
+  apiKey: mcp-api-key
+  databaseUrl: monitoring-database-url
+  minioAccessKey: aws-access-key-id
+  minioSecretKey: aws-secret-access-key
+  mlflowTrackingUsername: mlflow-tracking-username
+  mlflowTrackingPassword: mlflow-tracking-password
+  awsAccessKeyId: aws-access-key-id
+  awsSecretAccessKey: aws-secret-access-key
+  ociRegistryUsername: acr-username
+  ociRegistryPassword: acr-password
+
+extraEnv:
+  - name: APP_NAME
+    value: monitoring-tool
+  - name: MINIO_ENDPOINT_URL
+    value: "http://minio:9000"
+  - name: MLFLOW_TRACKING_URI
+    value: "http://mlflow-tracking:5000"
+  - name: MLFLOW_S3_ENDPOINT_URL
+    value: "http://minio:9000"
+
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  tlsSecretName: ""
+  # TM-31 / AC-449: nginx per-source-IP edge rate limits for the monitoring host
+  # (throttles bursts of job-triggering submissions). Empty => annotation omitted.
+  limitRps: "10"
+  limitConnections: "20"
+  limitBurstMultiplier: "5"
+  limitWhitelist: ""

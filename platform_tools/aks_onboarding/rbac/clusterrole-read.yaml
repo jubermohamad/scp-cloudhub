@@ -1,0 +1,29 @@
+# ClusterRole: Backstage read-only access to pods and nodes
+#
+# Grants the Backstage Service Principal visibility into:
+#   - nodes (for cost optimization decisions)
+#   - pods  (for workload inspection before downsizing)
+#
+# No write, create, delete, or patch permissions are granted.
+# System node pool is never mutated.
+#
+# Applied once per cluster during AKS Cost Savings onboarding.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backstage-cost-automation-reader
+  labels:
+    app.kubernetes.io/managed-by: backstage
+    backstage.io/purpose: cost-automation
+    backstage.io/onboarding: 'true'
+rules:
+  - apiGroups: ['']
+    resources: ['nodes']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['']
+    resources: ['pods']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['']
+    resources: ['namespaces']
+    verbs: ['get', 'list']

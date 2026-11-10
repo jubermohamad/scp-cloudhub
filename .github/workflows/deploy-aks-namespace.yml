@@ -1,0 +1,569 @@
+name: Deploy CloudHub to AKS Namespace
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_version:
+        description: 'Build output image version (optional, for traceability)'
+        required: false
+        default: ''
+        type: string
+      backend_image:
+        description: 'Prebuilt backend image reference (skip build-and-push when provided with frontend_image)'
+        required: false
+        default: ''
+        type: string
+      frontend_image:
+        description: 'Prebuilt frontend image reference (skip build-and-push when provided with backend_image)'
+        required: false
+        default: ''
+        type: string
+  workflow_call:
+    inputs:
+      image_version:
+        required: false
+        default: ''
+        type: string
+      backend_image:
+        required: false
+        default: ''
+        type: string
+      frontend_image:
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloudhub-aks-namespace
+  cancel-in-progress: false
+
+env:
+  ACR_NAME: symphonyfs
+  ACR_LOGIN_SERVER: symphonyfs.azurecr.io
+  BACKEND_REPOSITORY: cloudhub-platform/backend
+  FRONTEND_REPOSITORY: cloudhub-platform/frontend
+  K8S_MANIFEST_DIR: k8s/aks-namespace
+
+jobs:
+  build-and-push:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    outputs:
+      image_version: ${{ steps.meta.outputs.image_version }}
+      backend_image: ${{ steps.meta.outputs.backend_image }}
+      frontend_image: ${{ steps.meta.outputs.frontend_image }}
+      backend_repository: ${{ steps.meta.outputs.backend_repository }}
+      frontend_repository: ${{ steps.meta.outputs.frontend_repository }}
+      backend_tag: ${{ steps.meta.outputs.backend_tag }}
+      frontend_tag: ${{ steps.meta.outputs.frontend_tag }}
+      skip_build: ${{ steps.meta.outputs.skip_build }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Load deployment settings
+        id: settings
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          repo_var() {
+            name="$1"
+            default="$2"
+            value="$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/${name}" --jq '.value' 2>/dev/null || true)"
+            if [ -z "$value" ]; then
+              value="$default"
+            fi
+            printf '%s' "$value"
+          }
+
+          normalize_frontend() {
+            raw="$1"
+            raw="$(printf '%s' "$raw" | tr -d '[:space:]')"
+            raw="${raw%/}"
+            url="$raw"
+            host="$raw"
+            case "$raw" in
+              http://*|https://*)
+                host="${raw#http://}"
+                host="${host#https://}"
+                url="$raw"
+                ;;
+              *)
+                url="https://${raw}"
+                ;;
+            esac
+            host="${host%/}"
+            url="${url%/}"
+            printf '%s\n%s' "$host" "$url"
+          }
+
+          namespace="$(repo_var K8S_NAMESPACE cloudhub)"
+          frontend_input="$(repo_var FRONTEND_HOST https://cloudh.azurewebsites.net/)"
+          aks_resource_group="$(repo_var AKS_RESOURCE_GROUP rg-scp-dev-sdc-st-cms)"
+          aks_cluster_name="$(repo_var AKS_CLUSTER_NAME aks-scp-dev-sdc-st-cms)"
+          backend_pg_host="$(repo_var BACKEND_PG_HOST cloudhub-postgres.postgres.database.azure.com)"
+          backend_pg_database="$(repo_var BACKEND_PG_DATABASE cloudhub)"
+          backend_pg_user="$(repo_var BACKEND_PG_USER cloudhub-backend)"
+
+          frontend_host="$(normalize_frontend "$frontend_input" | sed -n '1p')"
+          frontend_url="$(normalize_frontend "$frontend_input" | sed -n '2p')"
+
+          {
+            echo "namespace=$namespace"
+            echo "frontend_host=$frontend_host"
+            echo "frontend_url=$frontend_url"
+            echo "aks_resource_group=$aks_resource_group"
+            echo "aks_cluster_name=$aks_cluster_name"
+            echo "backend_pg_host=$backend_pg_host"
+            echo "backend_pg_database=$backend_pg_database"
+            echo "backend_pg_user=$backend_pg_user"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Normalize frontend host
+        id: frontend
+        env:
+          FRONTEND_INPUT: ${{ steps.settings.outputs.frontend_url }}
+        run: |
+          set -euo pipefail
+          frontend_input="$(printf '%s' "$FRONTEND_INPUT" | tr -d '[:space:]')"
+          frontend_input="${frontend_input%/}"
+          frontend_url="$frontend_input"
+          frontend_host="$frontend_input"
+          case "$frontend_input" in
+            http://*|https://*)
+              frontend_host="${frontend_input#http://}"
+              frontend_host="${frontend_host#https://}"
+              frontend_url="$frontend_input"
+              ;;
+            *)
+              frontend_url="https://${frontend_input}"
+              ;;
+          esac
+          frontend_host="${frontend_host%/}"
+          frontend_url="${frontend_url%/}"
+          echo "frontend_host=$frontend_host" >> "$GITHUB_OUTPUT"
+          echo "frontend_url=$frontend_url" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve image metadata
+        id: meta
+        env:
+          IMAGE_VERSION_INPUT: ${{ inputs.image_version }}
+          BACKEND_IMAGE_INPUT: ${{ inputs.backend_image }}
+          FRONTEND_IMAGE_INPUT: ${{ inputs.frontend_image }}
+        run: |
+          set -euo pipefail
+
+          trim() {
+            printf '%s' "$1" | xargs
+          }
+
+          parse_repo_and_tag() {
+            ref="$1"
+            repo_part="${ref#*/}"
+            repo="${repo_part%:*}"
+            tag="${ref##*:}"
+            if [ -z "$repo" ] || [ -z "$tag" ] || [ "$repo" = "$ref" ]; then
+              return 1
+            fi
+            printf '%s\n%s\n' "$repo" "$tag"
+          }
+
+          input_backend_image="$(trim "${BACKEND_IMAGE_INPUT:-}")"
+          input_frontend_image="$(trim "${FRONTEND_IMAGE_INPUT:-}")"
+          image_version="$(trim "${IMAGE_VERSION_INPUT:-}")"
+          if [ -z "$image_version" ]; then
+            image_version="$GITHUB_SHA"
+          fi
+
+          if [ -n "$input_backend_image" ] || [ -n "$input_frontend_image" ]; then
+            if [ -z "$input_backend_image" ] || [ -z "$input_frontend_image" ]; then
+              echo "::error::backend_image and frontend_image must both be provided when using prebuilt images."
+              exit 1
+            fi
+
+            mapfile -t backend_parts < <(parse_repo_and_tag "$input_backend_image" || true)
+            mapfile -t frontend_parts < <(parse_repo_and_tag "$input_frontend_image" || true)
+            if [ "${#backend_parts[@]}" -ne 2 ] || [ "${#frontend_parts[@]}" -ne 2 ]; then
+              echo "::error::Invalid image reference format. Expected <registry>/<repository>:<tag>."
+              exit 1
+            fi
+
+            {
+              echo "image_version=$image_version"
+              echo "skip_build=true"
+              echo "backend_image=$input_backend_image"
+              echo "frontend_image=$input_frontend_image"
+              echo "backend_repository=${backend_parts[0]}"
+              echo "frontend_repository=${frontend_parts[0]}"
+              echo "backend_tag=${backend_parts[1]}"
+              echo "frontend_tag=${frontend_parts[1]}"
+            } >> "$GITHUB_OUTPUT"
+
+            exit 0
+          fi
+
+          backend_image="${ACR_LOGIN_SERVER}/${BACKEND_REPOSITORY}:${image_version}"
+          frontend_image="${ACR_LOGIN_SERVER}/${FRONTEND_REPOSITORY}:${image_version}"
+
+          {
+            echo "image_version=$image_version"
+            echo "skip_build=false"
+            echo "backend_image=$backend_image"
+            echo "frontend_image=$frontend_image"
+            echo "backend_repository=$BACKEND_REPOSITORY"
+            echo "frontend_repository=$FRONTEND_REPOSITORY"
+            echo "backend_tag=$image_version"
+            echo "frontend_tag=$image_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Azure
+        if: ${{ steps.meta.outputs.skip_build != 'true' }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        if: ${{ steps.meta.outputs.skip_build != 'true' }}
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Set up Docker Buildx
+        if: ${{ steps.meta.outputs.skip_build != 'true' }}
+        uses: docker/setup-buildx-action@v4
+
+      - name: Verify backend Dockerfile install strategy
+        if: ${{ steps.meta.outputs.skip_build != 'true' }}
+        run: |
+          set -euo pipefail
+          if grep -q 'yarn install --immutable --mode=skip-build' docker/Dockerfile.backend; then
+            echo '::error::Deprecated backend install command detected in docker/Dockerfile.backend. Use yarn workspaces focus --all --production in runtime stage.'
+            exit 1
+          fi
+          if ! grep -q 'yarn workspaces focus --all --production' docker/Dockerfile.backend; then
+            echo '::error::Expected production-focused yarn install strategy not found in docker/Dockerfile.backend.'
+            exit 1
+          fi
+
+      - name: Build and push backend image
+        if: ${{ steps.meta.outputs.skip_build != 'true' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          push: true
+          tags: ${{ steps.meta.outputs.backend_image }}
+
+      - name: Build and push frontend image
+        if: ${{ steps.meta.outputs.skip_build != 'true' }}
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: true
+          build-args: |
+            APP_BASE_URL=${{ steps.frontend.outputs.frontend_url }}
+            BACKEND_BASE_URL=${{ steps.frontend.outputs.frontend_url }}
+          tags: ${{ steps.meta.outputs.frontend_image }}
+
+  bootstrap-namespace:
+    name: Bootstrap Namespace
+    runs-on: ubuntu-latest
+    needs: build-and-push
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Load deployment settings
+        id: settings
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          repo_var() {
+            name="$1"
+            default="$2"
+            value="$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/${name}" --jq '.value' 2>/dev/null || true)"
+            if [ -z "$value" ]; then
+              value="$default"
+            fi
+            printf '%s' "$value"
+          }
+
+          normalize_frontend() {
+            raw="$1"
+            raw="$(printf '%s' "$raw" | tr -d '[:space:]')"
+            raw="${raw%/}"
+            url="$raw"
+            host="$raw"
+            case "$raw" in
+              http://*|https://*)
+                host="${raw#http://}"
+                host="${host#https://}"
+                url="$raw"
+                ;;
+              *)
+                url="https://${raw}"
+                ;;
+            esac
+            host="${host%/}"
+            url="${url%/}"
+            printf '%s\n%s' "$host" "$url"
+          }
+
+          namespace="$(repo_var K8S_NAMESPACE cloudhub)"
+          frontend_input="$(repo_var FRONTEND_HOST https://cloudh.azurewebsites.net/)"
+          aks_resource_group="$(repo_var AKS_RESOURCE_GROUP rg-scp-dev-sdc-st-cms)"
+          aks_cluster_name="$(repo_var AKS_CLUSTER_NAME aks-scp-dev-sdc-st-cms)"
+          backend_pg_host="$(repo_var BACKEND_PG_HOST cloudhub-postgres.postgres.database.azure.com)"
+          backend_pg_database="$(repo_var BACKEND_PG_DATABASE cloudhub)"
+          backend_pg_user="$(repo_var BACKEND_PG_USER cloudhub-backend)"
+
+          frontend_host="$(normalize_frontend "$frontend_input" | sed -n '1p')"
+          frontend_url="$(normalize_frontend "$frontend_input" | sed -n '2p')"
+
+          {
+            echo "namespace=$namespace"
+            echo "frontend_host=$frontend_host"
+            echo "frontend_url=$frontend_url"
+            echo "aks_resource_group=$aks_resource_group"
+            echo "aks_cluster_name=$aks_cluster_name"
+            echo "backend_pg_host=$backend_pg_host"
+            echo "backend_pg_database=$backend_pg_database"
+            echo "backend_pg_user=$backend_pg_user"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch AKS credentials
+        env:
+          AKS_RESOURCE_GROUP: ${{ steps.settings.outputs.aks_resource_group }}
+          AKS_CLUSTER_NAME: ${{ steps.settings.outputs.aks_cluster_name }}
+        run: |
+          set -euo pipefail
+          az aks get-credentials \
+            --resource-group "$AKS_RESOURCE_GROUP" \
+            --name "$AKS_CLUSTER_NAME" \
+            --overwrite-existing
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Render namespace bootstrap
+        env:
+          K8S_NAMESPACE: ${{ steps.settings.outputs.namespace }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          helm template cloudhub-namespace cloudhub-platform-helm-charts/charts/namespace-bootstrap \
+            --values k8s/aks-namespace/namespace-bootstrap.values.yaml \
+            --set namespace="$K8S_NAMESPACE" \
+            --set serviceAccount.annotations.azure\.workload\.identity/client-id="$AZURE_CLIENT_ID" \
+            > /tmp/cloudhub-namespace.yaml
+
+      - name: Apply namespace bootstrap
+        run: |
+          set -euo pipefail
+          kubectl apply -f /tmp/cloudhub-namespace.yaml
+
+  deploy-to-aks:
+    name: Deploy to AKS
+    runs-on: ubuntu-latest
+    needs:
+      - build-and-push
+      - bootstrap-namespace
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Load deployment settings
+        id: settings
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          repo_var() {
+            name="$1"
+            default="$2"
+            value="$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/${name}" --jq '.value' 2>/dev/null || true)"
+            if [ -z "$value" ]; then
+              value="$default"
+            fi
+            printf '%s' "$value"
+          }
+
+          normalize_frontend() {
+            raw="$1"
+            raw="$(printf '%s' "$raw" | tr -d '[:space:]')"
+            raw="${raw%/}"
+            url="$raw"
+            host="$raw"
+            case "$raw" in
+              http://*|https://*)
+                host="${raw#http://}"
+                host="${host#https://}"
+                url="$raw"
+                ;;
+              *)
+                url="https://${raw}"
+                ;;
+            esac
+            host="${host%/}"
+            url="${url%/}"
+            printf '%s\n%s' "$host" "$url"
+          }
+
+          namespace="$(repo_var K8S_NAMESPACE cloudhub)"
+          frontend_input="$(repo_var FRONTEND_HOST https://cloudh.azurewebsites.net/)"
+          aks_resource_group="$(repo_var AKS_RESOURCE_GROUP rg-scp-dev-sdc-st-cms)"
+          aks_cluster_name="$(repo_var AKS_CLUSTER_NAME aks-scp-dev-sdc-st-cms)"
+          backend_pg_host="$(repo_var BACKEND_PG_HOST cloudhub-postgres.postgres.database.azure.com)"
+          backend_pg_database="$(repo_var BACKEND_PG_DATABASE cloudhub)"
+          backend_pg_user="$(repo_var BACKEND_PG_USER cloudhub-backend)"
+
+          frontend_host="$(normalize_frontend "$frontend_input" | sed -n '1p')"
+          frontend_url="$(normalize_frontend "$frontend_input" | sed -n '2p')"
+
+          {
+            echo "namespace=$namespace"
+            echo "frontend_host=$frontend_host"
+            echo "frontend_url=$frontend_url"
+            echo "aks_resource_group=$aks_resource_group"
+            echo "aks_cluster_name=$aks_cluster_name"
+            echo "backend_pg_host=$backend_pg_host"
+            echo "backend_pg_database=$backend_pg_database"
+            echo "backend_pg_user=$backend_pg_user"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch AKS credentials
+        env:
+          AKS_RESOURCE_GROUP: ${{ steps.settings.outputs.aks_resource_group }}
+          AKS_CLUSTER_NAME: ${{ steps.settings.outputs.aks_cluster_name }}
+        run: |
+          set -euo pipefail
+          az aks get-credentials \
+            --resource-group "$AKS_RESOURCE_GROUP" \
+            --name "$AKS_CLUSTER_NAME" \
+            --overwrite-existing
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Apply backend release
+        run: |
+          set -euo pipefail
+          helm upgrade --install cloudhub-backend cloudhub-platform-helm-charts/charts/app-bootstrap \
+            --namespace "${{ steps.settings.outputs.namespace }}" \
+            --create-namespace \
+            --set application=cloudhub-backend \
+            --set namespace="${{ steps.settings.outputs.namespace }}" \
+            --set owner=platform-team@symphonysensa.com \
+            --set businessUnit=cloudhub \
+            --set environment=dev \
+            --set costCenter=cloudhub-platform \
+            --set image.repository="${{ env.ACR_LOGIN_SERVER }}/${{ needs.build-and-push.outputs.backend_repository }}" \
+            --set image.tag="${{ needs.build-and-push.outputs.backend_tag }}" \
+            --set serviceAccountName=cloudhub-backend \
+            --set deploymentLabels.azure\.workload\.identity/use=true \
+            --set podLabels.azure\.workload\.identity/use=true \
+            --set service.port=7007 \
+            --set service.targetPort=7007 \
+            --set ingress.enabled=false \
+            --set-string env[0].name=NODE_ENV \
+            --set-string env[0].value=production \
+            --set-string env[1].name=APP_BASE_URL \
+            --set-string env[1].value="${{ steps.settings.outputs.frontend_url }}" \
+            --set-string env[2].name=BACKEND_BASE_URL \
+            --set-string env[2].value="${{ steps.settings.outputs.frontend_url }}" \
+            --set-string env[3].name=BACKEND_ORIGIN \
+            --set-string env[3].value="http://cloudhub-backend.${{ steps.settings.outputs.namespace }}.svc.cluster.local:7007" \
+            --set-string env[4].name=POSTGRES_AAD_AUTH \
+            --set-string env[4].value=true \
+            --set-string env[5].name=PGHOST \
+            --set-string env[5].value="${{ steps.settings.outputs.backend_pg_host }}" \
+            --set-string env[6].name=POSTGRES_HOST \
+            --set-string env[6].value="${{ steps.settings.outputs.backend_pg_host }}" \
+            --set-string env[7].name=PGDATABASE \
+            --set-string env[7].value="${{ steps.settings.outputs.backend_pg_database }}" \
+            --set-string env[8].name=POSTGRES_DB \
+            --set-string env[8].value="${{ steps.settings.outputs.backend_pg_database }}" \
+            --set-string env[9].name=PGUSER \
+            --set-string env[9].value="${{ steps.settings.outputs.backend_pg_user }}" \
+            --set-string env[10].name=POSTGRES_USER \
+            --set-string env[10].value="${{ steps.settings.outputs.backend_pg_user }}" \
+            --set-string env[11].name=PGSSLMODE \
+            --set-string env[11].value=require \
+            --set-string env[12].name=AZURE_CLIENT_ID \
+            --set-string env[12].value="${{ secrets.AZURE_CLIENT_ID }}" \
+            --set-json envFrom='[{"secretRef":{"name":"cloudhub-runtime-secrets"}}]'
+
+      - name: Apply frontend release
+        run: |
+          set -euo pipefail
+          helm upgrade --install cloudhub-frontend cloudhub-platform-helm-charts/charts/app-bootstrap \
+            --namespace "${{ steps.settings.outputs.namespace }}" \
+            --create-namespace \
+            --set application=cloudhub-frontend \
+            --set namespace="${{ steps.settings.outputs.namespace }}" \
+            --set owner=platform-team@symphonysensa.com \
+            --set businessUnit=cloudhub \
+            --set environment=dev \
+            --set costCenter=cloudhub-platform \
+            --set image.repository="${{ env.ACR_LOGIN_SERVER }}/${{ needs.build-and-push.outputs.frontend_repository }}" \
+            --set image.tag="${{ needs.build-and-push.outputs.frontend_tag }}" \
+            --set serviceAccountName=default \
+            --set service.port=80 \
+            --set service.targetPort=80 \
+            --set ingress.enabled=true \
+            --set ingress.className=nginx \
+            --set ingress.host="${{ steps.settings.outputs.frontend_host }}" \
+            --set ingress.path=/ \
+            --set ingress.tls=false \
+            --set-string env[0].name=APP_BASE_URL \
+            --set-string env[0].value="${{ steps.settings.outputs.frontend_url }}" \
+            --set-string env[1].name=BACKEND_BASE_URL \
+            --set-string env[1].value="${{ steps.settings.outputs.frontend_url }}" \
+            --set-string env[2].name=BACKEND_ORIGIN \
+            --set-string env[2].value="http://cloudhub-backend.${{ steps.settings.outputs.namespace }}.svc.cluster.local:7007" \
+            --set-string env[3].name=CLOUDHUB_VERSION \
+            --set-string env[3].value="${{ needs.build-and-push.outputs.image_version }}"
+
+      - name: Verify rollout
+        run: |
+          set -euo pipefail
+          kubectl rollout status deployment/cloudhub-backend -n "${{ steps.settings.outputs.namespace }}" --timeout=10m
+          kubectl rollout status deployment/cloudhub-frontend -n "${{ steps.settings.outputs.namespace }}" --timeout=10m
+
+      - name: Summarize deployment
+        run: |
+          set -euo pipefail
+          {
+            echo "## AKS namespace deployment"
+            echo "- Namespace: ${{ steps.settings.outputs.namespace }}"
+            echo "- Frontend host: ${{ steps.settings.outputs.frontend_url }}"
+            echo "- Backend image: ${{ needs.build-and-push.outputs.backend_image }}"
+            echo "- Frontend image: ${{ needs.build-and-push.outputs.frontend_image }}"
+          } >> "$GITHUB_STEP_SUMMARY"

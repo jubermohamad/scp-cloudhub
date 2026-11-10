@@ -1,0 +1,67 @@
+apiVersion: v2
+name: detectionhub
+description: A Helm chart for Detection Hub components
+type: application
+version: 1.0.1-dev
+appVersion: "0.1.0"
+dependencies:
+  - name: cn-postgres
+    version: "0.1.0"
+    repository: "file://charts/cn-postgres"
+    condition: cn-postgres.enabled
+  - name: db-updater
+    version: 0.1.1
+    repository: "file://charts/db-updater"
+    condition: db-updater.enabled
+  - name: core-api
+    version: 0.1.1
+    repository: "file://charts/core-api"
+    condition: core-api.enabled
+  - name: spark-operator-manipulator
+    version: "0.1.0"
+    repository: "file://charts/spark-operator-manipulator"
+    # P9: own condition. The OPERATOR moved to `common`, but this chart must stay
+    # HERE: it provides ServiceAccount `spark-operator-manipulator`, which the
+    # SparkApplication run templates in the sparktemplates bucket name verbatim
+    # ("serviceAccount": "spark-operator-manipulator"). A driver pod resolves that
+    # SA in its OWN namespace, so it has to exist wherever the jobs run.
+    condition: spark-operator-manipulator.enabled
+  - name: nfs-server
+    version: 0.1.1
+    repository: "file://charts/nfs-server"
+    condition: nfs-server.enabled
+  - name: minio
+    version: 0.1.1
+    repository: "file://charts/minio"
+    condition: minio.enabled
+  - name: kafka-cluster
+    version: "0.1.0"
+    repository: "file://charts/kafka-cluster"
+    condition: kafka-cluster.enabled
+  - name: cn-postgres
+    version: "0.1.0"
+    repository: "file://charts/cn-postgres"
+    alias: superset-postgres
+    condition: superset-postgres.enabled
+  - name: superset
+    version: "0.14.3"
+    repository: "http://apache.github.io/superset"
+    condition: superset.enabled
+  - name: db-updater
+    version: 0.1.1
+    repository: "file://charts/db-updater"
+    alias: superset-updater
+    condition: superset-updater.enabled
+  - name: cn-postgres
+    version: "0.1.0"
+    repository: "file://charts/cn-postgres"
+    alias: keycloak-postgres
+    condition: keycloak-postgres.enabled
+  - name: core-api-ext
+    version: 0.1.1
+    repository: "file://charts/core-api-ext"
+    condition: core-api-ext.enabled
+  - name: keycloak
+    version: 0.1.1
+    repository: "file://charts/keycloak"
+    condition: keycloak.enabled

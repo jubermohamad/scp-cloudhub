@@ -1,0 +1,140 @@
+{{- if and (default false .Values.internalServices.zot.enabled) .Values.zot.auth.enabled }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "model-store.zotAuthSecretName" . }}
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot-auth
+type: Opaque
+data:
+{{- include "model-store.zotAuthSecretData" . | nindent 2 }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "model-store.zotPullSecretName" . }}
+  namespace: {{ include "model-store.modelsNamespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+    app.kubernetes.io/component: zot-registry-pull
+type: kubernetes.io/dockerconfigjson
+data:
+{{- include "model-store.zotPullSecretData" . | nindent 2 }}
+{{- end }}
+{{- if and (default false .Values.internalServices.zot.enabled) .Values.zot.auth.enabled (default true .Values.zot.auth.serviceAccountPatch.enabled) }}
+{{- $extra := .Values.zot.auth.serviceAccountPatch.extraPullSecrets | default list }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-zot-models-sa-patch
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "30"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-zot-models-sa-patch
+  namespace: {{ include "model-store.modelsNamespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "30"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames: ["default"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-zot-models-sa-patch
+  namespace: {{ include "model-store.modelsNamespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "30"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-zot-models-sa-patch
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-zot-models-sa-patch
+    namespace: {{ include "model-store.namespace" . }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-zot-models-sa-patch
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "31"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  # 7200, NOT 120: helm4's --wait watcher held this release for its full
+  # 1500s timeout waiting on a Job that had already COMPLETED — the TTL
+  # reaped it before the watcher observed the completion, and from then on
+  # the watcher saw only "status: NotFound". A TTL shorter than the helm
+  # wait fails a working release; 7200 matches the platform convention.
+  ttlSecondsAfterFinished: 7200
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: zot-models-sa-patch
+        {{- include "model-store.labels" . | nindent 8 }}
+    spec:
+      {{- include "model-store.imagePullSecrets" . | nindent 6 }}
+      restartPolicy: Never
+      serviceAccountName: {{ .Release.Name }}-zot-models-sa-patch
+      containers:
+        - name: patch
+          image: "{{ (((.Values.zotBootstrap).image).repository) | default "alpine" }}:{{ (((.Values.zotBootstrap).image).tag) | default "3.19" }}"
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: TARGET_NAMESPACE
+              value: {{ include "model-store.modelsNamespace" . | quote }}
+            - name: PULL_SECRET
+              value: {{ include "model-store.zotPullSecretName" . | quote }}
+            - name: EXTRA_PULL_SECRETS
+              value: {{ $extra | toJson | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              apk add --no-cache curl jq >/dev/null
+              APISERVER="https://kubernetes.default.svc"
+              CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              SA_URL="${APISERVER}/api/v1/namespaces/${TARGET_NAMESPACE}/serviceaccounts/default"
+              sa=$(curl -sf --cacert "$CA" -H "Authorization: Bearer $TOKEN" "$SA_URL")
+              merge=$(echo "$sa" | jq -c --arg pull "$PULL_SECRET" --argjson extra "$EXTRA_PULL_SECRETS" '
+                ((.imagePullSecrets // []) | map(.name))
+                + [$pull]
+                + $extra
+                | unique
+                | map(select(length > 0))
+                | map({name: .})
+              ' | jq -c '{imagePullSecrets: .}')
+              curl -sf --cacert "$CA" -H "Authorization: Bearer $TOKEN" \
+                -H "Content-Type: application/merge-patch+json" \
+                -X PATCH "$SA_URL" -d "$merge"
+              echo "patched default ServiceAccount imagePullSecrets in ${TARGET_NAMESPACE}"
+{{- end }}

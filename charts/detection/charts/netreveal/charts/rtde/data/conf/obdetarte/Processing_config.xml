@@ -1,0 +1,371 @@
+<smart>
+
+    <topics>
+        <topic name="nr-screened_applications" format="SVM_MSG_JSON" type="kafka"
+               nestedChildrenStructureName="ConnectedParty"
+               parentIdColumnName="CustomerId"
+               childrenNumColumnName="BoCount"
+               childrenIdsColumnName="BoIds"
+               inheritChildrenStats="true">
+            <fields>
+                <field name="ActiveAMLAlert" type="string"/>
+                <field name="AdverseMediaFlag" type="string"/>
+                <field name="AssignedRiskLevelId" type="int"/>
+                <field name="AssignedRiskLevelName" type="string"/>
+                <field name="BankruptFlag" type="string"/>
+                <field name="BeneficialOwnerRisk" type="listtomap"/>
+                <field name="BlackListedFlagEnriched" type="string"/>
+                <field name="BusinessSegment1" type="string"/>
+                <field name="BusinessSegment2" type="string"/>
+                <field name="BusinessType" type="string"/>
+                <field name="CalculateBoRiskFlag" type="string"/>
+                <field name="CalculateJaoRiskFlag" type="string"/>
+                <field name="CashInVolume" type="double"/>
+                <field name="CashOutVolume" type="double"/>
+				<field name="CddComment" type="string"/>
+                <field name="Channel" type="string"/>
+                <field name="CheckInVolume" type="double"/>
+                <field name="CheckOutVolume" type="double"/>
+                <field name="CompanyForm" type="string"/>
+                <field name="ComplexStructure" type="string"/>
+                <field name="ConnectedParties" type="nested"/>
+                <field name="CorrelationId" type="string"  correlationId="true"/>
+                <field name="CountryOfOrigin" type="string"/>
+                <field name="CountryOfResidence" type="string"/>
+                <field name="CustomerCategoryCodeEnriched" type="string"/>
+                <field name="CustomerName" type="string"/>
+                <field name="CustomerSegment1" type="string"/>
+                <field name="CustomerSourceRefId" type="string"/>
+                <field name="CustomerSourceUniqueId" type="string" isParentId="true"/>
+                <field name="CustomerTypeCode" type="string"/>
+                <field name="DisclosureCount" type="int"/>
+                <field name="EmployeeFlag" type="string"/>
+                <field name="EmploymentStatus" type="string"/>
+                <field name="ExternalRiskFactors" type="string"/>
+                <field name="ExternalRiskScoreContribution" type="int"/>
+                <field name="FaceToFaceFlag" type="string"/>
+                <field name="IncorporationCountryCode" type="string"/>
+                <field name="IncorporationDate" type="date"/>
+				<field name="IndividualScore" type="double"/>
+                <field name="JointAccountRisk" type="listtomap"/>
+                <field name="LinkedAccountTypes" type="multivalue"/>
+                <field name="NationalityCode" type="string"/>
+                <field name="NearBorderFlag" type="string"/>
+                <field name="NumberOfYearsInBusiness" type="int"/>
+                <field name="Occupation" type="string"/>
+                <field name="OrgUnitCode" type="string"/>
+                <field name="OverallScoreAdjustment" type="double"/>
+                <field name="PepFlagEnriched" type="string"/>
+                <field name="PepRelatedFlagEnriched" type="string"/>
+                <field name="PepTypeEnriched" type="string"/>
+                <field name="PostalCode" type="string"/>
+                <field name="RequestType" type="string"/>
+                <field name="ResidenceFlag" type="string"/>
+                <field name="RunTimestamp" type="string"/>
+                <field name="SanctionedFlagEnriched" type="string"/>
+				<field name="ScoringChannel" type="string"/>
+                <field name="SensaAnomalyDetectionScore" type="int"/>
+                <field name="SensaChangeBehaviourScore" type="int"/>
+                <field name="SourceOfFunds" type="string"/>
+                <field name="SourceSystem" type="string"/>
+                <field name="TaxNumber" type="string"/>
+                <field name="TaxNumberType" type="string"/>
+                <field name="WireInNumber" type="int"/>
+                <field name="WireInVolume" type="double"/>
+                <field name="WireOutNumber" type="int"/>
+                <field name="WireOutVolume" type="double"/>
+                <field name="WlmActiveAlertsFlag" type="string"/>
+            </fields>
+        </topic>
+        <topic name="nr-internal_score" format="binary" type="kafka"><fields></fields></topic>
+    </topics>
+
+    <filters>
+        <filter name="riskScoresFiltering">
+			<field name="ScoringChannel"/>
+            <field name="RequestType"/>
+            <field name="CustomerSourceUniqueId"/>
+            <field name="OrganisationUnit"/>
+            <field name="IndAgg_score"/>
+            <field name="RunTimestamp"/>
+            <field name="CustomerSourceRefId"/>
+            <field name="CustomerName"/>
+            <field name="CustomerSegment1"/>
+            <field name="CustomerCategoryCode"/>
+            <field name="TaxNumber"/>
+            <field name="TaxNumberType"/>
+            <field name="CustomerTypeCode"/>
+            <field name="CountryOfResidence"/>
+            <field name="IndAgg_score_contributions"/>
+            <field name="Dimensions"/>
+            <field name="CDD_riskModel"/>
+			<field name="CddComment"/>
+        </filter>
+        <filter name="customerScoredFiltering">
+			<field name="ScoringChannel"/>
+            <field name="CustomerSourceUniqueId"/>
+            <field name="IndAgg_score"/>
+            <field name="Ind_score"/>
+            <field name="CDD_riskModel"/>
+			<field name="CddComment"/>
+        </filter>
+        <filter name="applicationResponseFiltering">
+            <field name="CustomerSourceUniqueId"/>
+            <field name="CDDRisk"/>
+            <field name="ScoreContributions"/>
+            <field name="EDDFlag"/>
+            <field name="CDDRiskScore"/>
+            <field name="SourceSystem"/>
+        </filter>
+        <filter name="internal_applicationResponseFiltering">
+            <field name="CustomerId"/>
+            <field name="CustomerSourceUniqueId"/>
+            <field name="CDDRisk"/>
+            <field name="ScoreContributions"/>
+            <field name="EDDFlag"/>
+            <field name="CDDRiskScore"/>
+            <field name="SourceSystem"/>
+        </filter>
+    </filters>
+
+    <mappings>
+        <mapping name="RTDEAdaptationMapping">
+            <field name="OrgUnitCode" alias="OrganisationUnit"/>
+            <field name="PepFlagEnriched" alias="PEPFlag"/>
+            <field name="PepRelatedFlagEnriched" alias="RCAFlag"/>
+            <field name="NationalityCode" alias="Nationality"/>
+            <field name="PepTypeEnriched" alias="PEPType"/>
+            <field name="BlackListedFlagEnriched" alias="OnOtherWatchList"/>
+            <field name="WlmActiveAlertsFlag" alias="ActiveWLMAlert"/>
+            <field name="SanctionedFlagEnriched" alias="SanctionedFlag"/>
+            <field name="CustomerCategoryCodeEnriched" alias="CustomerCategoryCode"/>
+        </mapping>
+        <mapping name="customerScoredMapping">
+			<field name="Customer_ScoringChannel" alias="ScoringChannel"/>
+            <field name="Customer_CustomerSourceUniqueId" alias="CustomerSourceUniqueId"/>
+			<field name="Customer_CddComment" alias="CddComment"/>
+            <field name="CDD_riskModel" alias="RiskModel"/>
+            <field name="Ind_score" alias="IndScore"/>
+            <field name="IndAgg_score" alias="Score"/>
+        </mapping>
+        <mapping name="riskScoresMapping">
+			<field name="Customer_ScoringChannel" alias="ScoringChannel"/>
+            <field name="Customer_OrganisationUnit" alias="OrganisationUnit"/>
+            <field name="Customer_RunTimestamp" alias="RunTimestamp"/>
+            <field name="Customer_CustomerSourceRefId" alias="CustomerSourceRefId"/>
+            <field name="Customer_CustomerName" alias="CustomerName"/>
+            <field name="Customer_CustomerSegment1" alias="CustomerSegment1"/>
+            <field name="Customer_CustomerCategoryCode" alias="CustomerCategoryCode"/>
+            <field name="Customer_TaxNumber" alias="TaxNumber"/>
+            <field name="Customer_TaxNumberType" alias="TaxNumberType"/>
+            <field name="Customer_CustomerTypeCode" alias="CustomerTypeCode"/>
+            <field name="Customer_CountryOfResidence" alias="CountryOfResidence"/>
+            <field name="Customer_CustomerSourceUniqueId" alias="CustomerSourceUniqueId"/>
+			<field name="Customer_CddComment" alias="CddComment"/>
+            <field name="CDD_riskModel" alias="RiskModel"/>
+            <field name="Customer_RequestType" alias="RequestType"/>
+            <field name="IndAgg_score" alias="Score"/>
+            <field name="IndAgg_score_contributions" alias="Contributions"/>
+        </mapping>
+        <mapping name="applicationResponse">
+            <field name="Customer_CustomerSourceUniqueId" alias="CustomerSourceUniqueId"/>
+            <field name="IndAgg_score" alias="CDDRiskScore"/>
+            <field name="IndAgg_score_contributions" alias="ScoreContributions"/>
+            <field name="CDD_riskModel.GenerateAlert" alias="EDDFlag"/>
+            <field name="CDD_riskModel.RiskLevel" alias="CDDRisk"/>
+            <field name="Customer_SourceSystem" alias="SourceSystem"/>
+        </mapping>
+    </mappings>
+
+    <constants>
+        <constant name="scoredOutput">
+            <field name="EventType" defaultValue="SCORED" type="string"/>
+        </constant>
+    </constants>
+
+    <combiners>
+		<!-- The output result of Ind_score combiner is used to return IndScore to Subjects topic. -->
+        <combiner name="Ind_score" type="NUMERIC" resultName="Ind_score">
+            <field name="Channel_score"/>
+            <field name="Customer_score"/>
+            <field name="Geography_score"/>
+            <field name="Override_score"/>
+            <field name="Behaviour_score"/>
+            <field name="Product_score"/>
+        </combiner>
+		<!-- The result of IndWithNestedBoRisk_score and IndWithNestedBoRisk_score_contributions combiners is used to calculate the "Beneficial Owner Risk" contribution by the nested score combiner. -->
+		<!-- The nested score combiner adds the "Beneficial Owner Risk" contribution to IndWithNestedBoRisk_score and IndWithNestedBoRisk_score_contributions fields. -->
+		<combiner name="IndWithNestedBoRisk_score" type="NUMERIC" resultName="IndWithNestedBoRisk_score">
+            <field name="Channel_score"/>
+            <field name="Customer_score"/>
+            <field name="Geography_score"/>
+            <field name="Override_score"/>
+            <field name="Behaviour_score"/>
+            <field name="Product_score"/>
+		</combiner>
+		<combiner name="IndWithNestedBoRisk_score_contributions" type="SCORE_CONTRIBUTION_COLLECTION" resultName="IndWithNestedBoRisk_score_contributions" filterNonZeroScoreContribution ="false">
+            <field name="Channel_score_contributions"/>
+            <field name="Customer_score_contributions"/>
+            <field name="Geography_score_contributions"/>
+            <field name="Override_score_contributions"/>
+            <field name="Behaviour_score_contributions"/>
+            <field name="Product_score_contributions"/>
+		</combiner>
+		<combiner name="IndAgg_score" type="NUMERIC" resultName="IndAgg_score">
+            <field name="IndWithNestedBoRisk_score"/>
+			<!-- field(s) belonging to aggregated score -->
+            <field name="RelatedParties_score"/>
+		</combiner>
+		<combiner name="IndAgg_score_contributions" type="SCORE_CONTRIBUTION_COLLECTION" resultName="IndAgg_score_contributions" filterNonZeroScoreContribution ="false">
+            <field name="IndWithNestedBoRisk_score_contributions"/>
+			<!-- field(s) belonging to aggregated score -->
+            <field name="RelatedParties_score_contributions"/>
+		</combiner>
+		<!-- RelatedPartiesWithNestedBoRisk_score combiner is used to produce RelatedParties dimention score, including the Beneficial Owner Risk score contribution from the Nested score combiner-->
+		<combiner name="RelatedPartiesWithNestedBoRisk_score" type="NUMERIC" resultName="RelatedParties_score">
+            <field name="RelatedParties_score"/>
+            <field name="Nested_RelatedParties_score"/>
+        </combiner>
+        <combiner name="Dimension_scores" type="SCORE_DIMENSION" resultName="Dimensions">
+            <field name="Channel_score"/>
+            <field name="Customer_score"/>
+            <field name="Geography_score"/>
+            <field name="Override_score"/>
+            <field name="Behaviour_score"/>
+            <field name="Product_score"/>
+            <field name="RelatedParties_score"/>
+        </combiner>
+    </combiners>
+
+    <scores>
+        <score name="OB_score" weightedScore="true"/>
+    </scores>
+
+    <riskModels>
+        <riskmodel name="LevelTransition" previousRiskLevelColumnName="AssignedRiskLevelName"  scoreColumnName="IndAgg_score" defaultOrgUnit="SHA"/>
+    </riskModels>
+
+    <nestedScoreCombiners>
+        <nestedScoreCombiner name="BoScoreCombiner"
+                             returnChildren="true"
+                             scoreName="IndWithNestedBoRisk"
+                             contributionName="Beneficial Owner Risk"
+                             contributionInfo="All Beneficial Owners: (@LIST_ALL_NESTED@). Beneficial Owner(s) with the highest risk: (@HIGHEST_NESTED@)."
+                             contributionDimension="RelatedParties"
+							 weightedScore="true"
+							 nestedScoreColPrefix="Nested"/>
+    </nestedScoreCombiners>
+
+    <processes>
+        <process name="RTDE_InputDataPreparation" dataSource="Customer" trigger="CONTINUOUS" intervalSeconds="120" outputMode="append">
+            <inputTopics>
+                <inputTopic name="nr-screened_applications"/>
+            </inputTopics>
+            <services>
+                <service type="parse"/>
+                <service type="map_columns_names">
+                    <apply name="RTDEAdaptationMapping"/>
+                </service>
+                <service type="datalabel">
+                    <apply name="*"/>
+                </service>
+                <service type="detect"/>
+                <service type="score">
+                    <apply name="OB_score"/>
+                </service>
+                <service type="column_combiner">
+                    <apply name="IndWithNestedBoRisk_score"/>
+                </service>
+                <service type="column_combiner">
+                    <apply name="IndWithNestedBoRisk_score_contributions"/>
+                </service>
+                <service type="nested_score_combiner" entity="CustomerCDD">
+                    <apply name="BoScoreCombiner"/>
+                </service>
+                <service type="column_combiner">
+                    <apply name="IndAgg_score"/>
+                </service>
+                <service type="column_combiner">
+                    <apply name="IndAgg_score_contributions"/>
+                </service>
+                <service type="column_combiner">
+                    <apply name="RelatedPartiesWithNestedBoRisk_score"/>
+                </service>
+                <service type="column_combiner">
+                    <apply name="Dimension_scores"/>
+                </service>
+                <service type="risk_model" entity="CustomerCDD">
+                    <apply name="LevelTransition"/>
+                </service>
+            </services>
+            <outputTopics>
+                <outputTopic name="nr-internal_score" rootName="InternalScore"/>
+            </outputTopics>
+        </process>
+
+        <process name="savingToRiskScores" dataSource="Customer" trigger="BATCH" intervalSeconds="0" outputMode="update">
+            <inputTopics>
+                <inputTopic name="nr-internal_score"/>
+            </inputTopics>
+            <services>
+                <service type="parse"/>
+                <service type="filter_columns">
+                    <apply name="riskScoresFiltering"/>
+                </service>
+                <service type="map_columns_names">
+                    <apply name="riskScoresMapping"/>
+                </service>
+                <service type="EXPLODE_RECORDS"/>
+            </services>
+            <outputTopics>
+                <outputTopic name="nr-risk_scores" rootName="RiskScores"/>
+            </outputTopics>
+        </process>
+        <process name="savingToSubjects" dataSource="Customer" trigger="BATCH" intervalSeconds="0" outputMode="update">
+            <inputTopics>
+                <inputTopic name="nr-internal_score"/>
+            </inputTopics>
+            <services>
+                <service type="parse"/>
+                <service type="column_combiner">
+                    <apply name="Ind_score"/>
+                </service>
+                <service type="filter_columns">
+                    <apply name="customerScoredFiltering"/>
+                </service>
+                <service type="add_constant_values">
+                    <apply name="scoredOutput"/>
+                </service>
+                <service type="map_columns_names">
+                    <apply name="customerScoredMapping"/>
+                </service>
+                <service type="EXPLODE_RECORDS"/>
+            </services>
+            <outputTopics>
+                <outputTopic name="nr-subjects" rootName="Subjects"/>
+            </outputTopics>
+        </process>
+        <process name="savingToApplicationResponse" dataSource="Customer" trigger="CONTINUOUS" intervalSeconds="120" outputMode="append" subrecordsProcessingMode="DISABLED">
+            <inputTopics>
+                <inputTopic name="nr-internal_score"/>
+            </inputTopics>
+            <services>
+                <service type="parse"/>
+				<service type="map_columns_names">
+                    <apply name="applicationResponse"/>
+                </service>
+                <service type="filter_columns">
+                    <apply name="internal_applicationResponseFiltering"/>
+                </service>
+                <service type="GET_HEAD_ROW"/>
+                <service type="filter_columns">
+                    <apply name="applicationResponseFiltering"/>
+                </service>
+            </services>
+            <outputTopics>
+                <outputTopic name="nr-application_response_internal" rootName="ApplicationResponse"/>
+            </outputTopics>
+        </process>
+    </processes>
+
+</smart>

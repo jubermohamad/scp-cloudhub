@@ -1,0 +1,21 @@
+{{- /*
+Render-time values validation. Renders nothing; exists only to fail fast on
+configurations that would deploy broken or placeholder secrets. See
+aw.validate.* in _helpers.tpl for the rationale of each check.
+*/ -}}
+{{- if not .Values.validation.allowPlaceholders }}
+{{- include "aw.validate.noPlaceholders" (list "Values" (omit .Values "validation")) }}
+{{- include "aw.validate.secrets" . }}
+{{- if and .Values.minio.enabled (has (lower .Values.global.environment) (list "production" "staging")) }}
+{{- if or (eq .Values.minio.rootUser "minioadmin") (eq .Values.minio.rootPassword "minioadmin123") }}
+{{- fail "values validation: MinIO default credentials are forbidden when minio.enabled=true in production or staging; set unique minio.rootUser and minio.rootPassword." }}
+{{- end }}
+{{- if or (hasSuffix ":latest" .Values.minio.image) (hasSuffix ":latest" .Values.minio.mcImage) }}
+{{- fail "values validation: mutable MinIO image tags are forbidden when minio.enabled=true in production or staging; pin minio.image and minio.mcImage to release tags or digests." }}
+{{- end }}
+{{- end }}
+{{- include "aw.validate.adminPasswords" . }}
+{{- include "aw.validate.codeExecution" . }}
+{{- include "aw.validate.flowsIntegration" . }}
+{{- include "aw.validate.tls" . }}
+{{- end }}

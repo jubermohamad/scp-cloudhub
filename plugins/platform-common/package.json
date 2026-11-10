@@ -1,0 +1,56 @@
+{
+  "name": "@internal/plugin-platform-common",
+  "version": "0.1.0",
+  "private": true,
+  "backstage": {
+    "role": "common-library"
+  },
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./backend": "./src/backend.ts",
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "backend": [
+        "src/backend.ts"
+      ],
+      "package.json": [
+        "package.json"
+      ],
+      "index": [
+        "src/index.ts"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "backstage-cli package build",
+    "lint": "backstage-cli package lint",
+    "test": "backstage-cli package test",
+    "clean": "backstage-cli package clean"
+  },
+  "dependencies": {
+    "@azure/identity": "^4.0.0",
+    "@backstage/core-plugin-api": "^1.12.10",
+    "@mui/icons-material": "^5.0.0",
+    "@mui/material": "^5.18.0",
+    "@mui/styles": "^5.18.0"
+  },
+  "peerDependencies": {
+    "@mui/icons-material": "^5.0.0",
+    "@mui/material": "^5.18.0",
+    "@mui/styles": "^5.18.0",
+    "react": "^18.0.0"
+  },
+  "devDependencies": {
+    "@backstage/cli": "^0.36.6",
+    "@mui/icons-material": "^5.0.0",
+    "@mui/material": "^5.18.0",
+    "@mui/styles": "^5.18.0"
+  },
+  "files": [
+    "dist"
+  ]
+}

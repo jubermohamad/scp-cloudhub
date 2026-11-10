@@ -1,0 +1,17 @@
+entity_resolution:
+  image:
+    imageRepository: nri-nrod-k8s-er-init
+    imageTag: 9.4.9-IA
+    imagePullPolicy: IfNotPresent
+compliance_config:
+  image:
+    imageRepository: nri-nrod-k8s-er-compliance-config
+    imageTag: 9.4.9
+    imagePullPolicy: IfNotPresent
+restartPolicy: OnFailure
+backoffLimit: '5'
+ttlSecondsAfterFinished: 3600
+pv:
+  size: 1Gi
+  className: standard
+  accessMode: ReadWriteMany

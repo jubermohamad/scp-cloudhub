@@ -1,0 +1,11 @@
+{{- if .Values.scheduling.priorityClasses.enabled }}
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: {{ include "aw.prefix" . }}-platform-services
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+value: {{ (.Values.scheduling.priorityClasses.platformServices).value | default 100 }}
+globalDefault: false
+description: "Priority class for Assembly platform services"
+{{- end }}

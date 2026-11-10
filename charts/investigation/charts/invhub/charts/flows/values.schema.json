@@ -1,0 +1,70 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "config": {
+            "type": "object",
+            "properties": {
+                "austracSmrSubmissionAgentDeploymentId": {
+                    "type": "string"
+                },
+                "authClientId": {
+                    "type": "string"
+                },
+                "disclosureSubmissionAgentDeploymentId": {
+                    "type": "string"
+                },
+                "ecddAgentDeploymentId": {
+                    "type": "string"
+                },
+                "emailAgentDeploymentId": {
+                    "type": "string"
+                },
+                "evidenceBoardAgentDeploymentId": {
+                    "type": "string"
+                },
+                "initialSummaryCaseDeploymentId": {
+                    "type": "string"
+                },
+                "initialSummaryDeploymentId": {
+                    "type": "string"
+                },
+                "investigationNotesWebhookId": {
+                    "type": "string"
+                },
+                "narrativeAgentDeploymentId": {
+                    "type": "string"
+                },
+                "releaseId": {
+                    "type": "string"
+                },
+                "tenant": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "webResearchAgentDeploymentId": {
+                    "type": "string"
+                }
+            }
+        },
+        "fullnameOverride": {
+            "type": "string"
+        },
+        "nameOverride": {
+            "type": "string"
+        },
+        "secrets": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

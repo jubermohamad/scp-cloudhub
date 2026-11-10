@@ -1,0 +1,94 @@
+name: apply-cluster
+
+# Manual apply, triggered by the Backstage "Create" button after a successful
+# Review. Requires GitHub Environment approval per environment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      workspace:
+        description: "Workspace / tfvars basename (e.g. aks-cloudhub-dev-cnc-freetier-scotia)"
+        required: true
+      ref:
+        description: "Git ref to apply"
+        required: false
+        default: "main"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_WORKSPACE: ${{ inputs.workspace }}
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+jobs:
+  derive:
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.e.outputs.env }}
+    steps:
+      - id: e
+        run: |
+          ws='${{ inputs.workspace }}'
+          if   [[ "$ws" == *"-prod-"* || "$ws" == *"-prod" ]]; then echo "env=prod" >> "$GITHUB_OUTPUT"
+          elif [[ "$ws" == *"-qa-"*   || "$ws" == *"-qa"   ]]; then echo "env=qa"   >> "$GITHUB_OUTPUT"
+          else                                                       echo "env=dev"  >> "$GITHUB_OUTPUT"
+          fi
+
+  guard:
+    name: Guard
+    needs: derive
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse non-main for prod
+        run: |
+          if [[ "${{ needs.derive.outputs.env }}" == "prod" && "${{ inputs.ref }}" != "main" ]]; then
+            echo "::error::Production applies must run from main."
+            exit 1
+          fi
+
+  apply:
+    name: Apply ${{ inputs.workspace }}
+    needs: [derive, guard]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.derive.outputs.env }}
+    defaults:
+      run:
+        working-directory: azure-kubernetes-service
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Verify tfvars exists
+        run: test -f "values/${{ inputs.workspace }}.tfvars"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.7.5
+          cli_config_credentials_token: ${{ secrets.TFC_TOKEN }}
+
+      - name: terraform init
+        run: terraform init -input=false
+
+      - name: terraform apply
+        run: |
+          terraform apply -input=false -auto-approve \
+            -var-file="values/${{ inputs.workspace }}.tfvars"
+
+      - name: Post-deployment validation
+        run: |
+          terraform output -json > outputs.json
+          jq -e '.cluster_name.value' outputs.json
+          {
+            echo "# Apply complete — ${{ inputs.workspace }}"
+            echo '```json'
+            cat outputs.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

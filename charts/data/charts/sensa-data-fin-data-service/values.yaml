@@ -1,0 +1,142 @@
+# First-cut chart, converted from feature/version-1's deploy/k8s/app.yaml and
+# postgres.yaml (a local/Colima-only manifest — see comments there). Several
+# values below are placeholders pending a real decision; each is marked TODO.
+
+image:
+  registry: symphonyfs.azurecr.io
+  # TODO: confirm this matches whatever build-push.yml's image-name actually
+  # publishes to before the first real deploy.
+  repository: sensa-data-fin-data-service
+  tag: main
+  # empty = inherit the platform-wide global.imagePullPolicy; a value here wins
+  pullPolicy: ""
+
+imagePullSecrets:
+  - name: symphonyfs-acr-secret
+
+imageCredentials:
+  # Set create: true to have the chart create the docker pull secret.
+  # secretName must match the name in imagePullSecrets above.
+  create: false
+  secretName: symphonyfs-acr-secret
+  # Option A — paste the full .dockerconfigjson blob (takes precedence).
+  dockerConfigJson: ""
+  # Option B — individual fields (used only when dockerConfigJson is empty).
+  registry: symphonyfs.azurecr.io
+  username: ""
+  password: ""
+
+# TODO: deploy/k8s/app.yaml (feature/version-1) exposes this service only as
+# a ClusterIP consumed by other in-cluster services — no ingress today.
+# Confirm whether an external hostname is actually needed before enabling.
+ingress:
+  enabled: false
+  host: sensa-data-fin-data-service.example.com
+  className: nginx
+  annotations: {}
+  tls:
+    enabled: false
+    # Name of the TLS secret in this namespace.
+    # If cert + key are provided the chart creates the secret; otherwise it must exist already.
+    secretName: tls-secret
+    cert: ""
+    key: ""
+
+# Name of the Secret that holds sensitive runtime values.
+existingSecret: sensa-data-fin-data-service-secrets
+
+secrets:
+  # Set create: true to have the chart create the secret from the values below.
+  create: false
+  # Required only when postgres.enabled is false (existing Postgres).
+  # When postgres.enabled is true a strong password is auto-generated.
+  postgresPassword: ""
+  # File-event job surface (object-store credentials). Only projected into the pod when
+  # app.env.minioEndpoint is set.
+  minioAccessKey: ""
+  minioSecretKey: ""
+
+postgres:
+  # ── Mode ──────────────────────────────────────────────────────────────────
+  # false → use an existing Postgres (fill in the "Existing" block below).
+  # true  → chart deploys its own StatefulSet, mirroring the Deployment+PVC
+  #         in feature/version-1's deploy/k8s/postgres.yaml (dev/test data
+  #         only — see that file's comments).
+  enabled: true
+
+  # ── Existing Postgres ─────────────────────────────────────────────────────
+  # Required when enabled: false.
+  host: ""
+  port: 5432
+  username: sensa
+  database: sensa
+
+  # ── New Postgres (chart-managed) ──────────────────────────────────────────
+  # Used when enabled: true. A cryptographically strong password is
+  # auto-generated on first install and preserved on upgrades via secret
+  # lookup — no manual password needed.
+  image: postgres:16-alpine
+  storage: 2Gi
+  # TODO: confirm the storage class available on the target AKS cluster.
+  storageClass: managed-csi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+app:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  env:
+    # TODO: confirm the real in-cluster address (and namespace — "lens" vs
+    # whatever sensa-data-ontology's dev/qa namespaces end up being) for the
+    # ontology registry in each environment. This mirrors the local/dev
+    # value from feature/version-1's deploy/k8s/app.yaml.
+    ontologyBaseUrl: "http://registry.lens.svc.cluster.local:8000"
+    # Left empty to match feature/version-1 (the referenced Registry runs
+    # with AUTH_ENABLED=false) — set if/when that changes.
+    ontologyAuthToken: ""
+    # ── File-event job surface (optional — unset keeps the service compile-only:
+    #    job start/:preview answer 503 until ALL of kafka + minio settings are set;
+    #    job get/list/ack/cancel work regardless). TODO: per-env endpoints.
+    kafkaBootstrapServers: ""
+    minioEndpoint: ""          # host:port, no scheme
+    minioSecure: "false"
+
+  # Warehouse databases this service loads into, surfaced as JDBCDSN_<database>.
+  # Empty host/user/passwordSecret.name renders nothing at all.
+  warehouse:
+    host: ""
+    port: 5432
+    user: ""
+    passwordSecret:
+      name: ""
+      key: password
+    databases: []
+
+# The data-mapping UI that ships with this service (vendored with the chart; see
+# the template for why it had none). Tracks image.tag so it cannot drift from the
+# API it calls. Off here; an environment turns it on.
+dataProcessUi:
+  enabled: false
+  imageName: data-process-ui
+  tag: ""
+  port: 8080
+  replicas: 1
+  resources: {}
+  ingress:
+    enabled: false
+    className: nginx
+    host: ""
+    path: /data-process-ui
+    tlsSecret: ""
+    annotations: {}

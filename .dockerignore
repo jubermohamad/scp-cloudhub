@@ -1,0 +1,201 @@
+# ==============================================================================
+# DOCKER BUILD CONTEXT OPTIMIZATION: Aggressive exclusions to minimize
+# the files sent to the Docker daemon on each build.
+# ==============================================================================
+
+# Git and version control
+.git
+.gitignore
+.gitattributes
+.github
+.github/**
+.gitkeep
+
+# Yarn cache stays inside BuildKit persistent storage, never in host context
+.yarn/cache
+.yarn/install-state.gz
+.yarn/**/.tmp
+
+# Node modules and package manager state
+node_modules/
+**/node_modules/
+.pnpm-store/
+.cache/
+.next/
+
+# Build output and temporary files
+dist-types/
+dist-types/**
+coverage/
+logs/
+logs.txt
+*.log
+build/
+build/**
+tmp/
+temp/
+out/
+out/**
+
+# Development-only build artifacts
+packages/*/dist
+plugins/*/dist
+packages/**/.tsbuildinfo
+plugins/**/.tsbuildinfo
+*.tsbuildinfo
+
+# Test files and coverage (not needed at runtime or build)
+tests/
+test/
+coverage/
+.jest-cache/
+jest-coverage/
+**/__tests__/
+**/__mocks__/
+**/*.test.ts
+**/*.test.tsx
+**/*.test.js
+**/*.spec.ts
+**/*.spec.tsx
+**/*.spec.js
+packages/*/tests
+plugins/*/tests
+
+# Development-specific plugin/package artifacts
+plugins/*/.eslintrc.json
+plugins/*/.eslintignore
+plugins/*/.eslintcache
+packages/*/.eslintrc.json
+packages/*/.eslintignore
+packages/*/.eslintcache
+
+# Development tools and caches
+.webpack/
+.parcel-cache/
+.babel-cache/
+*.d.ts.map
+*.js.map
+.stylelintcache
+
+# Local development environment
+.env
+.env.*
+.env.*.*
+.DS_Store
+.vscode/
+.vscode/**
+.idea/
+.idea/**
+*.swp
+*.swo
+*~
+.pytest_cache/
+.vscode-test/
+*.iml
+
+# Documentation (not needed for Docker builds)
+docs/
+docs/**
+*.md
+!README.md
+CHANGELOG.md
+CONTRIBUTING.md
+
+# Infrastructure and deployment tooling (not needed for runtime)
+scp/
+scp/**
+azure-functions/
+azure-functions/**
+developer-environments/
+developer-environments/**
+infra/
+infra/**
+deployments/
+deployments/**
+platform_tools/
+platform_tools/**
+platform-workflows/
+platform-workflows/**
+k8s/
+k8s/**
+cloudhub-live-infra/
+cloudhub-live-infra/**
+cloudhub-platform-helm-charts/
+cloudhub-platform-helm-charts/**
+
+# Examples and demo content
+examples-extra/
+examples-extra/**
+demos/
+demos/**
+
+# Docker and compose configuration files
+# Keep Dockerfiles and compose files in the build context so builds
+# that reference paths (eg. -f docker/Dockerfile.backend) are available
+# and not accidentally excluded from context.
+
+# CI/CD and issue tracking
+.github/**
+.gitlab-ci.yml
+.circleci/
+.circleci/**
+.travis.yml
+
+# Development scripts and tooling
+scripts/ci/
+scripts/dev/
+scripts/integration/
+Makefile
+
+# Temporary files from common operations
+*.patch
+*.diff
+change,goal:Collect
+after
+and
+for
+full
+measure
+rebuild
+timing
+to
+update-components.patch
+upgrade-backstage.sh
+
+# Build reports and analysis
+docs/BUILD_DIAGNOSTICS_REPORT.md
+docs/BUILD_STAGE_TIMING.md
+docs/BUILD_TIME_ANALYSIS.md
+docs/BUILD_TIMING_FINAL_REPORT.md
+docs/BUILDKIT_CACHE_ANALYSIS_CORRECTED.md
+docs/BUILDKIT_CACHE_ANALYSIS.md
+BUILD_OPTIMIZATION.md
+docs/BACKSTAGE_USAGE_ANALYSIS.md
+IMPLEMENTATION_SUMMARY.txt
+DOCKER_FIXES_SUMMARY.txt
+docs/SECRET_PROVISIONING_TEST_REPORT.md
+docs/YARN_CACHE_PERSISTENCE_SOLUTION.md
+BUILD_OPTIMIZATION.md
+APPROVAL_ALIGNMENT_SUMMARY.md
+APPROVAL_BUTTON_QUICKREF.md
+APPROVAL_WORKFLOW_GUIDE.md
+CLOUD_NATIVE_DEPLOYMENT_*.md
+build_images
+rebuild
+timing
+timing/
+
+# Large/unnecessary directories
+apps/detectionhub
+apps/invhub
+apps/common-res
+
+# Editor-specific files
+.editorconfig
+.prettierignore
+.npmrc
+jsconfig.json
+
+# Platform-specific files
+thumbs.db
+.DS_Store

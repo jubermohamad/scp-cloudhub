@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tagging>
+    <datasource name="Transaction">
+        <views>
+            <view name="Account">
+                <profilekey_field name="AccountID">
+                    <value>profilekey</value>
+                </profilekey_field>
+                <excludedprofile_elements>
+					<excludedprofile_element name="ATMDebitAmount">
+                        <check>(AML54 Unusually large ATM withdrawals)</check>
+                        <definition>(filt.month,std.month)</definition>
+                    </excludedprofile_element>
+					<excludedprofile_element name="PeerGroup.AllAmount">
+                        <check>(AML49 Excessive Activity Compared to Peers)</check>
+                        <definition>(mean.month.past\d+)</definition>
+                    </excludedprofile_element>
+					<excludedprofile_element name="PeerGroup.AllCount">
+                        <check>(AML49 Excessive Activity Compared to Peers)</check>
+                        <definition>(mean.month.past\d+)</definition>
+                    </excludedprofile_element>
+					<excludedprofile_element name="AllCount">
+                        <check>(AML49 Excessive Activity Compared to Peers)</check>
+                        <definition>(cnt.month.present)</definition>
+                    </excludedprofile_element>
+					<excludedprofile_element name="WireMidValueCount">
+                        <check>(AML48 Mid Value Wires)</check>
+                        <definition>(cnt.month.present)</definition>
+                    </excludedprofile_element>
+					<excludedprofile_element name="CashCreditMaximum">
+                        <check>(AML03 A large cash deposit)</check>
+                        <definition>(max.month.past\d+)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashCreditBranchIdMemory">
+                        <check>(AML08 Several cash deposits at different branches)</check>
+                        <definition>(size)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashCreditAmount">
+                        <check>(AML04 Unusually large cash deposits)</check>
+                        <definition>(filt.month,std.month)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashCreditAccountIdMemory">
+                        <check>(AML09 Several cash deposits in multiple account)</check>
+                        <definition>(size)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="StructuredCashCreditAmount">
+                        <check>(AML10 Structured cash deposits)</check>
+                        <definition>(acc.week.present,acc.week.past1)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashDebitAmount">
+                        <check>(AML11 Unusually large cash withdrawals)</check>
+                        <definition>(filt.month,std.month)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashDebitAmount">
+                        <check>(AMl13 A large cheque deposit)</check>
+                        <definition>(acc.week.present,filt.month,std.month)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashDebitAmount">
+                        <check>(AML11 Large cash withdrawals)</check>
+                        <definition>(filt.month,std.month)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalCreditAmount">
+                        <check>(AML36 High daily amount of incoming wires compared to turnover)</check>
+                        <definition>(acc.month.past1,acc.month.past2,acc.month.past3)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalDebitAmount">
+                        <check>(AML37 High daily amount of outgoing wires compared to turnover)</check>
+                        <definition>(acc.month.past1,acc.month.past2,acc.month.past3)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalCreditAmount">
+                        <check>(AML20 A large deposit, low turnover)</check>
+                        <definition>(acc.month.past1,acc.month.past2,acc.month.past3)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalDebitAmount">
+                        <check>(AMl20 A large deposit, low turnover)</check>
+                        <definition>(acc.month.past1)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalCreditAmount">
+                        <check>(AMl31 A large debit after small credits)</check>
+                        <definition>(acc.week.past1,acc.week.past2,acc.week.past3)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalCreditCount">
+                        <check>(AML31 A large debit after small credits)</check>
+                        <definition>(cnt.week.total)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="AccountBalanceMax">
+                        <check>(AML32 Building up a large balance and transferring it)</check>
+                        <definition>(max.month.present,max.month.past1,max.month.past2)</definition>
+                    </excludedprofile_element>
+					<excludedprofile_element name="NightCashCreditCount">
+                        <check>(AML53 Cash Deposits at Night)</check>
+                        <definition>(cnt.week.present)</definition>
+					</excludedprofile_element>
+                </excludedprofile_elements>
+            </view>
+            <view name="Client">
+                <profilekey_field name="CustomerID">
+                    <value>profilekey</value>
+                </profilekey_field>
+                <excludedprofile_elements>
+					<excludedprofile_element name="ATMDebitAmount">
+                        <check>(AML54 Unusually large ATM withdrawals)</check>
+                        <definition>(filt.month,std.month)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashCreditMaximum">
+                        <check>(AML03 A large cash deposit)</check>
+                        <definition>(max.month.past\d+)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashCreditBranchIdMemory">
+                        <check>(AML08 Several cash deposits at different branches)</check>
+                        <definition>(size)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashCreditAmount">
+                        <check>(AML04 Unusually large cash deposits)</check>
+                        <definition>(filt.month,std.month)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashCreditAccountIdMemory">
+                        <check>(AML09 Several cash deposits in multiple account)</check>
+                        <definition>(size)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="StructuredCashCreditAmount">
+                        <check>(AML10 Structured cash deposits)</check>
+                        <definition>(acc.week.present,acc.week.past1)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashDebitAmount">
+                        <check>(AML11 Unusually large cash withdrawals)</check>
+                        <definition>(filt.month,std.month)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashDebitAmount">
+                        <check>(AML13 A large cheque deposit )</check>
+                        <definition>(acc.week.present,filt.month,std.month)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="CashDebitAmount">
+                        <check>(AML12 Large cash withdrawals )</check>
+                        <definition>(filt.month,std.month)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalCreditAmount">
+                        <check>(AML36 High daily amount of incoming wires compared to turnover)</check>
+                        <definition>(acc.month.past1,acc.month.past2,acc.month.past3)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalDebitAmount">
+                        <check>(AMl37 High daily amount of outgoing wires compared to turnover)</check>
+                        <definition>(acc.month.past1,acc.month.past2,acc.month.past3)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalCreditAmount">
+                        <check>(AMl20 A large deposit,low turnover)</check>
+                        <definition>(acc.month.past1,acc.month.past2,acc.month.past3)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalDebitAmount">
+                        <check>(AMl20 A large deposit,low turnover)</check>
+                        <definition>(acc.month.past1)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalCreditAmount">
+                        <check>(AMl31 A large debit after small credits)</check>
+                        <definition>(acc.week.past1,acc.week.past2,acc.week.past3)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="ExternalCreditCount">
+                        <check>(AML31 A large debit after small credits)</check>
+                        <definition>(cnt.week.total)</definition>
+                    </excludedprofile_element>
+                    <excludedprofile_element name="AccountBalanceMax">
+                        <check>(AML32 Building up a large balance and transferring it)</check>
+                        <definition>(max.month.present,max.month.past1,max.month.past2)</definition>
+                    </excludedprofile_element>
+					<excludedprofile_element name="NightCashCreditCount">
+                        <check>(AML53 Cash Deposits at Night)</check>
+                        <definition>(cnt.week.present)</definition>
+					</excludedprofile_element>
+                </excludedprofile_elements>
+            </view>
+        </views>
+    </datasource>
+</tagging>

@@ -1,0 +1,90 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.clusterName }}-admin-certs
+spec:
+  secretName: {{ .Values.clusterName }}-admin-certs
+  duration: {{ .Values.certificates.admin.duration }}
+  renewBefore: {{ .Values.certificates.admin.renewBefore }}
+  subject:
+    organizations:
+      - INVHUB
+  commonName: opensearch-admin
+  isCA: false
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    encoding: PKCS8
+    rotationPolicy: Always
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+    - client auth
+  issuerRef:
+    name: {{ .Values.clusterName }}-ca-issuer
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.clusterName }}-certs
+spec:
+  secretName: {{ .Values.clusterName }}-certs
+  duration: {{ .Values.certificates.nodes.duration }}
+  renewBefore: {{ .Values.certificates.nodes.renewBefore }}
+  subject:
+    organizations:
+      - INVHUB
+  commonName: opensearch-nodes
+  isCA: false
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    encoding: PKCS8
+    rotationPolicy: Always
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+    - client auth
+  dnsNames:
+    - "{{ .Values.clusterName }}-{{ .Values.nodeGroup }}"
+    - "{{ .Values.clusterName }}-{{ .Values.nodeGroup }}-headless"
+  issuerRef:
+    name: {{ .Values.clusterName }}-ca-issuer
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Values.clusterName }}-dashboards-certs
+spec:
+  secretName: {{ .Values.clusterName }}-dashboards-certs
+  duration: {{ .Values.certificates.dashboard.duration }}
+  renewBefore: {{ .Values.certificates.dashboard.renewBefore }}
+  subject:
+    organizations:
+      - INVHUB
+  commonName: opensearch-dashboard
+  isCA: false
+  privateKey:
+    algorithm: RSA
+    size: 2048
+    encoding: PKCS8
+    rotationPolicy: Always
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+    - client auth
+  dnsNames:
+    - "{{ .Values.clusterName }}-{{ .Values.nodeGroup }}"
+    - "{{ .Values.clusterName }}-{{ .Values.nodeGroup }}-headless"
+  issuerRef:
+    name: {{ .Values.clusterName }}-ca-issuer
+    kind: Issuer
+    group: cert-manager.io

@@ -1,0 +1,51 @@
+# Required identity / governance metadata. All MUST be set.
+namespace: '' # the namespace name to create
+owner: '' # team email or distribution list
+businessUnit: '' # e.g. retail
+environment: '' # dev | qa | prod
+application: '' # logical application name
+costCenter: '' # finance cost center
+
+extraLabels: {}
+extraAnnotations: {}
+
+# Resource quota for the namespace. Tune via override values.
+resourceQuota:
+  enabled: true
+  hard:
+    requests.cpu: '4'
+    requests.memory: 8Gi
+    limits.cpu: '8'
+    limits.memory: 16Gi
+    pods: '50'
+    persistentvolumeclaims: '10'
+
+# Defaults / max sizes for containers.
+limitRange:
+  enabled: true
+  default:
+    cpu: 500m
+    memory: 512Mi
+  defaultRequest:
+    cpu: 100m
+    memory: 128Mi
+  max:
+    cpu: '2'
+    memory: 4Gi
+
+# Default-deny ingress NetworkPolicy is always created.
+networkPolicy:
+  defaultDenyIngress: true
+  # Optional explicit allow-rules can be layered by the application chart.
+
+serviceAccount:
+  name: app
+  annotations: {}
+
+# Namespace-scoped RBAC: bind a group/user to the application role.
+rbac:
+  enabled: true
+  subjects: []
+  # - kind: Group
+  #   name: retail-app-developers
+  #   apiGroup: rbac.authorization.k8s.io

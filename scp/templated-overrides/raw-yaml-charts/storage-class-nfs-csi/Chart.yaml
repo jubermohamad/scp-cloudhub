@@ -1,0 +1,4 @@
+apiVersion: v2
+name: storage-class-nfs-csi
+version: 0.1.0
+description: A Helm chart to deploy ANF CSI StorageClass for SCP DR replication

@@ -1,0 +1,79 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name localhost;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Security headers
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Cross-Origin-Opener-Policy "same-origin-allow-popups" always;
+
+    # Proxy all backend API and internal Backstage paths.
+    # BACKEND_ORIGIN must resolve to the backend's network address, which is
+    # NOT the same as BACKEND_BASE_URL/APP_BASE_URL (the public-facing URL
+    # used in auth callbacks and app config). In docker-compose this is the
+    # "backend" service hostname; on Azure App Service it must be set to the
+    # backend App Service's own hostname (see Dockerfile.frontend ENV default
+    # and the deploy workflow's frontend app settings).
+    location /api/ {
+        # Keep the /api prefix when proxying so backend routes like
+        # /api/auth/* and /api/catalog/* resolve correctly.
+        proxy_pass ${BACKEND_ORIGIN};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        # Use upstream host for Azure App Service routing. Forwarding the
+        # frontend host here causes requests to loop back to the frontend app.
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Requested-With $http_x_requested_with;
+        proxy_cache_bypass $http_upgrade;
+        # Allow enough time for Azure token + Management API calls.
+        # Default nginx timeout is 60s which can be hit by cold-start token
+        # acquisition or slow ARM responses.
+        proxy_connect_timeout 10s;
+        proxy_send_timeout    120s;
+        proxy_read_timeout    120s;
+    }
+
+    location /.backstage/ {
+        proxy_pass ${BACKEND_ORIGIN};
+        proxy_http_version 1.1;
+        proxy_set_header Host $proxy_host;
+    }
+
+    # Runtime deployment version exposed to the frontend header.
+    location = /__cloudhub_version {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Content-Type "text/plain; charset=utf-8" always;
+        return 200 "${CLOUDHUB_VERSION}";
+    }
+
+    # index.html — never cache so browsers always pick up new chunk manifests
+    location = /index.html {
+        add_header Cache-Control "no-cache, no-store, must-revalidate, proxy-revalidate, max-age=0" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+        add_header ETag "" always;
+    }
+
+    # Static assets must never be cached forever. Local rebuilds must surface
+    # fresh frontend code immediately after a new image is published.
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+    }
+
+    # Frontend SPA — must be last
+    location / {
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        try_files $uri $uri/ /index.html;
+    }
+}

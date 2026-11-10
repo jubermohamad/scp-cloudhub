@@ -1,0 +1,130 @@
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "postgresql.service.name" . }}
+  {{- with .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  labels:
+    app.kubernetes.io/release.name: {{ .Release.Name }}
+spec:
+  {{- if and .Values.global.baseConfigProperties.db.postgresql.sslmode (ne .Values.global.baseConfigProperties.db.postgresql.sslmode "disable") }}
+  certificates:
+    serverTLSSecret: {{ .Release.Name }}-postgres-server-cert
+    serverCASecret: {{ .Release.Name }}-postgres-server-cert
+    clientCASecret: {{ .Release.Name }}-postgres-client-cert
+    replicationTLSSecret: {{ .Release.Name }}-postgres-client-cert
+  {{- end }}
+  {{- if eq .Values.global.database.bootstrapType "recovery" }}
+  externalClusters:
+    - name: {{ include "generate.name.with.release.name" (list $ . .Values.global.database.dbMainInstanceName) | quote }}
+      barmanObjectStore:
+        destinationPath: {{ .Values.backup.barmanObjectStore.destinationPath }}
+        endpointURL: {{ include "minio.url" . }}
+        s3Credentials:
+          accessKeyId:
+            name: {{ .Values.backup.barmanObjectStore.s3Credentials.accessKeyId.name }}
+            key:  {{ .Values.backup.barmanObjectStore.s3Credentials.accessKeyId.key }}
+          secretAccessKey:
+            name: {{ .Values.backup.barmanObjectStore.s3Credentials.secretAccessKey.name }}
+            key: {{ .Values.backup.barmanObjectStore.s3Credentials.secretAccessKey.key }}
+  {{- end}}
+  instances: {{ .Values.instances }}
+  logLevel: {{ .Values.logLevel | default "info" }}
+  imageName: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+  primaryUpdateStrategy: {{ .Values.primaryUpdateStrategy | default "unsupervised" }}
+{{- include "image.pull.secrets" . | nindent 2 }}
+
+  affinity:
+    enablePodAntiAffinity: {{ .Values.affinity.enablePodAntiAffinity }}
+    podAntiAffinityType: {{ .Values.affinity.podAntiAffinityType | default "preferred" }}
+    topologyKey: {{ .Values.affinity.topologyKey | default "topology.kubernetes.io/zone" }}
+    additionalPodAntiAffinity: {{- tpl (toYaml .Values.affinity.additionalPodAntiAffinity) . | nindent 6 }}
+
+  {{- if .Values.superuserSecret}}
+  superuserSecret:
+    name:  {{ .Values.superuserSecret }}
+  {{- end }}
+  {{- if .Values.global.nrSubChartSwitches.enableER }}
+  tablespaces:
+  - name: {{ .Values.er.tablespace.nrUel.name}}
+    storage:
+      size: {{ .Values.er.tablespace.nrUel.size }}
+      storageClass: {{ .Values.storage.storageClass }}
+    owner:
+      name: {{ .Values.er.entresRole }}
+  - name: {{ .Values.er.tablespace.nrUelIdx.name }}
+    storage:
+      size: {{ .Values.er.tablespace.nrUelIdx.size }}
+      storageClass: {{ .Values.storage.storageClass }}
+    owner:
+      name: {{ .Values.er.entresRole }}
+  {{- end }}
+  {{- with .Values.postgresql }}
+  postgresql:
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{ include "postgresql-hba-config" . | nindent 4 }}
+  {{- if  .Values.backup.enabled }}
+  backup:
+    retentionPolicy: {{ .Values.backup.retentionPolicy }}
+    barmanObjectStore:
+      destinationPath: {{ .Values.backup.barmanObjectStore.destinationPath }}
+      endpointURL: {{ include "minio.url" . }}
+      serverName: {{ include "postgresql.service.name" . }}
+      wal:
+        compression: {{ .Values.backup.barmanObjectStore.wal.compression }}
+      data:
+        compression: {{ .Values.backup.barmanObjectStore.data.compression }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ .Values.backup.barmanObjectStore.s3Credentials.accessKeyId.name }}
+          key:  {{ .Values.backup.barmanObjectStore.s3Credentials.accessKeyId.key }}
+        secretAccessKey:
+          name: {{ .Values.backup.barmanObjectStore.s3Credentials.secretAccessKey.name }}
+          key: {{ .Values.backup.barmanObjectStore.s3Credentials.secretAccessKey.key }}
+  {{- end}}
+  {{- if .Values.bootstrap.enabled }}
+  {{- if eq .Values.global.database.bootstrapType "recovery" }}
+  bootstrap:
+    recovery:
+      source: {{ include "generate.name.with.release.name" (list $ . .Values.global.database.dbMainInstanceName) | quote }}
+  {{- else if .Values.bootstrap.config.bootstrap.pg_basebackup }}
+  bootstrap:
+    pg_basebackup:
+      {{- toYaml .Values.bootstrap.config.bootstrap.pg_basebackup | nindent 6 }}
+  {{- else if .Values.bootstrap.config.bootstrap.initdb }}
+  bootstrap:
+    initdb:
+      {{- include "initdb" . | nindent 6 }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.storage }}
+  storage:
+  {{- toYaml .Values.storage | nindent 4 }}
+  {{- else }}
+  storage:
+    size: 50Gi
+  {{- end }}
+  {{- if .Values.managed }}
+  managed:
+  {{- toYaml .Values.managed | nindent 4 }}
+  {{- else }}
+  roles:
+  - name: apps
+    ensure: present
+    comment: apps
+    login: true
+    superuser: false
+  {{- end }}
+  {{- with .Values.resources }}
+  resources:
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if .Values.bootstrap.enabled }}
+  {{- with .Values.bootstrap.source  }}
+  {{ toYaml . | nindent 2}}
+  {{- end }}
+  {{- end }}

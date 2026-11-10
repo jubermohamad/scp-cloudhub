@@ -1,0 +1,41 @@
+{{- if .Values.global.kubePrometheusStackPresent }}
+{{- if .Values.monitoring }}
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    {{- include "rtde.labels" . | nindent 4 }}
+    app: {{ include "rtde.fullname" . }}
+    release: "{{ include "rtde.fullname" . }}-prometheus-exporter"
+  name: "{{ include "rtde.fullname" . }}-monitor"
+  namespace: {{ .Values.global.namespace }}
+spec:
+  endpoints:
+    - interval: 5s
+      port: metrics
+  selector:
+    matchLabels:
+      "servicemonitor": "true"
+
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ include "rtde.fullname" . }}-metrics"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "rtde.labels" . | nindent 4 }}
+    "servicemonitor": "true"
+spec:
+  ports:
+    - port: 8090
+      name: metrics
+  clusterIP: None
+  selector:
+     app.kubernetes.io/name: "{{ include "rtde.name" . }}"
+
+{{- end }}
+{{- end }}

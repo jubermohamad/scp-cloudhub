@@ -1,0 +1,95 @@
+# AKS overlay — `helm install cpr deploy/helm/cpr -f deploy/helm/cpr/values-aks.yaml`.
+# Only the deltas from values.yaml. Fill in your ACR name, host, and namespace.
+# See deploy/README.md § AKS for the push flow, the "attach-acr" identity path, and the live-verify
+# checklist (this overlay is render-verified here; a real multi-node AKS run is the owner's).
+# ─────────────────────────────────────────────────────────────────────────────
+
+images:
+  # Push the three images to your ACR first (see deploy/README.md § AKS), then reference them here.
+  # Prefer an IMMUTABLE tag (a build SHA, not :dev) — with pullPolicy IfNotPresent a mutable :dev is a
+  # stale-image footgun (a node keeps its cached copy). Retag+push per build; set the tag per release.
+  engine:
+    repository: <youracr>.azurecr.io/cpr-engine
+    tag: <build-sha>
+  api:
+    repository: <youracr>.azurecr.io/cpr-api
+    tag: <build-sha>
+  web:
+    repository: <youracr>.azurecr.io/cpr-web
+    tag: <build-sha>
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  # Recommended: attach the ACR to the AKS kubelet identity — `az aks update -n <aks> -g <rg>
+  # --attach-acr <acr>` — then NO pull secret is needed (also covers R38 on-demand build pods).
+  # Only for a private registry authed by a secret, create a docker-registry secret and list it here
+  # (applies to install-time api/web/backfill pods; on-demand builds still rely on the attached ACR):
+  # pullSecrets:
+  #   - acr-pull-secret
+
+# ── Postgres: CloudNativePG, multi-instance for HA + automatic failover on AKS. ────────────────────
+postgres:
+  cnpg:
+    instances: 3                # primary + 2 replicas; unsupervised failover.
+    storage:
+      size: 20Gi
+      storageClass: managed-csi # AKS managed disk (RWO per instance — correct for Postgres).
+    walStorage:
+      enabled: true
+      size: 10Gi
+      storageClass: managed-csi
+    resources:
+      requests: { cpu: "500m", memory: "1Gi" }
+      limits:   { cpu: "2",    memory: "4Gi" }
+  # No host NodePort on AKS — keep the store in-cluster (reach it with `kubectl port-forward`).
+  nodePort:
+    enabled: false
+  # To use Azure Database for PostgreSQL (managed, external) instead of in-cluster CNPG, set:
+  #   postgresOperator.install: false  AND
+  #   existingSecret: { name: <secret>, host: <fqdn>, user: <u>, database: <db>, passwordKey: password }
+  # (create the secret with the password key out-of-band; nothing plaintext in values/helm history).
+
+# CloudNativePG operator: install it on a fresh AKS cluster. Set false if CNPG is already cluster-wide
+# (it is cluster-scoped — one per cluster), then this chart only adds the Cluster CR + app wiring.
+postgresOperator:
+  install: true
+
+# The shared workdir (spark driver+executors + api metrics.json) MUST be RWX on multi-node AKS — the
+# driver, executors, and api pod can land on different nodes. This is the ONLY volume that needs RWX;
+# CNPG PVCs are RWO-per-instance (each replica its own disk), which is correct for Postgres.
+sharedWorkdir:
+  persistence:
+    accessMode: ReadWriteMany
+    storageClass: azurefile-csi
+
+# Distributed backfill sizing — real driver + executors via the Spark Operator. Scale executors out
+# for larger populations / real Day-0 volumes (switch seedMode to `scale` over a message volume).
+backfill:
+  seedMode: demo
+  demo:
+    nBackgroundEntities: 1000
+  driver:
+    cores: 1
+    memory: "4g"
+  executor:
+    instances: 4
+    cores: 2
+    memory: "4g"
+
+# The operator watches the namespace it's installed in — set this to your release namespace.
+spark-operator:
+  spark:
+    jobNamespaces:
+      - default
+
+# ── Ingress + TLS. Two supported paths (pick one) ──────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: webapprouting.kubernetes.azure.com   # AKS app-routing add-on (or nginx). Adjust to yours.
+  host: cpr.example.com
+  # A) cert-manager (install cert-manager + a ClusterIssuer first):
+  #   tls: { enabled: true, issuer: letsencrypt-prod }
+  # B) AKS app-routing managed certificate (point at the secret app-routing manages, add its annotations):
+  #   annotations: { ... app-routing / Key Vault cert annotations ... }
+  #   tls: { enabled: true, secretName: <app-routing-managed-tls-secret> }
+  tls:
+    enabled: true
+    issuer: letsencrypt-prod

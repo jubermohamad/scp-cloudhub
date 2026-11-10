@@ -1,0 +1,17 @@
+{{- if .Values.global.INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH }}
+{{- $secretName := "opensearch-basic-auth" -}}
+{{- $existingSecret := (lookup "v1" "Secret" .Release.Namespace $secretName) | default dict -}}
+{{- $existingData := get $existingSecret "data" | default dict -}}
+{{- $password := include "invhub-secrets.getOrGenerateSecretValue" (dict "value" .Values.global.PASSWORD "existingData" $existingData "secretName" $secretName "secretKey" "password") -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName | quote }}
+type: Opaque
+stringData:
+  INVESTIGATION_HUB_OPEN_SEARCH_USER: "admin"
+  # opensearch does not allow password change at the current version we use
+  # it's used internally only, so we keep the previous password for backwards compatibility for now
+  INVESTIGATION_HUB_OPEN_SEARCH_PASSWORD: "admin"
+  # password: {{ $password | quote }}
+{{- end }}

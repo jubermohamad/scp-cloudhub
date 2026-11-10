@@ -1,0 +1,23 @@
+<!--
+  Copyright © SymphonyAI NetReveal UK Ltd 2023
+-->
+<dbspec name="SensaAAL_DSG" comments="Sensa Adjudicated Alert List DSG">
+
+	<source-query>	
+	select RunTimestamp, CustomerSourceUniqueId, Outcome, OrganisationalUnit from (
+	SELECT
+		RunTimestamp,
+		CustomerSourceUniqueId, 
+		Outcome,
+		OrganisationalUnit,
+		StatusTimestamp
+	FROM V_SM_SENSA_ALERT_ADJUDICATION_LIST
+	) t
+	WHERE @WHERE@
+	</source-query>
+	
+    <tablename>V_SM_SENSA_ALERT_ADJUDICATION_LIST</tablename>
+	
+    <timefield>StatusTimestamp</timefield>
+	<column fieldname="StatusTimestamp"		dataType="DATE" columnname="StatusTimestamp" />
+</dbspec>

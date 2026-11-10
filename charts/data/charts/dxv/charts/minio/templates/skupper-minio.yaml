@@ -1,0 +1,35 @@
+{{- if .Values.skupper.enabled }}
+{{- /*
+  Skupper Connector — exposes THIS cluster's MinIO API service to the remote cluster.
+  The routing key must match the Listener routingKey on the remote side.
+
+  MinIO pods carry the labels app=minio and release=<release-name>, both used here
+  so the selector is scoped to this deployment only.
+*/}}
+---
+apiVersion: skupper.io/v2alpha1
+kind: Connector
+metadata:
+  name: {{ .Values.skupper.connector.name | default (printf "%s-minio" .Values.skupper.clusterAlias) | quote }}
+  namespace: {{ .Values.global.namespace }}
+spec:
+  port: {{ .Values.minioAPIPort | default "9000" }}
+  routingKey: {{ .Values.skupper.connector.routingKey | default (printf "%s-minio" .Values.skupper.clusterAlias) | quote }}
+  selector: {{ printf "app=%s,release=%s" (include "minio.name" .) .Release.Name | quote }}
+  type: tcp
+{{- /*
+  Skupper Listener — creates a local service name that MinIO clients in THIS cluster use
+  to reach the REMOTE cluster's MinIO. The routingKey must match the remote cluster's Connector routingKey.
+*/}}
+---
+apiVersion: skupper.io/v2alpha1
+kind: Listener
+metadata:
+  name: {{ .Values.skupper.listener.name | default (printf "%s-minio" .Values.skupper.remoteClusterAlias) | quote }}
+  namespace: {{ .Values.global.namespace }}
+spec:
+  host: {{ .Values.skupper.listener.host | default (printf "%s-minio" .Values.skupper.remoteClusterAlias) | quote }}
+  port: {{ .Values.minioAPIPort | default "9000" }}
+  routingKey: {{ .Values.skupper.listener.routingKey | default (printf "%s-minio" .Values.skupper.remoteClusterAlias) | quote }}
+  type: tcp
+{{- end }}

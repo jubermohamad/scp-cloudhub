@@ -1,0 +1,20 @@
+name: Application CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    uses: company/cloudhub-workflows/.github/workflows/application-ci.yml@v1
+    with:
+      component-id: sri-investigation-api
+      build-adapter: node
+      image-repository: ${{ vars.ACR_LOGIN_SERVER }}/sri/investigation-api
+      dockerfile: Dockerfile
+      context: .
+      run-deploy: ${{ github.event_name == 'push' && github.ref_name == 'main' }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

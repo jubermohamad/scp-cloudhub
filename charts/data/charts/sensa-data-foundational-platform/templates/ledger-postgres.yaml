@@ -1,0 +1,100 @@
+{{- if .Values.infra.ledgerPostgres.enabled }}
+# The LEDGER Postgres — the source of truth, on its own instance BY DESIGN.
+# Never share this with the warehouse: the warehouse rebuild job runs
+# DROP DATABASE as that instance's superuser, and the two stores have opposite
+# contracts (the warehouse is disposable and rebuilt from dumps; the ledger is
+# append-only forever). The credentials are separate secrets so that no
+# warehouse credential can reach truth.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "prism.fullname" . }}-ledger-postgres
+  labels:
+    app: prism-ledger-postgres
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: prism-ledger-postgres
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: pg
+      port: 5432
+      targetPort: pg
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "prism.fullname" . }}-ledger-postgres
+  labels:
+    app: prism-ledger-postgres
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "prism.fullname" . }}-ledger-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prism-ledger-postgres
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: prism-ledger-postgres
+        {{- include "prism.labels" . | nindent 8 }}
+    spec:
+      {{- include "prism.scheduling" . | nindent 6 }}
+      containers:
+        - name: postgres
+          image: "{{ .Values.infra.ledgerPostgres.image.repository }}:{{ .Values.infra.ledgerPostgres.image.tag }}"
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.infra.ledgerPostgres.image.pullPolicy) }}
+          ports:
+            - name: pg
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.infra.ledgerPostgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.ledgerPgExisting | default .Values.secrets.ledgerPg }}
+                  key: password
+            - name: POSTGRES_DB
+              value: {{ .Values.infra.ledgerPostgres.database | quote }}
+            # A SUBDIRECTORY of the mount, not the mount itself: the managed
+            # disk arrives with a lost+found, and initdb refuses a non-empty
+            # data directory.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            {{- toYaml .Values.infra.ledgerPostgres.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.infra.ledgerPostgres.user | quote }}
+                - -d
+                - {{ .Values.infra.ledgerPostgres.database | quote }}
+            periodSeconds: 10
+          # INVENTED (the raw manifest has readiness only). tcpSocket, not
+          # pg_isready: a recovering instance refuses connections while it
+          # replays WAL, and restarting it then only starts the replay over.
+          livenessProbe:
+            tcpSocket:
+              port: pg
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 6
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        storageClassName: {{ .Values.infra.ledgerPostgres.persistence.storageClass }}
+        accessModes: {{ toYaml .Values.infra.ledgerPostgres.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.infra.ledgerPostgres.persistence.size }}
+{{- end }}

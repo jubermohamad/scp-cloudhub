@@ -1,0 +1,98 @@
+{{- /*
+in-tree addition (P7): provision the `disclosures` schema explicitly.
+
+The disc-api IMAGE runs `prisma migrate deploy` from its own entrypoint.sh on
+every container start — but without `set -e`, so a failure is SWALLOWED and the
+app starts anyway against a schema-less database. It then logs
+`relation "agent_requests" does not exist` from its cron forever, and nothing
+ever retries the migration until the pod happens to restart.
+
+That is exactly what happened when invhub's main DB moved to the shared
+sri-postgres: disc-api booted while the `invhub` role did not exist yet
+(P1000 authentication failed), swallowed it, and ran schema-less. Before the
+move it only worked because the database had been migrated by some earlier
+container start and the volume outlived every upgrade.
+
+So run the migration as a proper hook, ordered AFTER the platform's
+ensure-db-disclosures Job (weight -5) and before/independently of the
+Deployment. disc-api's cron retries every few seconds, so it recovers on its
+own once the schema lands — no pod restart needed.
+
+Idempotent: `prisma migrate deploy` only applies what is missing.
+*/}}
+{{- /* the whole subchart is gated by disc-api.enabled in invhub Chart.yaml */}}
+{{- if .Values.migrations.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "disc-api.fullname" . }}-migrations
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "disc-api.labels" . | nindent 4 }}
+    app.kubernetes.io/component: disc-migrations
+  annotations:
+    # post-phase for the same reason as the ensure-* Jobs: on the phase-1 ->
+    # phase-2 bootstrap the database does not exist until the apply completes.
+    # Weight 0 keeps it after ensure-db-disclosures (-5) within that phase.
+    "helm.sh/hook": post-install,post-upgrade
+    # after ensure-db-<name> (-5), before anything that reads the schema
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.migrations.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "disc-api.labels" . | nindent 8 }}
+        app.kubernetes.io/component: disc-migrations
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrations
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: sensa-global-secrets
+                  key: SENSA_DISC_DB_URL
+          {{- if ne .Values.dbRootCert.secretName "" }}
+          volumeMounts:
+            - name: db-root-cert
+              mountPath: {{ .Values.dbRootCert.mountPath }}
+          {{- end }}
+          # bypass entrypoint.sh so a migration failure FAILS this Job instead of
+          # being swallowed — that is the whole point of running it here.
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              cd /usr/src/app
+              echo "==> prisma migrate deploy (disclosures)"
+              npm run --silent prisma:migrate:deploy
+              echo "==> disclosures schema ready"
+      {{- if ne .Values.dbRootCert.secretName "" }}
+      volumes:
+        - name: db-root-cert
+          secret:
+            secretName: {{ .Values.dbRootCert.secretName }}
+            items:
+              - key: {{ .Values.dbRootCert.key }}
+                path: {{ .Values.dbRootCert.key }}
+      {{- end }}
+{{- end }}

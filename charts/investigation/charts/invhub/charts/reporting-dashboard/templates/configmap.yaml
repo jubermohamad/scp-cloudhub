@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "reporting-dashboard.fullname" . }}
+  labels:
+    {{- include "reporting-dashboard.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    checksum/config: {{ toYaml .Values.config | sha256sum }}
+data:
+  {{- $sep := (index (.Values.global | default dict) "separateApiResponsibilities") | default false }}
+  {{- $apiBase := ((index (.Values.global | default dict) "internalApiBaseUrl") | default (ternary "http://api-for-ui:3001" "http://api:3001" $sep)) | trimSuffix "/" }}
+  INVHUB_API_URL: {{ $apiBase | quote }}
+  INVHUB_API_EMAIL: "reportingService@symphony.ai"
+  HTTPS_TIMEOUT: "300000"

@@ -1,0 +1,199 @@
+appSCPHelmPipelineRefs:
+  datadog__LogsEnabled: '{{ .Values.datadog.logs_enabled }}'
+  datadog__syntheticsPrivateLocationForVPNclustersBoolean__enabled: '{{ .Values.datadog.synthetics_private_location_for_vpn_clusters_boolean.enabled }}'
+  clusterName: "{{ .Values.clusterName }}"
+  deploymentDateTimeStamp: "{{ now }}"
+  deploymentFromGithubRepo: '{{ requiredEnv "GITHUB_REPOSITORY" }}'
+  deploymentGitHubAction: '{{ requiredEnv "GITHUB_ACTION" }}'
+  deploymentRepoBranch: '{{ requiredEnv "GITHUB_REF_NAME" }}'
+  deploymentByGithubTriggeringActor: '{{ requiredEnv "GITHUB_TRIGGERING_ACTOR" }}'
+  deploymentGithubRunAttempt: '{{ requiredEnv "GITHUB_RUN_ATTEMPT" }}'
+  deploymentGithubRunnerEnv: '{{ requiredEnv "RUNNER_ENVIRONMENT" }}'
+  deploymentGithubRunnerName: '{{ requiredEnv "RUNNER_NAME" }}'
+
+agents:
+  clusterAgent:
+    env:
+      - name: DD_ADMISSION_CONTROLLER_ADD_AKS_SELECTORS
+        value: "true"
+  containers:
+    agent:
+      env:
+        - name: DD_LOGS_CONFIG_PROCESSING_RULES
+          value: '[{"name":"exclude_debug_logs","type":"exclude_at_match","pattern":"(?i)\\bDEBUG\\b"},{"name":"exclude_pii","type":"exclude_at_match","pattern":"Failing Row contains|mc --quiet --no-color admin user add minio"}]'
+        - name: DD_PROMETHEUS_SCRAPE_ENABLED
+          value: "true"
+        - name: DD_PROMETHEUS_SCRAPE_VERSION
+          value: "2"
+        - name: DD_PROMETHEUS_SCRAPE_CHECKS
+          value: |
+            [
+              {
+                "autodiscovery": {
+                  "kubernetes_annotations": {
+                    "exclude": {
+                      "prometheus.io/scrape": "false"
+                    },
+                    "include": {
+                      "prometheus.io/scrape": "true"
+                    },
+                    "additionalConfigs": {
+                      "autodiscovery": {
+                        "kubernetes_annotations": {
+                          "include": {
+                            "nginx_ingress_controller": "true"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+        - name: DD_KUBERNETES_POD_LABELS_AS_TAGS
+          value: '{"cnpg.io/cluster": "cnpg_cluster"}'
+        - name: DD_TAGS
+          value: ""
+  image:
+    tagSuffix: jmx
+datadog:
+  apiKeyExistingSecret: datadog-secret
+  apm:
+    instrumentation:
+      enabled: false
+  clusterName: "{{ .Values.clusterName }}"
+  containerExcludeLogs: "name:.*"
+  
+  # Conditionally include containerIncludeLogs
+  {{- if .Values.datadog.logs_enabled }}
+  containerIncludeLogs: |
+    name:aap
+    name:aap-folder-init
+    name:aap-job-init
+    name:adminerevo
+    name:api
+    name:autoscaler
+    name:azure-policy
+    name:azure-policy-webhook
+    name:azurefile
+    name:backups
+    name:cdc
+    name:cloud-node-manager
+    name:cloudnative-postgresql
+    name:cluster-agent
+    name:cluster-issuer
+    name:cn-postgres
+    name:common
+    name:common-res
+    name:common-res-reloader
+    name:configurator
+    name:controller
+    name:copilot
+    name:cost-analysis-agent
+    name:cost-analysis-victoria-metrics
+    name:dbextract
+    name:disc-api
+    name:disc-web
+    name:encode-pass
+    name:er-entres-workflow
+    name:er-init
+    name:flag-file-creation
+    name:folder-init
+    name:ingress
+    name:init-adminerevo
+    name:init-config
+    name:init-elytron-secrets
+    name:init-igs-standalone
+    name:init-nr-ui
+    name:init-sensaai-sanction
+    name:init-standalone
+    name:init-wlm-pn-rt
+    name:init-wlm-pn-sa
+    name:init-wlm-pn-sa-sim
+    name:insert-db-license
+    name:invhub-secrets
+    name:jaeger
+    name:kafka-cluster
+    name:kafka-jks-cert-init
+    name:kafka-ui
+    name:keycloak
+    name:keystore-cert-init
+    name:kube-prometheus-stack
+    name:kube-proxy
+    name:kube-proxy-bootstrap
+    name:liveness-probe
+    name:metrics-server
+    name:metrics-server-vpa
+    name:microsoft-defender-pod-collector
+    name:microsoft-defender-publisher
+    name:minio
+    name:minio-operator
+    name:minioop
+    name:network-policies
+    name:node-driver-registrar
+    name:nr-cms-test-kafka-kafka-exporter
+    name:nr-custom-metrics
+    name:nr-dpa
+    name:nr-ui
+    name:nr-ui-config-merge
+    name:nrod-conf-override
+    name:nrod-import-configuration
+    name:nrod-import-configuration-sim
+    name:nrod-override
+    name:nrod-token-gen
+    name:nrodsftp
+    name:old-file-cleaner
+    name:opensearch
+    name:opensearch-extras
+    name:override-import-configuration
+    name:override-prepare-configuration
+    name:override-run-db-scripts
+    name:override-run-post-install-db-scripts
+    name:postgres
+    name:rtde
+    name:run-db-scripts
+    name:run-import-scripts
+    name:s3fs
+    name:s3fs-sidecar
+    name:sensaai-sanctions
+    name:smbd
+    name:spark-kubernetes-driver
+    name:spark-kubernetes-executor
+    name:spark-operator
+    name:standalone
+    name:standalone-config-merge
+    name:sysctl
+    name:terrarium
+    name:tigera-operator
+    name:transac-api
+    name:umount-s3fs
+    name:velero
+    name:wait-for-kafka-postgresql-db-job
+    name:wait-for-kafka-postgresql-nr-ui
+    name:wait-for-nr-ui
+    name:wait-for-postgres
+    name:wait-for-postgresql-schema-job-completion
+    name:web
+    name:wlm-igs-sa
+    name:wlm-pn-rt
+    name:wlm-pn-sa
+    name:wlm-pn-sa-sim
+  {{- end }}
+  kubelet:
+    tlsVerify: false
+  logs:
+    autoMultiLineDetection: true
+    containerCollectAll: true
+    enabled: true
+  logs_config:
+    processing_rules:
+      - name: exclude_debug_logs
+        type: exclude_at_match
+        pattern: '(?i)\bDEBUG\b'
+
+      - name: exclude_pii
+        type: exclude_at_match
+        pattern: |
+          Failing Row contains
+          mc --quiet --no-color admin user add minio
+  site: 'us5.datadoghq.com'

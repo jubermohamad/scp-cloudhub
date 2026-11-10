@@ -1,0 +1,82 @@
+# Default values for adminerevo.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 1
+
+image:
+  imageRepository: "nri-nrod-k8s-adminerevo"
+  imageTag: "v4.8.4-php8.2-20260225113445"
+  pullPolicy: IfNotPresent
+
+config:
+  # https://www.adminer.org/plugins/
+  # Comma separated list of plugins to enable
+  # Some plugins requires extra parameters and these cannot been used with this chart
+  plugins: "dump-json dump-zip edit-foreign edit-textarea json-column tables-filter"
+  # Available designes: https://github.com/adminerevo/adminerevo/tree/v4.8.4/designs
+  design: "pepa-linha"
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 80
+  annotations: {}
+
+probs:
+  livenessProbe:
+    failureThreshold: 10
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+  # readinessProbe:
+  #   failureThreshold: 3
+  #   initialDelaySeconds: 20
+  #   periodSeconds: 10
+  #   successThreshold: 1
+  #   timeoutSeconds: 5
+  startupProbe:
+    failureThreshold: 60
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    successThreshold: 1
+    timeoutSeconds: 5
+
+resources:
+  requests:
+    memory: "1024Mi"
+    cpu: "200m"
+  limits:
+    memory: "1024Mi"
+    cpu: "300m"
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+ingress:
+  enabled: true
+  ingressAllowList:
+    customerIPs: []
+    platformIPs: []
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "stickcookie"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+  hosts:
+    - host: adminerevo.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local

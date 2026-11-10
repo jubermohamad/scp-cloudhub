@@ -1,0 +1,92 @@
+# username is retrieved from the environment with the format SYMPHONYFS_USERNAME
+# password is retrieved from the environment with the format SYMPHONYFS_PASSWORD
+repositories:
+  - name: symphonyfs
+    url: https://helm.symphonyfs.net
+  - name: k8s-as-helm
+    url: https://ameijer.github.io/k8s-as-helm/
+
+helmDefaults:
+  timeout: 1500
+  wait: false  # 'true' will cause deadlock for NR with helm waiting for override-volume-claim indefinitely
+               # more: https://netreveal.atlassian.net/browse/FCENGX-3005
+  kubeContext: aks-UPDATE_ME_NC_SUFFIX
+
+---
+
+# The environments section to define the reusable variables
+environments:
+  default:
+    values:
+      - owners: "UPDATE_ME_OWNERS"
+      - client_facing: "UPDATE_ME_CLIENT_FACING"
+      - applicationPrefix: "ih"
+      - clientSubDomain: "UPDATE_ME_CLIENT_SUBDOMAIN"
+      - envType: "UPDATE_ME_ENV_TYPE"
+      - overlayRepoName: "nrod-overlay-{{ .Values.clientSubDomain }}"
+      - namespace: '{{ requiredEnv "INSTANCE_NAME" }}'
+      - appName: '{{ requiredEnv "APP_NAME" }}'
+      - helm_chart_repo_forwardslash_name: 'symphonyfs/{{ requiredEnv "APP_NAME" }}'
+      - helm_chart_version: '{{ env "CLOUDHUB_UPDATE_ME_NAMESPACE__HELM_CHART_VERSION" }}'
+      - helm_chart_values_file_ref: '{{ env "CLOUDHUB_UPDATE_ME_NAMESPACE__HELM_CHART_VALUES_FILE_REF" }}'
+      - project_overlay_files_ref: '{{ env "CLOUDHUB_UPDATE_ME_NAMESPACE__PROJECT_OVERLAY_FILES_REF" }}'
+      - entity_resolution_chart: "symphonyfs/entity-resolution"
+      - entity_resolution_chart_version: '{{ env "CLOUDHUB_UPDATE_ME_NAMESPACE__ENTITY_RESOLUTION_CHART_VERSION" }}'
+
+---
+
+releases:
+
+  - name: "{{ .Values.namespace }}-secret-ingress-tls"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "ingress-tls"
+      - type: "kubernetes.io/tls"
+      - ../../templated-overrides/secrets/certs.gotmpl
+
+  - name: "{{ .Values.namespace }}-secret-regcred"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "regcred"
+      - type: "kubernetes.io/dockerconfigjson"
+      - secretData:
+          '.dockerconfigjson': '{{ env "CLOUDHUB_DOCKERCONFIGJSON" }}'
+
+  - name: "{{ .Values.namespace }}-secret-regcred-acr"
+    namespace: "{{ .Values.namespace }}"
+    chart: k8s-as-helm/secret
+    version: 1.0.4
+    values:
+      - nameOverride: "regcred-acr"
+      - type: "kubernetes.io/dockerconfigjson"
+      - secretData:
+          '.dockerconfigjson': '{{ env "CLOUDHUB_REGCRED_ACR__DOCKERCONFIGJSON" }}'
+
+  - name: "{{ .Values.namespace }}"
+    namespace: "{{ .Values.namespace }}"
+    chart: "{{ .Values.helm_chart_repo_forwardslash_name }}"
+    version: "{{ .Values.helm_chart_version }}"
+    values:
+      - values/{{ .Values.appName }}/invhub/values.yaml
+      - ../../templated-overrides/{{ .Values.appName }}/common.gotmpl
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/common/project.overrides.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/project.overrides.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/values.users.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+    needs:
+      - "{{ .Values.namespace }}-secret-ingress-tls"
+      - "{{ .Values.namespace }}-secret-regcred"
+      - "{{ .Values.namespace }}-secret-regcred-acr"
+
+  - name: "{{ .Values.namespace }}-entres"
+    namespace: "{{ .Values.namespace }}"
+    chart: "{{ .Values.entity_resolution_chart }}"
+    version: "{{ .Values.entity_resolution_chart_version }}"
+    values:
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/common/entres.overrides.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+      - git::https://{{ requiredEnv "SENSABOT_PAT_TOKEN" }}@github.com/SymphonySensa/{{ .Values.overlayRepoName }}.git@/{{ .Values.appName }}/{{ .Values.envType }}/entres.overrides.gotmpl?ref={{ .Values.project_overlay_files_ref }}
+    needs:
+      - "{{ .Values.namespace }}"

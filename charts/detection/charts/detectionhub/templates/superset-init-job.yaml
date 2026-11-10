@@ -1,0 +1,129 @@
+{{- if and (index .Values "superset" "enabled") ((((.Subcharts.superset).Values).init).customEnabled) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ template "superset.fullname" .Subcharts.superset }}-init-db
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ template "superset.name" .Subcharts.superset }}
+    chart: {{ template "superset.chart" .Subcharts.superset }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+    {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 4 }}
+    {{- if .Subcharts.superset.Values.extraLabels }}
+      {{- toYaml .Subcharts.superset.Values.extraLabels | nindent 4 }}
+    {{- end }}
+  annotations: {}  
+spec:
+  ttlSecondsAfterFinished: {{ .Values.global.defaultJobTTL }}
+  template:
+    metadata:
+      name: {{ template "superset.fullname" .Subcharts.superset }}-init-db
+      {{- if .Subcharts.superset.Values.init.podAnnotations }}
+      annotations: {{- toYaml .Subcharts.superset.Values.init.podAnnotations | nindent 8 }}
+      {{- end }}
+      {{- if or .Subcharts.superset.Values.extraLabels .Subcharts.superset.Values.init.podLabels .Values.global.detectionhubsolutions }}
+      labels:
+        {{- include "detectionhub.detectionhubsolutionsLabel" . | nindent 8 }}
+        {{- if .Subcharts.superset.Values.extraLabels }}
+          {{- toYaml .Subcharts.superset.Values.extraLabels | nindent 8 }}
+        {{- end }}
+        {{- if .Subcharts.superset.Values.init.podLabels }}
+          {{- toYaml .Subcharts.superset.Values.init.podLabels | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      {{- include "detectionhub.imagePullSecrets" . | indent 6 }}
+      {{- if or (.Subcharts.superset.Values.serviceAccount.create) (.Subcharts.superset.Values.serviceAccountName) }}
+      serviceAccountName: {{ template "superset.serviceAccountName" .Subcharts.superset }}
+      {{- end }}
+      securityContext:
+        runAsUser: {{ .Subcharts.superset.Values.runAsUser }}
+        {{- if .Subcharts.superset.Values.init.podSecurityContext }}
+          {{- toYaml .Subcharts.superset.Values.init.podSecurityContext | nindent 8 }}
+        {{- end }}
+      {{- if .Subcharts.superset.Values.init.initContainers }}
+      initContainers: {{-  tpl (toYaml .Subcharts.superset.Values.init.initContainers) .Subcharts.superset | nindent 6 }}
+      {{- end }}
+      containers:
+      - name: {{ template "superset.name" .Subcharts.superset }}-init-db
+        image: "{{ .Subcharts.superset.Values.image.repository }}:{{ .Subcharts.superset.Values.image.tag | default .Chart.AppVersion }}"
+        {{- if or .Subcharts.superset.Values.extraEnv .Subcharts.superset.Values.extraEnvRaw }}
+        env:
+          {{- range $key, $value := .Subcharts.superset.Values.extraEnv }}
+          - name: {{ $key | quote }}
+            value: {{ $value | quote }}
+          {{- end }}
+          {{- if .Subcharts.superset.Values.extraEnvRaw }}
+            {{- toYaml .Subcharts.superset.Values.extraEnvRaw | nindent 10 }}
+          {{- end }}
+        {{- end }}
+        envFrom:
+          - secretRef:
+              name: {{ tpl .Subcharts.superset.Values.envFromSecret .Subcharts.superset }}
+          {{- range .Subcharts.superset.Values.envFromSecrets }}
+          - secretRef:
+              name: {{ tpl . $ | quote }}
+          {{- end }}
+        imagePullPolicy: {{ .Subcharts.superset.Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+        {{- if .Subcharts.superset.Values.init.containerSecurityContext }}
+        securityContext: {{- toYaml .Subcharts.superset.Values.init.containerSecurityContext | nindent 12 }}
+        {{- end }}
+        volumeMounts:
+          - name: superset-config
+            mountPath: {{ .Subcharts.superset.Values.configMountPath | quote }}
+            readOnly: true
+          {{- if .Subcharts.superset.Values.extraConfigs }}
+          - name: superset-extra-config
+            mountPath: {{ .Subcharts.superset.Values.extraConfigMountPath | quote }}
+            readOnly: true
+          {{- end }}
+          {{- with .Subcharts.superset.Values.extraVolumeMounts }}
+            {{- tpl (toYaml .) $ | nindent 10 -}}
+          {{- end }}
+        command: {{  tpl (toJson .Subcharts.superset.Values.init.command) .Subcharts.superset }}
+        resources: {{- toYaml .Subcharts.superset.Values.init.resources | nindent 10 }}
+      {{- if .Subcharts.superset.Values.init.extraContainers }}
+          {{- toYaml .Subcharts.superset.Values.init.extraContainers | nindent 6 }}
+      {{- end }}
+      {{- with .Subcharts.superset.Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Subcharts.superset.Values.affinity .Subcharts.superset.Values.init.affinity }}
+      affinity:
+        {{- with .Subcharts.superset.Values.affinity }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Subcharts.superset.Values.init.affinity }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      {{- if .Subcharts.superset.Values.init.priorityClassName }}
+      priorityClassName: {{ .Subcharts.superset.Values.init.priorityClassName }}
+      {{- end }}
+      {{- if or .Subcharts.superset.Values.topologySpreadConstraints .Subcharts.superset.Values.init.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- with .Subcharts.superset.Values.topologySpreadConstraints }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Subcharts.superset.Values.init.topologySpreadConstraints }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      {{- with .Subcharts.superset.Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: superset-config
+          secret:
+            secretName: {{ tpl .Subcharts.superset.Values.configFromSecret .Subcharts.superset }}
+        {{- if .Subcharts.superset.Values.extraConfigs }}
+        - name: superset-extra-config
+          configMap:
+            name: {{ template "superset.fullname" .Subcharts.superset }}-extra-config
+        {{- end }}
+        {{- with .Subcharts.superset.Values.extraVolumes }}
+          {{- tpl (toYaml .) $ | nindent 8 -}}
+        {{- end }}
+      restartPolicy: Never
+{{- end }}

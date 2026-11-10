@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argo-install-argo-workflows-server.service-account-token
+  namespace: {{ include "er.namespace" . }}
+  annotations:
+    kubernetes.io/service-account.name: argo-install-argo-workflows-server
+type: kubernetes.io/service-account-token

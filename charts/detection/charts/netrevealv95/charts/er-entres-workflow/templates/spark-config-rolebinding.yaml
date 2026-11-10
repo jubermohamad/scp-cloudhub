@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-spark-config
+  namespace: {{ include "er.namespace" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-spark-config
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-ent-res-spark-config
+    namespace: {{ include "er.namespace" . }}

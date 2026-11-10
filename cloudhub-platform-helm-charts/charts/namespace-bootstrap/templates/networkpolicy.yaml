@@ -1,0 +1,14 @@
+{{- if .Values.networkPolicy.defaultDenyIngress }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: {{ include "namespace-bootstrap.namespace" . }}
+  labels:
+    {{- include "namespace-bootstrap.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  # Empty ingress = deny all.
+{{- end }}

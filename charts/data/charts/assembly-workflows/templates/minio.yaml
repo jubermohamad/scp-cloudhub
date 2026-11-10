@@ -1,0 +1,148 @@
+{{- if .Values.minio.enabled }}
+# MinIO — S3-compatible blob store backing the file-search node and resource
+# file storage when Azure blob isn't configured (assembly-core reads
+# FILE_SEARCH_S3_* / defaults to http://{{ include "aw.prefix" . }}-minio:9000). Deployed in-cluster for
+# dev/self-contained installs; point assembly-core at managed object storage in
+# environments that have it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "aw.prefix" . }}-minio-pvc
+  labels:
+    app: assembly-minio
+    {{- include "aw.labels" . | nindent 4 }}
+  annotations:
+    # User-uploaded blobs (resources/files) — same retention backstop as
+    # postgres-pvc: orphan on prune, never delete.
+    "helm.sh/resource-policy": keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: {{ .Values.minio.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.minio.storage }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-minio
+  labels:
+    app: assembly-minio
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: assembly-minio
+  template:
+    metadata:
+      labels:
+        app: assembly-minio
+        {{- include "aw.infraSingletonSpreadLabel" . | nindent 8 }}
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      {{- include "aw.infraSingletonAntiAffinity" . | nindent 6 }}
+      containers:
+        - name: {{ include "aw.prefix" . }}-minio
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.minio.image "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: {{ .Values.minio.rootUser | quote }}
+            - name: MINIO_ROOT_PASSWORD
+              value: {{ required "minio.rootPassword is required when minio.enabled=true" .Values.minio.rootPassword | quote }}
+          ports:
+            - containerPort: 9000
+              name: api
+            - containerPort: 9001
+              name: console
+          volumeMounts:
+            - name: minio-data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.minio.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: minio-data
+          persistentVolumeClaim:
+            claimName: {{ include "aw.prefix" . }}-minio-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-minio
+  labels:
+    app: assembly-minio
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9000
+      targetPort: 9000
+      name: api
+    - port: 9001
+      targetPort: 9001
+      name: console
+  selector:
+    app: assembly-minio
+---
+# Create the file-search bucket once MinIO is up (core does not auto-create it).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "aw.prefix" . }}-minio-createbucket
+  labels:
+    app: assembly-minio
+    {{- include "aw.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app: assembly-minio
+    spec:
+      {{- include "aw.imagePullSecrets" $ | nindent 6 }}
+      restartPolicy: OnFailure
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      containers:
+        - name: createbucket
+          image: {{ include "aw.infraImage" (dict "ref" $.Values.minio.mcImage "ctx" $) }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "Always" }}
+          command:
+            - sh
+            - -c
+            - |
+              until mc alias set local http://{{ include "aw.prefix" . }}-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+                echo "waiting for minio..."; sleep 3;
+              done
+              mc mb -p "local/{{ .Values.minio.bucket }}" || true
+              mc ls local/
+          env:
+            - name: MINIO_ROOT_USER
+              value: {{ .Values.minio.rootUser | quote }}
+            - name: MINIO_ROOT_PASSWORD
+              value: {{ required "minio.rootPassword is required when minio.enabled=true" .Values.minio.rootPassword | quote }}
+          resources:
+            requests: { memory: 32Mi, cpu: 10m }
+            limits: { memory: 128Mi, cpu: 200m }
+{{- end }}

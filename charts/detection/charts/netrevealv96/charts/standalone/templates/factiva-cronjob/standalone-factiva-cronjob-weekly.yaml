@@ -1,0 +1,112 @@
+{{- if .Values.factiva.job.enableWeeklyJob }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: "{{ include "cron.job.factiva.weekly.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+spec:
+  schedule: "{{ .Values.factiva.job.weeklySchedule }}"
+  {{- if .Values.global.timeZone }}
+  timeZone: "{{ .Values.global.timeZone }}"
+  {{- end }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.factiva.job.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.factiva.job.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: {{ .Values.factiva.job.ttlSecondsAfterFinished }}
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: "{{ .Release.Name }}-factiva"
+        spec:
+          terminationGracePeriodSeconds: 60
+          securityContext:
+            runAsUser: 200
+            runAsGroup: 200
+          initContainers:
+          - name: wait-for-kafka-postgresql-db-job
+            image: "{{- include "standalone.docker.image" . -}}"
+            securityContext:
+              runAsNonRoot: true
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+            imagePullPolicy: IfNotPresent
+            command:
+              - /bin/bash
+              - -exec
+              - |
+                /wait-for-it/wait-for-it.sh {{ include "kafka.bootstrap.servers.service.name" . }} --timeout=300 && \
+                /wait-for-it/wait-for-it.sh {{ include "db.url" . }} --timeout=500
+                timeout {{ .Values.global.standalone.dbInit.dbJobFileFlagTimeout }} bash -c 'while [ ! -f /opt/WLM/db_job_completed.flag ]; do echo "Wait for the db init job to complete"; sleep 2; done'
+            volumeMounts:
+            - name: {{ .Release.Name }}-wlm-indexes
+              mountPath: /opt/WLM
+          containers:
+          - name: factiva-downloader
+            image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.pod.psqlDockerImage }}"
+            securityContext:
+              runAsNonRoot: true
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+            {{- if eq .Values.global.useResourceConstraints "true" }}
+            resources:
+              requests:
+                memory: "{{ .Values.factiva.job.pod.resources.requests.memory }}"
+                cpu: "{{ .Values.factiva.job.pod.resources.requests.cpu }}"
+              limits:
+                memory: "{{ .Values.factiva.job.pod.resources.limits.memory }}"
+                cpu: "{{ .Values.factiva.job.pod.resources.limits.cpu }}"
+            {{- end }}
+            command:
+              - /bin/sh
+              - -c
+              - |
+                /opt/netreveal/standaloneHome/factivaScripts/downloadFactiva.sh weekly
+            env:
+              - name: MINIO_URL
+                value: "{{ include "minio.url" . }}"
+            {{- if .Values.global.timeZone }}
+              - name: TZ
+                value: "{{ .Values.global.timeZone }}"
+            {{- end }}
+            envFrom:
+              - secretRef:
+                  name: "minio-sftp-creds"
+            volumeMounts:
+              {{ include "postgres.server.secret-mount" . | nindent 14 }}
+              - name: "{{ include "secret.standalone.factiva.script.name" . }}"
+                mountPath: /opt/netreveal/standaloneHome/factivaScripts
+              - name: {{ .Release.Name }}-standalone-factiva-logs
+                mountPath: /opt/netreveal/standaloneHome/logs
+              - name: {{ .Release.Name }}-standalone-factiva-volume
+                mountPath: /opt/netreveal/standaloneHome/wlmMonitoring
+                subPath: wlmMonitoring
+              - name: {{ .Release.Name }}-standalone-factiva-data
+                mountPath: /opt/netreveal/standaloneHome/conf/wlm/fpfa
+              - name: mc-tmp-config
+                mountPath: /mc-config/.mc
+          restartPolicy: Never
+          volumes:
+            {{ include "postgres.server.secret-volume" . | nindent 12 }}
+            - name: "{{ include "secret.standalone.factiva.script.name" . }}"
+              secret:
+                secretName: "{{ include "secret.standalone.factiva.script.name" . }}"
+                defaultMode: 493 # 0755 in octal
+            - name: {{ .Release.Name }}-wlm-indexes
+              persistentVolumeClaim:
+                claimName: {{ include "generate.name.with.release.name" (list $ . "wlm-indexes-claim") | quote }}
+            - name: {{ .Release.Name }}-standalone-factiva-volume
+              persistentVolumeClaim:
+                claimName: {{ include "generate.name.with.release.name" (list $ . "standalone-factiva-volume-claim") | quote }}
+            - name: {{ .Release.Name }}-standalone-factiva-logs
+              emptyDir: {}
+            - name: {{ .Release.Name }}-standalone-factiva-data
+              emptyDir: {}
+            - name: mc-tmp-config
+              emptyDir: {}
+
+{{- include "image.pull.secrets" . | nindent 10 }}
+
+{{- end }}

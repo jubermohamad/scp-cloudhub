@@ -1,0 +1,32 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+# DB Updater Configuration
+enabled: true
+
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/dethub-core-db
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "200m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+# Pod configuration
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+database: {}
+
+# Liquibase changelog configuration
+changelog:
+  path: "src/main/resources/db/changelog/changelog-master.xml"

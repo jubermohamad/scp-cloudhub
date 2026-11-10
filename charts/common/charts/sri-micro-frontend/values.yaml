@@ -1,0 +1,223 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+# Default values for sri-micro-frontend (fs-common-ui-svc): the platform
+# home page + Command Centre Next.js app. One Deployment + Service (+
+# optional Ingress). The two pipeline backends it proxies to are NOT part
+# of this chart — point env.CONFIG_SVC_URL / env.EXEC_SVC_URL at wherever
+# fs-pipeline-config-svc / fs-pipeline-exec-svc run.
+#
+# NOTE: NEXT_PUBLIC_PIPELINE_UI_URL is baked into the image at BUILD time
+# (see CLAUDE.md Gotchas) — it cannot be set here.
+
+replicaCount: 1
+
+image:
+  repository: symphonyfs.azurecr.io/sri-micro-frontend/common-ui-svc
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  # Defaults to Chart.appVersion; CI tags images by branch/tag, so pin per
+  # environment, e.g. --set image.tag=main
+  tag: ""
+
+imagePullSecrets:
+  - name: symphonyfs-acr-secret
+
+# Set create: true to have the chart manage its own dockerconfigjson Secret
+# (from registry/username/password, or a full pre-built dockerConfigJson
+# string) instead of assuming imagePullSecrets[].name above already exists
+# in the namespace. If you turn this on, also point imagePullSecrets above
+# at imageCredentials.secretName.
+imageCredentials:
+  create: false
+  secretName: sri-micro-frontend-registry
+  registry: ""
+  username: ""
+  password: ""
+  dockerConfigJson: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 3000
+
+# Injected 1:1 as container env. The two *_SVC_URL defaults match the
+# proxy-route fallbacks in src/app/api/{config,exec}/[...path]/route.ts.
+env:
+  CONFIG_SVC_URL: http://pipeline-config-svc:8001
+  EXEC_SVC_URL: http://pipeline-exec-svc:8002
+
+# Names of in-namespace Secrets injected wholesale as env (envFrom) — for
+# values that must never ride in git, e.g. PORTAL_DATABASE_URL (the
+# Applications catalog, src/lib/catalog.ts; db/portal-catalog.sql). Without
+# it the catalog serves an empty catalog.
+envFromSecrets: []
+
+# Applications catalog database (src/lib/catalog.ts; db/portal-catalog.sql).
+# When enabled, a pre-install/upgrade Job ensures the portal DATABASE + role
+# exist on an EXISTING Postgres instance (it never provisions the instance)
+# and loads the schema/seed. The app connects via PORTAL_DATABASE_URL from
+# appExistingSecret; the Job PARSES that same URL for the db/role/password
+# (one source of truth) and uses adminExistingSecret only to CREATE them.
+catalog:
+  database:
+    enabled: false
+    image: postgres:16-alpine
+    # Postgres instance to create the database ON (shared; not managed here).
+    host: ""
+    port: 5432
+    # Admin (superuser) secret — used only for CREATE ROLE / CREATE DATABASE.
+    adminExistingSecret: portal-db-admin
+    adminUserKey: username
+    adminPasswordKey: password
+    # The app's runtime connection secret (also injected via envFromSecrets).
+    appExistingSecret: common-ui-db
+    appUrlKey: PORTAL_DATABASE_URL
+    # Load db/portal-catalog.sql (schema + idempotent seed) after creating
+    # the database. Set false to create an empty database and manage rows
+    # out-of-band.
+    applySchema: true
+
+# IN-TREE ADDITION: ensure-portal-catalog (templates/ensure-portal-catalog.yaml).
+# Seeds the Applications catalog with THE PLATFORM MAP — one row per real SRI
+# product, in the right mode (embedded / literal / badge) — on top of the
+# upstream schema+seed. Only renders when catalog.database.enabled is on, so an
+# org standalone install is unaffected.
+portalCatalog:
+  enabled: true
+  # ── WHAT THE MENU SHOWS ────────────────────────────────────────────────
+  # The portal menu is a map of THIS installation, not a product brochure: a
+  # product that is not installed is disabled in the catalog (the row stays,
+  # so installing it later just flips the flag — an absent row would make
+  # additions non-idempotent).
+  #
+  # These mirror the switchboard flags that drive the install. The umbrella
+  # passes them down (deploy values); standalone they default to "everything
+  # on", which is the right answer when the chart is installed by itself.
+  installed:
+    detection: true
+    detectionhub: true
+    aiStore: true
+    investigation: true
+    invhub: true
+    data: true
+    # RETIRED 2026-08-24 with the Lens product; flip back only alongside
+    # data.sensa-data-ontology.enabled
+    ontology: false
+    # its replacement (prism) — off until an environment enables the product
+    foundationalPlatform: false
+    pipeline: true
+    finDataService: true
+    assembly: true
+    dxv: true
+    # operator consoles, each conditional on the thing it administers
+    keycloak: true
+    minioConsole: true
+    pgadmin: true
+    kafkaUi: true
+    dxvConsole: true
+    marketplace: false
+  image: postgres:16-alpine
+  backoffLimit: 6
+  # 5s apart: the database and the schema are created by other hooks
+  waitAttempts: 60
+
+# Keycloak OIDC (src/lib/auth/config.ts). Disabled by default — the app
+# then runs its cosmetic demo login with no enforcement. When enabled,
+# middleware gates /command-centre and the /api/config|exec proxies, and
+# ALL of the fields below are required. The Keycloak client must be
+# public + PKCE with <appUrl>/api/auth/callback in its redirect URIs.
+auth:
+  enabled: false
+  keycloakUrl: ""
+  keycloakRealm: ""
+  keycloakClientId: ""
+  # Public base URL the browser reaches this app at (the Ingress host).
+  appUrl: ""
+  # SESSION_SECRET (signs the sai_auth cookie). Either name an existing
+  # Secret carrying key "session-secret"…
+  existingSecret: ""
+  # …or set a value at install time (--set auth.sessionSecret=…) and the
+  # chart creates the Secret itself. Never commit a real value here.
+  sessionSecret: ""
+
+  # Optional: have the chart create/sync the Keycloak client itself
+  # (templates/keycloak-setup-job.yaml, pattern copied from
+  # sensa-data-ontology's keycloak-setup-job). A post-install/post-upgrade
+  # Job logs into the Keycloak admin API and idempotently ensures:
+  #   - a PUBLIC + PKCE(S256) client named auth.keycloakClientId with
+  #     <appUrl>/api/auth/callback as redirect URI and <appUrl> as web origin
+  #   - the six client roles the app maps to panels (operator, analyst,
+  #     investigator, compliance, cco, admin — see src/app/api/auth/callback)
+  # Requires an EXISTING realm — it never creates or modifies the realm.
+  # Safe to leave on: every step is create-if-missing / update-if-exists.
+  setup:
+    enabled: false
+    # Admin-API base URL for THIS JOB only (the app keeps using keycloakUrl,
+    # which the browser must reach). Set it to the in-cluster Service URL:
+    # through the public ingress this job outlives the master realm's 60s
+    # access token and fails mid-run.
+    internalUrl: ""
+    image: quay.io/keycloak/keycloak
+    imageTag: "26.0"
+    # Realm the admin credentials authenticate against. Empty → same as
+    # auth.keycloakRealm (realm-scoped admin, least privilege); set "master"
+    # when only a master-realm admin exists (fresh Keycloak).
+    adminRealm: ""
+    # Optional: also stamp this audience into access tokens (aud claim) via
+    # a per-client protocol mapper — required when embedded remotes pass
+    # our tokens to backends that validate audience (e.g. "lens").
+    audience: ""
+    # Admin credentials, one of two sources (fail-fast if neither):
+    # an existing Secret in the release namespace with keys
+    # keycloak-admin-user and keycloak-admin-password…
+    adminSecret: ""
+    # …or values (set via an encrypted values.secrets.yaml, never here) —
+    # the chart then creates the Secret itself (keycloak-admin-secret.yaml).
+    adminUser: ""
+    adminPassword: ""
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+# Optional: have the chart create the TLS Secret itself from raw cert/key
+# content instead of assuming one already exists in the namespace. When
+# enabled, also add a matching entry under ingress.tls above.
+ingressTlsSecret:
+  create: false
+  secretName: sri-micro-frontend-tls
+  cert: ""
+  key: ""
+
+resources: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

@@ -1,0 +1,53 @@
+<!--
+  © 2019 BAE Systems Applied Intelligence (Ireland) Limited. All rights Reserved. 
+-->
+<dbspec name="IUCustomer" comments="Customers from CUSTOMERS table">
+
+    <source-query>
+    SELECT * 
+	FROM (
+		SELECT CUSTOMER_ID as CustomerID,
+			RUN_TIMESTAMP as RunTimestamp,
+			ORGUNIT_CODE as OrganisationalUnit,
+			WIRE_IN_NUMBER as WireInMonNum,
+			WIRE_OUT_NUMBER as WireOutMonNum,
+			WIRE_IN_VOLUME as WireInMonVol,
+			WIRE_OUT_VOLUME as WireOutMonVol,
+			CASH_IN_VOLUME as CashInMonVol,
+			CASH_OUT_VOLUME as CashOutMonVol,
+			CHECK_IN_VOLUME as ChkInMonVol,
+			CHECK_OUT_VOLUME as ChkOutMonVol
+		FROM V_SM_AML_CUSTOMER_LIST
+	) V_SM_AML_CUSTOMER_LIST	
+    WHERE @WHERE@
+    </source-query>
+    <tablename>  V_SM_AML_CUSTOMER_LIST  </tablename>
+
+    <!-- Source Limit Fields  -->
+	<!-- Not supproted
+    <limit-field name="RunTimestamp"	operator="between"/>
+    -->
+	
+    <!-- Navigation Fields -->
+    <timefield>RunTimestamp</timefield>
+    <!--
+	<keyfield>  CustomerID        </keyfield>
+	-->
+
+    <!-- Column to Read from the ResultSet -->
+ 	<!-- 
+	<column fieldname="CustomerID"			dataType="DBTEXT"        columnname="CUSTOMER_ID" />
+	-->
+	<column fieldname="RunTimestamp"		dataType="DATE" columnname="RunTimestamp" />
+	<!-- Not supported
+	<column fieldname="OrganisationalUnit"	dataType="DBTEXT"        columnname="ORGUNIT_CODE" />
+	<column fieldname="WireInMonNum"		dataType="CARDINALITY"      columnname="WIRE_IN_NUMBER"/>
+	<column fieldname="WireOutMonNum"		dataType="CARDINALITY"      columnname="WIRE_OUT_NUMBER"/>
+    <column fieldname="WireInMonVol"		dataType="DBAMOUNT"      columnname="WIRE_IN_VOLUME"/>
+    <column fieldname="WireOutMonVol"		dataType="DBAMOUNT"      columnname="WIRE_OUT_VOLUME"/>
+    <column fieldname="CashInMonVol"		dataType="DBAMOUNT"      columnname="CASH_IN_VOLUME"/>
+    <column fieldname="CashOutMonVol"		dataType="DBAMOUNT"      columnname="CASH_OUT_VOLUME"/>
+    <column fieldname="ChkInMonVol"		dataType="DBAMOUNT"      columnname="CHECK_IN_VOLUME"/>
+    <column fieldname="ChkOutMonVol"		dataType="DBAMOUNT"      columnname="CHECK_OUT_VOLUME"/>
+	-->
+</dbspec>

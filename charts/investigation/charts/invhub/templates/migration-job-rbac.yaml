@@ -1,0 +1,86 @@
+{{- if or .Values.api.enabled (index .Values.tags "separate-api-responsibilities") -}}
+{{- $m := .Values.migrations -}}
+{{- $dbCert    := include "invhub.migrations.dbCertName"    . -}}
+{{- $kafkaCert := include "invhub.migrations.kafkaCertName" . -}}
+{{- $osCert    := include "invhub.migrations.osCertName"    . -}}
+{{- $needTls := and $m.waitForTlsSecrets.enabled (or (ne $dbCert "") (ne $kafkaCert "") (and .Values.global.INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH (ne $osCert ""))) -}}
+{{- $dep := $m.waitForDependencies -}}
+{{- $needDeps := and $dep.enabled (or $dep.postgres.enabled $dep.kafka.enabled $dep.opensearch.enabled $dep.minio.enabled $dep.redis.enabled) -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-api-migrations
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: migrations
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+{{- if or $needTls $needDeps }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-api-migrations-wait
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: migrations
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+rules:
+  {{- if $needTls }}
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames:
+      {{- if ne $dbCert "" }}
+      - {{ $dbCert | quote }}
+      {{- end }}
+      {{- if ne $kafkaCert "" }}
+      - {{ $kafkaCert | quote }}
+      {{- end }}
+      {{- if and .Values.global.INVESTIGATION_HUB_OPEN_SEARCH_BASIC_AUTH (ne $osCert "") }}
+      - {{ $osCert | quote }}
+      {{- end }}
+  {{- end }}
+  {{- if $needDeps }}
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+  {{- if $dep.kafka.enabled }}
+  - apiGroups: ["kafka.strimzi.io"]
+    resources: ["kafkas"]
+    verbs: ["get"]
+  {{- end }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-api-migrations-wait
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/component: migrations
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-api-migrations-wait
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-api-migrations
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,178 @@
+# Default values for transac-api.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 2
+
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/invhub-transactions-api
+  # When empty, omit imagePullPolicy and use the Kubernetes default.
+  pullPolicy: ""
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets:
+  - name: "regcred"
+
+nameOverride: ""
+fullnameOverride: "transac-api"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  {}
+  # fsGroup: 2000
+
+securityContext:
+  {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+service:
+  type: ClusterIP
+  ports:
+    - name: transac-api
+      port: 3004
+      protocol: TCP
+
+resources:
+  {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+livenessProbe: {}
+
+readinessProbe:
+  initialDelaySeconds: 10
+  periodSeconds: 20
+  timeoutSeconds: 10
+  successThreshold: 1
+  httpGet:
+    path: /v1/health/liveness
+    port: transac-api
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - transac-api
+          topologyKey: "topology.kubernetes.io/zone"
+
+dbRootCert:
+  secretName: "cn-postgres-transactions-ca"
+  mountPath: "/pg-ca-cert"
+  key: "ca.crt"
+kafkaRootCert:
+  secretName: "invhub-clients-ca-cert"
+  mountPath: "/kafka-ca-cert"
+  key: "ca.crt"
+
+calicoNetworkPolicy:
+  enabled: false
+  ingress:
+    - action: Allow
+      protocol: TCP
+      source: {}
+      destination:
+        ports:
+          - 3004
+  egress:
+    - action: Allow
+# kube-prometheus-stack:
+#   prometheus-node-exporter:
+#     hostRootFsMount: false
+
+# neo4j-standalone:
+#   volumes:
+#     data:
+#       mode: defaultStorageClass
+
+# prometheus-redis-exporter:
+#  redisAddress: redis://myredis:6379
+
+# prometheus-postgresql-exporter:
+#  config:
+#    datasource:
+#      # Specify one of both datasource or datasourceSecret
+#      host:
+#      user: postgres
+#      # Only one of password and passwordSecret can be specified
+#      password:
+#      # Specify passwordSecret if DB password is stored in secret.
+#      passwordSecret: {}
+#      # Secret name
+#      #  name:
+#      # Password key inside secret
+#      #  key:
+#      port: "5432"
+#      database: 'postgres'
+#      sslmode: disable
+
+global:
+  imagePullPolicy: Always   # platform default; the umbrella global overrides it
+  NODE_ENV: "production"
+  API_DOCS: true
+  API_PORT: 3004
+  SENSA_LOG_LEVEL: info
+  SENSA_REDIS_URL: "redis://redis-master:6379"
+  MINIO_SSL_CA_PATH: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  SENSA_THROTTLE_LIMIT: 100
+  SENSA_THROTTLE_TTL: 60
+  SENSA_HEALTH_THROTTLE_LIMIT: 20
+  SENSA_KAFKA_BOOTSTRAP: "invhub-kafka-bootstrap:9093"
+  SENSA_KAFKA_SSL: "true"
+  SENSA_KAFKA_MAX_BYTES: "10485880"
+  SENSA_KAFKA_SSL_CA_PATH: "/kafka-ca-cert/ca.crt"
+  SENSA_KAFKA_INITIAL_RETRY_TIME: 5000
+  SENSA_KAFKA_RETRIES: 3
+  SENSA_KAFKA_SESSION_TIMEOUT: 45000
+  SENSA_KAFKA_HEARTBEAT_INTERVAL: 15000
+  INVESTIGATION_HUB_SERVICE_ACCOUNT_EMAIL: transactionsService@symphony.ai

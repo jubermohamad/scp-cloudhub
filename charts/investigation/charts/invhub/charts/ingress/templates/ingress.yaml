@@ -1,0 +1,49 @@
+{{- $name := (include "ingress.name" .) -}}
+{{- if .Values.enabled -}}
+{{- $host := required (printf ".Values.host ingress host is required for %s" $name) .Values.host -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ingress.name" . }}
+  labels:
+    {{- include "ingress.labels" . | nindent 4 }}
+  {{- with .Values.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ default "nginx" .Values.ingressClassName }}
+  {{- if .Values.tls }}
+  tls:
+    {{- range .Values.tls }}
+    - hosts:
+        {{- range .hosts }}
+        - {{ tpl . $ | quote }}
+        {{- end }}
+      secretName: {{ if $.Values.enableGlobalTlsSecret }}
+        {{- if and $.Values.global.ingressTlsSecretName (ne $.Values.global.ingressTlsSecretName "") }}
+          {{- $.Values.global.ingressTlsSecretName }}
+        {{- else }}
+          {{- .secretName }}
+        {{- end }}
+      {{- else }}
+        {{- .secretName }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+  rules:
+  - host: "{{ (tpl $host $) }}"
+    http:
+      paths:
+      {{- range $val := .Values.service }}
+        {{- range $path := $val.paths }}
+        - path: {{ if $val.servicePath }}{{ $val.servicePath }}{{ else }}{{ $path }}{{ end }}
+          pathType: {{ $val.pathType }}
+          backend:
+            service:
+              name: {{ $val.name }}
+              port:
+                number: {{ $val.port }}
+        {{- end }}
+      {{- end }}
+{{- end }}

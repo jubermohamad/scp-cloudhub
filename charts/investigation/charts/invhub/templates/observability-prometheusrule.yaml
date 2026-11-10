@@ -1,0 +1,82 @@
+{{- $alerts := .Values.observabilityAlerts -}}
+{{- if and $alerts.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PrometheusRule") -}}
+{{- $opensearchCluster := (.Values.opensearch.clusterName | default "opensearch-cluster") -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: invhub-observability-alerts
+  namespace: {{ .Release.Namespace }}
+  {{- with $alerts.labels }}
+  labels:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $alerts.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  groups:
+    {{- if $alerts.postgresql.enabled }}
+    - name: invhub.postgresql
+      rules:
+        - alert: InvHubPostgresHighConnectionUtilization
+          expr: |
+            100 * max by (pod) (
+              cnpg_backends_total{namespace="{{ .Release.Namespace }}"} /
+              cnpg_pg_settings_setting{name="max_connections", namespace="{{ .Release.Namespace }}"}
+            ) > {{ $alerts.postgresql.maxConnectionsUtilizationPercent | default 80 }}
+          for: {{ $alerts.postgresql.for | default "10m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: PostgreSQL connections high
+            description: Connections are above {{ $alerts.postgresql.maxConnectionsUtilizationPercent | default 80 }}% of max_connections.
+    {{- end }}
+
+    {{- if $alerts.kafka.enabled }}
+    - name: invhub.kafka
+      rules:
+        - alert: InvHubKafkaUnderReplicatedPartitions
+          expr: sum(kafka_server_replicamanager_underreplicatedpartitions{namespace="{{ .Release.Namespace }}"}) > 0
+          for: {{ $alerts.kafka.for | default "10m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: Kafka under-replicated partitions
+            description: Under-replicated partitions are present for at least {{ $alerts.kafka.for | default "10m" }}.
+    {{- end }}
+
+    {{- if $alerts.opensearch.enabled }}
+    - name: invhub.opensearch
+      rules:
+        - alert: InvHubOpenSearchClusterNotGreen
+          expr: max(opensearch_cluster_status{cluster="{{ $opensearchCluster }}"}) > 0
+          for: {{ $alerts.opensearch.for | default "10m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: OpenSearch cluster not green
+            description: OpenSearch cluster status indicates yellow/red for at least {{ $alerts.opensearch.for | default "10m" }}.
+        - alert: InvHubOpenSearchUnassignedShards
+          expr: sum(opensearch_cluster_shards_number{cluster="{{ $opensearchCluster }}", type="unassigned"}) > 0
+          for: {{ $alerts.opensearch.for | default "10m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: OpenSearch has unassigned shards
+            description: OpenSearch reports unassigned shards for at least {{ $alerts.opensearch.for | default "10m" }}.
+    {{- end }}
+
+    {{- if $alerts.minioWebhooks.enabled }}
+    - name: invhub.minio
+      rules:
+        - alert: InvHubMinioWebhooksCreatorJobFailed
+          expr: kube_job_status_failed{namespace="{{ .Release.Namespace }}", job_name="minio-webhooks-creator"} > 0
+          for: {{ $alerts.minioWebhooks.for | default "0m" }}
+          labels:
+            severity: warning
+          annotations:
+            summary: MinIO webhook configurator job failed
+            description: The Helm hook Job 'minio-webhooks-creator' has failures.
+    {{- end }}
+{{- end }}

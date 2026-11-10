@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: "azure-backups-creds"
+type: Opaque
+stringData:
+  azure.client.default.account: "{{ .Values.global.BACKUPS_STORAGE_ACCOUNT }}"
+  azure.client.default.key: "{{ .Values.global.BACKUPS_ACCESS_KEY }}"

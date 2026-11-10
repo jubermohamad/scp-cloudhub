@@ -1,0 +1,94 @@
+{{- if .Values.jobs.seed.enabled }}
+{{- /* SEED: put records INTO the ledger, through the same door live traffic uses.
+
+       Prism's stores split into truth and derivation. `changeset` is truth;
+       `term_version` and the graph are projections that reproject/replay rebuild
+       from it. Every job this chart already shipped rebuilds a PROJECTION — none
+       of them puts a single record in, which is why a fresh install comes up
+       healthy and completely empty (changeset=0).
+
+       This one posts seed/*.json to POST /v1/changesets on the running API: the
+       same endpoint, the same gates, the same hash chain as any other writer. It
+       is a governance client — it holds no engine, opens no graph connection, and
+       speaks only HTTP.
+
+       NO DESTRUCTIVE GUARD, and that is not an omission. The other three jobs
+       carry one because they wipe a store; this job only appends, the ledger
+       table forbids UPDATE, and the seed files carry client-supplied
+       changeset_ids so a re-run is recorded as `replayed` rather than applied.
+       Running it twice is a no-op, on any environment, bundled or external.
+
+       NOT a helm hook. Being idempotent it would survive being one, but it needs
+       the API serving before it can post, and it belongs to the WORLD rather than
+       the release — an environment that has diverged from the seed should not be
+       quietly re-seeded by an unrelated upgrade. Enable it, let it run, leave it
+       off. To ship a real world instead of a seed, use scripts/sync_ledger.py:
+       ledger-to-ledger over Postgres, deliberately not an HTTP surface. */}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "prism.fullname" . }}-seed{{ with .Values.jobs.seed.nameSuffix }}-{{ . }}{{ end }}
+  labels:
+    app: prism-seed
+    {{- include "prism.labels" . | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.jobs.seed.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.jobs.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app: prism-seed
+        {{- include "prism.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "prism.imagePullSecrets" . | nindent 6 }}
+      {{- include "prism.scheduling" . | nindent 6 }}
+      initContainers:
+        # The API, not the graph: this job speaks HTTP only, and prism-api already
+        # waits for bolt itself. Without this the Job races the Deployment and
+        # burns its backoffLimit on "prism-api unreachable".
+        - name: wait-for-prism-api
+          image: {{ include "prism.image" (dict "ctx" $ "name" "prism-api" "tag" .Values.api.image.tag) }}
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.api.image.pullPolicy) }}
+          command: ["python", "-c"]
+          args:
+            - |
+              import sys, time, urllib.error, urllib.request
+              url, timeout = "http://{{ include "prism.fullname" . }}-api:{{ .Values.api.port }}/healthz", {{ .Values.jobs.seed.waitTimeoutSeconds }}
+              deadline = time.monotonic() + timeout
+              attempt = 0
+              while time.monotonic() < deadline:
+                  attempt += 1
+                  try:
+                      with urllib.request.urlopen(url, timeout=5) as r:
+                          if r.status == 200:
+                              print("prism-api healthy after %d attempt(s)" % attempt, flush=True)
+                              sys.exit(0)
+                          print("prism-api answered %s" % r.status, flush=True)
+                  except (urllib.error.URLError, OSError) as e:
+                      print("waiting for prism-api at %s (%s)" % (url, e), flush=True)
+                  time.sleep(3)
+              sys.exit("prism-api did not become healthy within %ds" % timeout)
+      containers:
+        - name: seed
+          image: {{ include "prism.image" (dict "ctx" $ "name" "prism-api" "tag" .Values.api.image.tag) }}
+          imagePullPolicy: {{ include "prism.pullPolicy" (dict "ctx" $ "policy" .Values.api.image.pullPolicy) }}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              python scripts/load_seed.py {{ range .Values.jobs.seed.files }}{{ . | quote }} {{ end }}
+          env:
+            - name: PRISM_URL
+              value: "http://{{ include "prism.fullname" . }}-api:{{ .Values.api.port }}"
+              # /app, not /app/scripts: `prism_api` is the package at /app/prism_api
+              # (same value job-reproject uses). `prism_client`, which load_seed.py
+              # also imports, resolves without help — python puts the script's own
+              # directory on sys.path. Getting this wrong fails at import, after the
+              # API wait has already succeeded: "No module named 'prism_api'".
+            - name: PYTHONPATH
+              value: /app
+          resources:
+            {{- toYaml .Values.jobs.seed.resources | nindent 12 }}
+{{- end }}

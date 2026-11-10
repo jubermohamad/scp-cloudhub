@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-zeppelin-server
+  namespace: {{ .Values.global.namespace }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.ports.http }}
+      targetPort: {{ .Values.service.targetPorts.http }}
+    - name: rpc
+      port: {{ .Values.service.ports.rpc }}
+      targetPort: {{ .Values.service.targetPorts.rpc }}
+  selector:
+    app.kubernetes.io/name: zeppelin-server

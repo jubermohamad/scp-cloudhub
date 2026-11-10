@@ -1,0 +1,19 @@
+apiVersion: v2
+name: adminerevo
+appVersion: 4.8.4
+description: Adminerevo is a full-featured database management tool written in PHP. Conversely
+  to phpMyAdmin, it consist of a single file ready to deploy to the target server.
+  Adminerevo is available for MySQL, MariaDB, PostgreSQL, SQLite, MS SQL, Oracle, Firebird,
+  SimpleDB, Elasticsearch and MongoDB. In this chart only PostgreSQL is enabled.
+home: https://www.adminerevo.org
+keywords:
+- adminer
+- postgres
+- mysql
+- sqlite
+- elasticsearch
+- mongodb
+- database
+- sql
+# netreveal chart version: 1.0.14
+version: 1.0.3

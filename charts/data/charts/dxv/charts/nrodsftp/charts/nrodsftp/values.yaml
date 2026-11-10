@@ -1,0 +1,137 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+# Default values for nrodsftp.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+
+pod:
+  replicas: 1
+
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/nrodsftp
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: "v1.2.3"
+
+imagePullSecrets:
+  - name: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+# In-cluster Service names this chart's pod env points at. Empty = inherit
+# global.minioServiceName / the chart default (naming-migration seam — these
+# were bare literals in the Deployment template).
+minioHost: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# MinIO Ingress properties
+ingress:
+  # see templates/ingress.yaml — true preserves the standalone dxv behaviour;
+  # the umbrella disables it (the platform object store must not be exposed)
+  enabled: true
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 100m
+  ingressAllowList:
+    customerIPs: []
+    platformIPs: []
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+
+service:
+  type: ClusterIP
+  port: 22
+
+resources: {}
+
+livenessProbe:
+  failureThreshold: 3
+  initialDelaySeconds: 60
+  periodSeconds: 20
+  successThreshold: 1
+  timeoutSeconds: 5
+readinessProbe:
+  failureThreshold: 3
+  initialDelaySeconds: 60
+  periodSeconds: 20
+  successThreshold: 1
+  timeoutSeconds: 5
+# startupProbe:
+#   failureThreshold: 3
+#   initialDelaySeconds: 60
+#   periodSeconds: 20
+#   successThreshold: 1
+#   timeoutSeconds: 5
+
+autoscaling:
+  enabled: false
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+moveToPublicDirectories: ""
+encryptOutgoingData: false
+
+# Enable/disable archiving feature.
+archivingEnabled: false
+# Comma separated list of folders to be archived. Extension to the default list.
+archivingDirectories: ""
+# This will add such folders into the archive folder list:
+#   landing/acquisition{{ orgUnitCode }}/waiting
+#   landing/acquisition/waiting
+archiveAcquisitionWaitingDirectories: true
+# This will add such folders into the archive folder list (example):
+#   landing/listImport/UN List@XML-list'
+#   landing/listImport/UN Country List@default'
+#   (...)
+archiveListImportDirectories: true
+# This will add such folder into the archive folder list:
+#   landing/fpfa
+archiveFpfaDirectory: true
+# This will add such folder into the archive folder list:
+#   landing/worldcheck
+archiveWorldcheckDirectory: true
+# This will add such folders into the archive folder list:
+#   landing/batchwatch/SWIFT@SWIFT'
+#   landing/batchwatch/Subject@GSV'
+#   landing/batchwatch/SWIFT@SWIFT_FLTS'
+#   landing/batchwatch/GenericTransaction@SWIFT_FLTS_MX'
+archiveBatchwatchDirectories: true
+# this will add such folders into the archive folder list:
+#   landing/amlopt/data
+#   landing/amlopt{{ orgUnitCode }}/data
+archiveAmloptDataDirectories: true
+# PGP public key to be used for encrypting the archived files. It is required if nrodsftp.nrodsftp.archivingEnabled=true and nrodsftp.nrodsftp.archivingEnabled=true.
+archivingPgpPublicKey:
+  secretName: "nrodsftp-archiving-pgp-key"
+  secretKey: "public-key"
+# Number of seconds files archived files should be retained before being deleted.
+# Default value is 1 year (31536000 seconds).
+archivingRetentionPeeriodInSeconds: "31536000"
+# This environment variable defines the cron expression for the archiving cleanup polling frequency.
+# By default the job will run daily at midnight.
+archivingCleanupCronExpression: "0 0 * * *"

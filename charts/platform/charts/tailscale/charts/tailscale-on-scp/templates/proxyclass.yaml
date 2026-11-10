@@ -1,0 +1,10 @@
+apiVersion: tailscale.com/v1alpha1
+kind: ProxyClass
+metadata:
+  generation: 2
+  name: "{{ .Values.proxyClassName }}"
+  annotations:
+    tailscale.com/tags: "{{ (index .Values.tags 0) | default "tag:k8s-scp" }}"
+spec:
+  tailscale:
+    acceptRoutes: true

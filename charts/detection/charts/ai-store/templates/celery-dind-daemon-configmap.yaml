@@ -1,0 +1,21 @@
+{{- if and .Values.celery.enabled (default false .Values.internalServices.zot.enabled) }}
+{{- $zh := .Values.zot.fullnameOverride | default "zot" }}
+{{- $zp := .Values.zot.service.port | default 5000 }}
+{{- $zns := include "model-store.namespace" . }}
+{{- $pub := include "model-store.zotPublicRegistryHostRaw" . | trim }}
+{{- $regs := list (printf "%s:%v" $zh $zp) (printf "%s.%s.svc.cluster.local:%v" $zh $zns $zp) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "model-store.componentName" (list . "celery") }}-dind-daemon
+  namespace: {{ include "model-store.namespace" . }}
+  labels:
+    {{- include "model-store.labels" . | nindent 4 }}
+data:
+  daemon.json: |
+{{- if $pub }}
+{{ dict "insecure-registries" (list) | toJson | nindent 4 }}
+{{- else }}
+{{ dict "insecure-registries" $regs | toJson | nindent 4 }}
+{{- end }}
+{{- end }}

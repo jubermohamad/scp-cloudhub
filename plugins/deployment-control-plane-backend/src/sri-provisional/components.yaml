@@ -1,0 +1,77 @@
+# SRI-Provisional Component Catalog
+# Defines components available for deployment via SRI-Provisional backend
+
+components:
+  - id: investigation
+    title: SRI Investigation
+    description: Investigation component for sensitive data analysis
+    deployment_app: sensa-investigation
+    supported: true
+    chart_versions:
+      - "2.1.0"
+      - "2.0.0"
+      - "1.9.0"
+
+  - id: detection
+    title: SRI Detection
+    description: Detection component for threat identification
+    deployment_app: sensa-detection
+    supported: true
+    chart_versions:
+      - "2.1.0"
+      - "2.0.0"
+      - "1.8.5"
+
+  - id: data
+    title: SRI Data
+    description: Data component for information processing
+    deployment_app: sensa-data
+    supported: true
+    chart_versions:
+      - "1.8.0"
+      - "1.7.5"
+      - "1.7.0"
+
+  - id: sanctions
+    title: SRI Sanctions
+    description: Sanctions component for compliance checking
+    deployment_app: sensaai-sanctions
+    supported: true
+    chart_versions:
+      - "1.1.0"
+      - "1.0.0"
+
+  - id: common-res
+    title: Common Resources
+    description: Common resources component for shared services
+    deployment_app: common-res
+    supported: true
+    chart_versions:
+      - "1.6.0"
+      - "1.5.0"
+      - "1.4.0"
+
+skus:
+  - name: standard
+    resources:
+      cpu: "4"
+      memory: "16Gi"
+      storage: "100Gi"
+    chart_overrides:
+      replicas: 3
+
+  - name: large
+    resources:
+      cpu: "8"
+      memory: "32Gi"
+      storage: "500Gi"
+    chart_overrides:
+      replicas: 5
+
+  - name: xlarge
+    resources:
+      cpu: "16"
+      memory: "64Gi"
+      storage: "1Ti"
+    chart_overrides:
+      replicas: 7

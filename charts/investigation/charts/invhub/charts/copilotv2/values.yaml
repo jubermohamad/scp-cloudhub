@@ -1,0 +1,166 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+replicaCount: 1
+
+image:
+  repository: symphonyfs.azurecr.io/symphonysensa/invhub-copilot
+  # When empty, omit imagePullPolicy and use the Kubernetes default.
+  pullPolicy: ""
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+initContainers:
+  dbMigration:
+    image:
+      repository: symphonyfs.azurecr.io/symphonysensa/eureka-copilot-v2-db-migration
+      tag: "2.5.0"
+    args: ["upgrade", "2.5.0"]
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 10001
+      runAsGroup: 10001
+      capabilities:
+        drop:
+          - ALL
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+waitForDependencies:
+  enabled: true
+  image: docker.io/curlimages/curl:8.11.1
+  imagePullPolicy: ""            # empty = inherit global.imagePullPolicy
+  timeoutSeconds: 1200
+  resources:
+    limits:
+      cpu: 100m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 16Mi
+  # EMPTY on purpose: the template falls back to global.services.* (the shared
+  # map api/disc-api/copilot already use) and only then to the chart literal,
+  # so a renamed service is corrected in one place rather than per component.
+  postgres:
+    enabled: true
+    service: ""
+    port: 5432
+  terrarium:
+    enabled: true
+    service: ""
+    port: 8080
+
+imagePullSecrets:
+  - name: "regcred"
+
+nameOverride: ""
+fullnameOverride: "copilotv2"
+
+extraEnv: []
+  # - name: ADDITIONAL_VAR
+  #   value: "additional-value"
+
+extraSecretEnv: []
+  # - name: POSTGRE_PASS
+  #   secretName: postgres-credential-copilot-cn
+  #   key: password
+
+copilotCommonConfigMapName: "copilot-common"
+copilotCommonSecretName: "copilot-common"
+
+dbRootCert:
+  secretName: "cn-postgres-copilotv2-ca"
+  mountPath: "/pg-ca-cert"
+  key: "ca.crt"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations:
+  configmap.reloader.stakater.com/reload: "copilot-common"
+  secret.reloader.stakater.com/reload: "copilot-common"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 3006
+
+livenessProbe:
+  httpGet:
+    path: /v2/liveness
+    port: http
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+
+readinessProbe:
+  httpGet:
+    path: /v2/readiness
+    port: http
+  initialDelaySeconds: 20
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+
+resources:
+  limits:
+    cpu: "1"
+    memory: 2Gi
+  requests:
+    cpu: 200m
+    memory: 512Mi
+
+podDisruptionBudget:
+  enabled: false
+  maxUnavailable: 1
+
+topologySpreadConstraints:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

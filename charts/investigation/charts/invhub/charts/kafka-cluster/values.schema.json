@@ -1,0 +1,255 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "entityOperator": {
+            "type": "object",
+            "properties": {
+                "template": {
+                    "type": "object",
+                    "properties": {
+                        "pod": {
+                            "type": "object",
+                            "properties": {
+                                "metadata": {
+                                    "type": "object",
+                                    "properties": {
+                                        "annotations": {
+                                            "type": "object",
+                                            "properties": {
+                                                "ad.datadoghq.com/topic-operator.checks": {
+                                                    "type": "string"
+                                                },
+                                                "ad.datadoghq.com/user-operator.checks": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "topicOperator": {
+                    "type": "object"
+                },
+                "userOperator": {
+                    "type": "object"
+                }
+            }
+        },
+        "kafka": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "properties": {
+                        "default.replication.factor": {
+                            "type": "integer"
+                        },
+                        "inter.broker.protocol.version": {
+                            "type": "string"
+                        },
+                        "max.incremental.fetch.session.cache.slots": {
+                            "type": "integer"
+                        },
+                        "max.message.bytes": {
+                            "type": "integer"
+                        },
+                        "message.max.bytes": {
+                            "type": "integer"
+                        },
+                        "min.insync.replicas": {
+                            "type": "integer"
+                        },
+                        "offsets.topic.replication.factor": {
+                            "type": "integer"
+                        },
+                        "producer.compression.type": {
+                            "type": "string"
+                        },
+                        "replica.fetch.max.bytes": {
+                            "type": "integer"
+                        },
+                        "transaction.state.log.min.isr": {
+                            "type": "integer"
+                        },
+                        "transaction.state.log.replication.factor": {
+                            "type": "integer"
+                        }
+                    }
+                },
+                "listeners": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string"
+                            },
+                            "networkPolicyPeers": {
+                                "type": "array"
+                            },
+                            "port": {
+                                "type": "integer"
+                            },
+                            "tls": {
+                                "type": "boolean"
+                            },
+                            "type": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "storage": {
+                    "type": "object",
+                    "properties": {
+                        "size": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "template": {
+                    "type": "object",
+                    "properties": {
+                        "pod": {
+                            "type": "object",
+                            "properties": {
+                                "metadata": {
+                                    "type": "object",
+                                    "properties": {
+                                        "annotations": {
+                                            "type": "object",
+                                            "properties": {
+                                                "ad.datadoghq.com/kafka.checks": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "kafkaExporter": {
+            "type": "object",
+            "properties": {
+                "groupRegex": {
+                    "type": "string"
+                },
+                "logging": {
+                    "type": "string"
+                },
+                "template": {
+                    "type": "object",
+                    "properties": {
+                        "pod": {
+                            "type": "object",
+                            "properties": {
+                                "metadata": {
+                                    "type": "object",
+                                    "properties": {
+                                        "annotations": {
+                                            "type": "object",
+                                            "properties": {
+                                                "prometheus.io/port": {
+                                                    "type": "string"
+                                                },
+                                                "prometheus.io/scrape": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "metrics": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "name": {
+            "type": "string"
+        },
+        "replicas": {
+            "type": "integer"
+        },
+        "storageSize": {
+            "type": "string"
+        },
+        "zookeeper": {
+            "type": "object",
+            "properties": {
+                "jvmOptions": {
+                    "type": "object",
+                    "properties": {
+                        "javaSystemProperties": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "name": {
+                                        "type": "string"
+                                    },
+                                    "value": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "replicas": {
+                    "type": "integer"
+                },
+                "storage": {
+                    "type": "object",
+                    "properties": {
+                        "size": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "template": {
+                    "type": "object",
+                    "properties": {
+                        "pod": {
+                            "type": "object",
+                            "properties": {
+                                "metadata": {
+                                    "type": "object",
+                                    "properties": {
+                                        "annotations": {
+                                            "type": "object",
+                                            "properties": {
+                                                "ad.datadoghq.com/zookeeper.checks": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

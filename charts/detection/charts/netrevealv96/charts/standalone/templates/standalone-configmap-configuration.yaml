@@ -1,0 +1,671 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "config.map.standalone.eim.lst.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ include "config.map.standalone.eim.lst.name" . }}"
+data:
+  EIM.lst: |
+    # ###################################################################################################################################
+    # coreDev applications
+    # ###################################################################################################################################
+
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/base-platform.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/application-builder.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/case-management.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/dashboard.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/user-monitoring.xml
+
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/workflow-configurator.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/workflow-queuing-and-routing.xml
+
+    import|services|/opt/netreveal/standaloneHome/configuration/core/services/01-base-configuration.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/core/services/02-cfg-configuration.xml
+
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/01-base-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/01-base-configuration-devolvedSecurityRoles.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/03-cfg-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/11-workflow-queuing-and-routing.xml
+
+
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/02-cm-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/core/workflows/cm-workflowConfig.xml
+
+    # services manager module
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/services-manager.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/services-errorhandling.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/services-manager-opsmon.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/examples/services-test-screenConfig.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/batch-process-monitor.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/10-services-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/core/workflows/sm-errorhandling-workflowConfig.xml
+
+    # command and control module
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/command-and-control.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/13-cc-configuration.xml
+
+    # cdd module
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/customer-due-diligence.xml
+
+  {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    # wlm module
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/watch-list-manager.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/watch-list-manager-extension.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/04-wlm-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/core/workflows/wlm-workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/core/services/04-wlm-configuration.xml
+    # WLM enhanced
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/watch-list-manager-enhanced.xml
+    # WLM 24/7 CENTRAL
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/watch-list-manager-distributed-batch-central.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/core/services/04-wlm-configuration-central-node.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/core/services/04-wlm-configuration-Distributed-Batch-central-node.xml
+    # WLM 24/7 IGS
+    import|services|/opt/netreveal/standaloneHome/configuration/core/services/04-wlm-configuration-IGS-node.xml
+  {{- end }}
+
+    # scenario manager module
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/scenario-manager.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/scenario-manager-bulk-operations.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/05-sm-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/core/workflows/sm-workflowConfig.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/core/workflows/sm-bulk-operations-workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/core/services/05-sm-configuration.xml
+
+    # FTS configuration (used on Standalone only)
+    import|application|/opt/netreveal/standaloneHome/configuration/core/applications/fts-application-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/14-fts-configuration.xml
+
+    #
+    # Import the organization unit structure. To initialize the Project specific Organization Unit structure please replace the
+    #   import|base|/opt/netreveal/standaloneHome/configuration/Base-BP/EIM_base-configuration_orgunit_init.xml
+    # with the path to the updated configuration file. Please don't modify parameters listed after "|"
+    #
+    import|base|/opt/netreveal/standaloneHome/configuration/Base-BP/EIM_base-configuration_orgunit_init.xml|homePages,groups,permissions,roles,rolePermissionRelations,domains,orgUnits,orgUnitLinks,groupOrgDomRoleRelations,passwords,menuItems,domainReportingReasons|domains,orgUnits,orgUnitLinks,rolePermissionRelations,userGroupRelations,userOrgDomRoleRelations,groupOrgDomRoleRelations,domainReportingReasons
+
+    # ###################################################################################################################################
+    # Base - Base Platform
+    # ###################################################################################################################################
+
+    import|base|/opt/netreveal/standaloneHome/configuration/Base-BP/EIM_base-configuration_domain_init.xml
+
+    ##Update/add system parameters
+    import|base|/opt/netreveal/standaloneHome/configuration/Base-BP/EIM_system_parameters_base-configuration.xml
+
+    ##Import Schedulers configuration
+    import|base|/opt/netreveal/standaloneHome/configuration/Base-BP/EIM_base_scheduler-configuration.xml
+    # EIM to Core default Bridge
+    import|application|/opt/netreveal/standaloneHome/configuration/Framework/core/67/EIM_before_67_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/Framework/core/67/EIM_before_67_Vertical_workflowConfig.xml
+
+    # ###################################################################################################################################
+    # EIM Framework
+    # ###################################################################################################################################
+
+    import|base|/opt/netreveal/standaloneHome/configuration/Framework/EIM_base-configuration.xml|homePages,groups,permissions,roles,rolePermissionRelations,domains,groupOrgDomRoleRelations,domains,groupOrgDomRoleRelations,passwords,menuItems,domainReportingReasons|domains
+
+    import|application|/opt/netreveal/standaloneHome/configuration/Framework/EIM_Configurator-Extensions.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/Framework/EIM_Framework_application-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/Framework/EIM_base-configuration.xml|homePages,groups,permissions,roles,rolePermissionRelations,groupOrgDomRoleRelations,groupOrgDomRoleRelations,passwords,menuItems|
+    import|base|/opt/netreveal/standaloneHome/configuration/Framework/EIM_Framework_external_connectors_base-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/Framework/EIM_Framework_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/Framework/EIM_Framework_services-configuration.xml
+    # EIM Framework to FTS module (optional) bridge
+    import|application|/opt/netreveal/standaloneHome/configuration/EIMFTS/EIMFTS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/EIMFTS/EIMFTS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/EIMFTS/EIMFTS_Vertical_services-configuration.xml
+
+    ##Update/add system parameters
+    import|base|/opt/netreveal/standaloneHome/configuration/BatchBridge/EIM_system_parameters_base-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/STANDALONE/STANDALONE_base_scheduler-configuration.xml
+
+    # COMPL Vertical
+    import|base|/opt/netreveal/standaloneHome/configuration/COMPL/COMPL_base-configuration.xml|homePages,groups,permissions,roles,rolePermissionRelations,domains,groupOrgDomRoleRelations,groupOrgDomRoleRelations,passwords,menuItems,domainReportingReasons|
+
+    import|application|/opt/netreveal/standaloneHome/configuration/COMPL/COMPL_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/COMPL/COMPL_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/COMPL/COMPL_Vertical_services-configuration.xml
+  {{- if .Values.global.nrSolutionsSwitches.aml.enabled }}
+    # EIMAGT Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/EIMAGT/EIMAGT_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/EIMAGT/EIMAGT_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/EIMAGT/EIMAGT_Vertical_services-configuration.xml
+    # AML Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/AML/AML_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/AML/AML_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/AML/AML_Vertical_services-configuration.xml
+    # AMLAGT Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/AMLAGT/AMLAGT_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/AMLAGT/AMLAGT_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/AMLAGT/AMLAGT_Vertical_services-configuration.xml
+  {{- end }}
+  {{- if or .Values.global.nrSolutionsSwitches.aml.amlcb.enabled (not (hasKey .Values.global.nrSolutionsSwitches.aml.amlcb "enabled") ) }}
+    # AMLCB Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/AMLCB/AMLCB_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/AMLCB/AMLCB_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/AMLCB/AMLCB_Vertical_services-configuration.xml
+    ##Update/add system parameters
+    import|base|/opt/netreveal/standaloneHome/configuration/AMLCB/AMLCB_system_parameters_base-configuration.xml
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.aml.enabled }}
+    # AMLORCH Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/AMLORCH/AMLORCH_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/AMLORCH/AMLORCH_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/AMLORCH/AMLORCH_Vertical_services-configuration.xml
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.aml.amlcust.enabled }}
+    # AMLCustBeh Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/AMLCUST/AMLCUST_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/AMLCUST/AMLCUST_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/AMLCUST/AMLCUST_Vertical_services-configuration.xml
+  {{- end }}
+
+  {{- if .Values.global.nrSolutionsSwitches.aml.amlOpt.enabled }}
+    ##Update/add system parameters
+    # AMLOPT Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/AMLOPT/AMLOPT_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/AMLOPT/AMLOPT_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/AMLOPT/AMLOPT_Vertical_services-configuration.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/AMLOPT/AMLOPT_Configurator_Extensions_application-configuration.xml
+  {{- end }}
+
+  {{- if .Values.global.nrSolutionsSwitches.fincen.enabled }}
+    # DFRM
+    import|applications|/opt/netreveal/standaloneHome/configuration/DFRM/DFRM_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/DFRM/DFRM_Vertical_workflowConfig.xml
+    import|applications|/opt/netreveal/standaloneHome/configuration/DFRM/DFRM_Configurator_Extensions_application-configuration.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/DFRM/DFRM_Vertical_services-configuration.xml
+
+    # FINCEN DFIN
+    import|applications|/opt/netreveal/standaloneHome/configuration/DFIN/DFIN_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/DFIN/DFIN_Vertical_workflowConfig.xml
+    import|applications|/opt/netreveal/standaloneHome/configuration/DFIN/DFIN_Configurator_Extensions_application-configuration.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/DFIN/DFIN_Vertical_services-configuration.xml
+    # import DFIN Schedulers
+    import|base|/opt/netreveal/standaloneHome/configuration/DFIN/DFIN_Vertical_scheduler-configuration.xml
+  {{- end }}
+
+  {{- if .Values.global.nrSolutionsSwitches.cdd.enabled }}
+    # CDD
+    import|application|/opt/netreveal/standaloneHome/configuration/CDD/CDD_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDD/CDD_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDD/CDD_Vertical_services-configuration.xml
+    # CDDAAS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDAAS/CDDAAS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDAAS/CDDAAS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDAAS/CDDAAS_Vertical_services-configuration.xml
+    # CDDAGS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDAGS/CDDAGS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDAGS/CDDAGS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDAGS/CDDAGS_Vertical_services-configuration.xml
+    # CDDAUS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDAUS/CDDAUS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDAUS/CDDAUS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDAUS/CDDAUS_Vertical_services-configuration.xml
+    # CDDCPS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDCPS/CDDCPS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDCPS/CDDCPS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDCPS/CDDCPS_Vertical_services-configuration.xml
+    # CDDSPS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDSPS/CDDSPS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDSPS/CDDSPS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDSPS/CDDSPS_Vertical_services-configuration.xml
+    # CDDNSS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDNSS/CDDNSS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDNSS/CDDNSS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDNSS/CDDNSS_Vertical_services-configuration.xml
+    # CDDRAS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDRAS/CDDRAS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDRAS/CDDRAS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDRAS/CDDRAS_Vertical_services-configuration.xml
+    # CDDRES Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDRES/CDDRES_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDRES/CDDRES_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDRES/CDDRES_Vertical_services-configuration.xml
+    # CDDES Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDES/CDDES_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDES/CDDES_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDES/CDDES_Vertical_services-configuration.xml
+    # CDDVS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDVS/CDDVS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDVS/CDDVS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDVS/CDDVS_Vertical_services-configuration.xml
+    # CDDSIM Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDSIM/CDDSIM_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDSIM/CDDSIM_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDSIM/CDDSIM_Vertical_services-configuration.xml
+    # ODDIS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/ODDIS/ODDIS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/ODDIS/ODDIS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/ODDIS/ODDIS_Vertical_services-configuration.xml
+    # ODDODS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/ODDODS/ODDODS_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/ODDODS/ODDODS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/ODDODS/ODDODS_Vertical_services-configuration.xml
+    # ODDES Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/ODDES/ODDES_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/ODDES/ODDES_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/ODDES/ODDES_Vertical_services-configuration.xml
+    # CDDAAT Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDAAT/CDDAAT_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDAAT/CDDAAT_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDAAT/CDDAAT_Vertical_services-configuration.xml
+    # CDDSI Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDSI/CDDSI_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDSI/CDDSI_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDSI/CDDSI_Vertical_services-configuration.xml
+    # CDDXTJ Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDXTJ/CDDXTJ_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDXTJ/CDDXTJ_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDXTJ/CDDXTJ_Vertical_services-configuration.xml
+    # CDDTPDI Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDTPDI/CDDTPDI_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDTPDI/CDDTPDI_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDTPDI/CDDTPDI_Vertical_services-configuration.xml
+
+    ##Update/add system parameters
+    import|base|/opt/netreveal/standaloneHome/configuration/CDDTPDI/CDDTPDI_system_parameters_base_configuration.xml
+
+    ##Import external connectors
+    import|base|/opt/netreveal/standaloneHome/configuration/CDDTPDI/CDDTPDI_external_connectors_base-configuration.xml
+    # CDDCNV Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDCNV/CDDCNV_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDCNV/CDDCNV_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDCNV/CDDCNV_Vertical_services-configuration.xml
+    # Add system parameters
+    import|base|/opt/netreveal/standaloneHome/configuration/CDDCNV/CDDCNV_system_parameters_base_configuration.xml
+    # CDDBPR Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDBPR/CDDBPR_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDBPR/CDDBPR_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDBPR/CDDBPR_Vertical_services-configuration.xml
+  {{- end }}
+
+  {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    # WLM
+    import|application|/opt/netreveal/standaloneHome/configuration/WLM/WLM_Vertical_application-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/WLM/WLM_Vertical_system_parameters_base-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/WLM/WLM_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/WLM/WLM_Vertical_services-configuration.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/WLM/WLM_Change_APPS-13431_application-configuration.xml
+
+    # WLM to Current Core Bridge
+    import|application|/opt/netreveal/standaloneHome/configuration/WLM/core/90/WLM_after_90_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/WLM/core/90/WLM_after_90_Vertical_workflowConfig.xml
+    # WLMSIM Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/WLMSIM/WLMSIM_Vertical_application-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/WLMSIM/WLMSIM_Vertical_system_parameters_base-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/WLMSIM/WLMSIM_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/WLMSIM/WLMSIM_Vertical_services-configuration.xml
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.wlmTf.enabled }}
+    # WLMTF Vertical
+    import|base|/opt/netreveal/standaloneHome/configuration/WLMTF/WLMTF_base_schedule_configuration.xml
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    # WLMAGS Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/WLMAGS/WLMAGS_Vertical_application-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/WLMAGS/WLMAGS_Vertical_system_parameters_base-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/WLMAGS/WLMAGS_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/WLMAGS/WLMAGS_Vertical_services-configuration.xml
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.wlmSp.enabled }}
+    # IETWLM Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/IETWLM/IETWLM_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/IETWLM/IETWLM_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/IETWLM/IETWLM_Vertical_services-configuration.xml
+    # IETWLMSP Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/IETWLMSP/IETWLMSP_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/IETWLMSP/IETWLMSP_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/IETWLMSP/IETWLMSP_Vertical_services-configuration.xml
+  {{- end }}
+
+  {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    # WLMEN
+    import|application|/opt/netreveal/standaloneHome/configuration/WLMEN/WLMEN_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/WLMEN/WLMEN_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/WLMEN/WLMEN_Vertical_services-configuration.xml
+    {{- if .Values.global.nrSolutionsSwitches.wlm.sensaAiSanctions.enabled }}
+    # WLMAI Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/WLMAI/WLMAI_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/WLMAI/WLMAI_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/WLMAI/WLMAI_Vertical_services-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/WLMAI/WLMAI_Vertical_system_parameters_base-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/WLMAI/WLMAI_Vertical_external_connectors_base-configuration.xml
+    {{- end }}
+    # WLMBPR Vertical
+    import|application|/opt/netreveal/standaloneHome/configuration/WLMBPR/WLMBPR_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/WLMBPR/WLMBPR_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/WLMBPR/WLMBPR_Vertical_services-configuration.xml
+  {{- end }}
+
+  {{- if and .Values.global.nrSolutionsSwitches.cdd.enabled .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    #CDD-WLM dependent screens
+    import|base|/opt/netreveal/standaloneHome/configuration/CDDWLM/CDDWLM_Vertical_system_parameters_base-configuration.xml
+    import|application|/opt/netreveal/standaloneHome/configuration/CDDWLM/CDDWLM_Vertical_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/CDDWLM/CDDWLM_Vertical_workflowConfig.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/CDDWLM/CDDWLM_Vertical_services-configuration.xml
+  {{- end }}
+
+    # NROD-BASE Vertical
+    import|base|/opt/netreveal/standaloneHome/configuration/NROD-BASE/NROD-BASE_Vertical_base-configuration.xml
+
+    # COMPL Vertical
+    import|base|/opt/netreveal/standaloneHome/configuration/COMPL/COMPL_system_parameters_base-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/COMPL/COMPL_external_connectors_base-configuration.xml
+  {{- if .Values.global.nrSolutionsSwitches.aml.enabled }}
+    # AML Vertical
+    import|base|/opt/netreveal/standaloneHome/configuration/AML/AML_system_parameters_base-configuration.xml
+    # AMLORCH Vertical
+    import|base|/opt/netreveal/standaloneHome/configuration/AMLORCH/AMLORCH_external_connectors_base-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/AMLORCH/AMLORCH_NROD_external_connectors_base-configuration.xml
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.aml.amlOpt.enabled }}
+    # AMLOPT Vertical
+    import|base|/opt/netreveal/standaloneHome/configuration/AMLOPT/AMLOPT_system_parameters_base-configuration.xml
+    import|base|/opt/netreveal/standaloneHome/configuration/AMLOPT/AMLOPT_external_connectors_base-configuration.xml
+  {{- end }}
+
+  {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    # WLMAGS Vertical
+    import|base|/opt/netreveal/standaloneHome/configuration/WLMAGS/WLMAGS_external_connectors_base-configuration.xml
+    {{- if .Values.global.nrSolutionsSwitches.wlm.sensaAiSanctions.enabled }}
+    # WLMAI NROD Vertical
+    import|base|/opt/netreveal/standaloneHome/configuration/WLMAI-NROD/WLMAI-NROD_Vertical_system_parameters_base-configuration.xml
+    {{- end }}
+    # Fix for APPSDEVX-1969
+    import|application|/opt/netreveal/standaloneHome/configuration/NROD-FIXES/WLM_APPSDEVX-1969_application-configuration.xml
+    import|workflow|/opt/netreveal/standaloneHome/configuration/NROD-FIXES/WLM_APPSDEVX-1969_workflowConfig.xml
+  {{- end }}
+    # Fix for WLMX-2935
+    import|application|/opt/netreveal/standaloneHome/configuration/NROD-FIXES/EIM_WLMX-2925-application-configuration.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/NROD-FIXES/EIM_WLMX-2925-services-configuration.xml
+  {{- if .Values.global.nrSolutionsSwitches.cdd.enabled }}
+    import|application|/opt/netreveal/standaloneHome/configuration/NROD-FIXES/CDDCPS_Change_WLMX-2925-application-configuration.xml
+    import|services|/opt/netreveal/standaloneHome/configuration/NROD-FIXES/CDDCPS_Change_WLMX-2925-services-configuration.xml
+  {{- end }}
+
+    #Base platform config
+    # delete
+    # import |homePages,groups,permissions,roles,rolePermissionRelations,domains,orgUnits,orgUnitLinks,groupOrgDomRoleRelations,passwords,menuItems,domainReportingReasons
+    # Framework base platform
+    import|base|/opt/netreveal/standaloneHome/configuration/Framework/EIM_base-configuration.xml|homePages,groups,permissions,roles,rolePermissionRelations,groupOrgDomRoleRelations,passwords,menuItems,domainReportingReasons|
+    # Compliance base platform
+    import|base|/opt/netreveal/standaloneHome/configuration/COMPL/COMPL_base-configuration.xml|homePages,groups,permissions,roles,rolePermissionRelations,groupOrgDomRoleRelations,groupOrgDomRoleRelations,passwords,menuItems,domainReportingReasons|
+
+    # import Framework Schedulers
+    import|base|/opt/netreveal/standaloneHome/configuration/Base-BP/EIM_base_scheduler-configuration.xml
+    # import Compliance Schedulers
+    import|base|/opt/netreveal/standaloneHome/configuration/NROD/NROD_base_scheduler-configuration.xml
+
+    ##Import core users
+    import|base|/opt/netreveal/standaloneHome/configuration/NROD/NROD_base-configuration_users_core.xml
+
+    {{- if .Values.global.nrSolutionsSwitches.qaUsers.enabled}}
+    ##Import QA users
+    import|base|/opt/netreveal/standaloneHome/configuration/NROD/NROD_base-configuration_users_qa.xml
+    {{- end }}
+
+    ##Import APPS users
+    #import|base|/opt/netreveal/standaloneHome/configuration/NROD/NROD_base-configuration_users_apps.xml
+  {{- if .Values.global.nrSolutionsSwitches.fincen.enabled }}
+    {{- if .Values.global.nrSolutionsSwitches.qaUsers.enabled}}
+    ##Import QA FINCEN users
+    import|base|/opt/netreveal/standaloneHome/configuration/NROD/NROD_base-configuration_users_qa_fincen.xml
+    {{- end }}
+  {{- end }}
+
+  {{- if not .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    ##
+    ## WLM
+    ##
+    import|base|/opt/netreveal/standaloneHome/configuration/NROD/NROD_base-configuration_scheduler_disable_WLM.xml
+  {{- end }}
+    ##Import Services Configuration
+    ##import|base|/opt/netreveal/standaloneHome/@services.base.configuration.file.path@|homePages,users,groups,userGroupRelations,permissions,roles,rolePermissionRelations,domains,domainReportingReasons,orgUnits,orgUnitLinks,userOrgDomRoleRelations,groupOrgDomRoleRelations,passwords,scheduledJobs,menuItems,systemParameters,license|
+
+    ##Update/add system parameters
+    ##import|base|/opt/netreveal/standaloneHome/configuration/Base-BP/EIM_Framework_system_parameters_base-configuration.xml
+
+
+    # APPS-5126 ! DO NOT REMOVE THIS FILE ! THIS FILE MUST BE LOADED ALWAYS AT THE END !
+    import|base|/opt/netreveal/standaloneHome/configuration/core/base/01-base-configuration-securityparameters.xml
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "config.map.standalone.posteim.lst.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ include "config.map.standalone.posteim.lst.name" . }}"
+data:
+  postEIM.lst: |
+{{- if .Values.global.nrSolutionsSwitches.aml.enabled }}
+    # AML Command & Control reports
+    #
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/AML/commandAndControl/AML-command-and-control-configuration.xml
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/AML/commandAndControl/AML - Detection Reports-command-and-control-configuration.xml
+
+    {{- if .Values.global.nrSolutionsSwitches.qaUsers.enabled}}
+    # AML Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/AML/AML-queues-and-rules-configuration.xml|importSubscribers=true
+    {{- else }}
+    # AML Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/AML/AML-queues-and-rules-configuration.xml|importSubscribers=false
+    {{- end }}
+    #AML-SIM processing model
+    #reload|permissions
+
+    # AML-SIM Command & Control reports
+    #
+    #AML processing model
+    reload|permissions
+    import|monitoring[operation=import to production,domainName=AML - Suspicious Activity,dataTypeModel=/opt/netreveal/standaloneHome/conf/monitoring/datatypemodel.xml]|/opt/netreveal/standaloneHome/configuration/AMLDET/scenario_engine/processingmodel-AML-Suspicious Activity.xml
+  {{- end }}
+  {{- if or .Values.global.nrSolutionsSwitches.aml.amlcb.enabled (not (hasKey .Values.global.nrSolutionsSwitches.aml.amlcb "enabled") ) }}
+    # AMLCB Command & Control reports
+    #
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/AMLCB/commandAndControl/CB - Detection Reports-command-and-control-configuration.xml
+
+    #AMLCB processing model
+    #reload|permissions
+    import|monitoring[operation=import to production,domainName=AML - Correspondent Banking,dataTypeModel=/opt/netreveal/standaloneHome/conf/monitoring/datatypemodel.xml]|/opt/netreveal/standaloneHome/configuration/AMLCBDET/scenario_engine/processingmodel_AML_CB.xml
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.aml.amlcust.enabled }}
+    #AMLCUSTDET processing model
+    reload|permissions
+    import|monitoring[operation=import to production,domainName=AMLCUST - AML Customer Behaviour,dataTypeModel=/opt/netreveal/standaloneHome/conf/monitoring/datatypemodel.xml]|/opt/netreveal/standaloneHome/configuration/AMLCUSTDET/scenario_engine/Reporting_procesing_model.xml
+  {{- end }}
+
+
+  {{- if .Values.global.nrSolutionsSwitches.cdd.enabled }}
+    #
+    # CDD Command & Control reports
+    #
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/CDD/commandAndControl/CDD - Customer Acceptance-command-and-control-configuration.xml
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/CDD/commandAndControl/CDD - ODD-command-and-control-configuration.xml
+
+    ##Update/add system parameters
+    import|base|/opt/netreveal/standaloneHome/configuration/CDD/CDD_system_parameters_base_configuration.xml
+
+    {{- if .Values.global.nrSolutionsSwitches.qaUsers.enabled}}
+    # CDD Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/CDD/CDD-queues-and-rules-configuration.xml|importSubscribers=true
+    {{- else }}
+    # CDD Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/CDD/CDD-queues-and-rules-configuration.xml|importSubscribers=false
+    {{- end }}
+    #CDD scoring model
+    reload|permissions
+    import|monitoring[operation=import to production,domainName=CDD - Customer Acceptance,dataTypeModel=/opt/netreveal/standaloneHome/conf/acquisition/datatypemodel.xml]|/opt/netreveal/standaloneHome/configuration/ODDDET/scenario_engine/processingmodel.xml
+    import|cddriskmodel|/opt/netreveal/standaloneHome/configuration/ODDDET/scenario_engine/RiskModel.xml|setToProduction
+    #CDDAAT scoring model
+    reload|permissions
+    import|monitoring[operation=import to production,domainName=CDD - Automated Alert Triage,dataTypeModel=/opt/netreveal/standaloneHome/conf/acquisition/datatypemodel.xml]|/opt/netreveal/standaloneHome/configuration/CDDAAT/scenario_engine/processingmodel.xml
+  {{- end }}
+
+  {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    import|normalization|/opt/netreveal/standaloneHome/configuration/WLM/normalization/text-normalization-config.xml
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/WLM/commandAndControl/WLM-command-and-control-configuration-cases.xml
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/WLM/commandAndControl/WLM-command-and-control-configuration-alerts.xml
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/WLM/commandAndControl/WLM-command-and-control-configuration-AlertedTran.xml
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/WLM/commandAndControl/WLM-command-and-control-configuration-AlertedTranByWatchlist.xml
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/WLM/commandAndControl/WLM-command-and-control-configuration-AlertedTranByCheck.xml
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/WLM/commandAndControl/WLM-command-and-control-configuration-AlertedSubjectsByWatchlist.xml
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/WLM/commandAndControl/WLM-command-and-control-configuration-detections.xml
+    import|commandandcontrol|/opt/netreveal/standaloneHome/configuration/WLM/commandAndControl/WLM-command-and-control-configuration-matches.xml
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.wlmTf.enabled }}
+    import|wlm|/opt/netreveal/standaloneHome/configuration/WLMTF/wlm_engine/wlm-filtering-config-tf.zip|PARTIALMERGE
+    {{- if .Values.global.nrSolutionsSwitches.qaUsers.enabled}}
+    # WLMFT Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/WLMTF/WLMTF-queues-and-rules-configuration.xml|importSubscribers=true
+    {{- else }}
+    # WLMFT Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/WLMTF/WLMTF-queues-and-rules-configuration.xml|importSubscribers=false
+    {{- end }}
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.wlmSp.enabled }}
+    import|wlm|/opt/netreveal/standaloneHome/configuration/WLMSP/wlm_engine/wlm-filtering-config-sp-subject.zip|PARTIALMERGE
+    import|wlm|/opt/netreveal/standaloneHome/configuration/WLMSP/wlm_engine/wlm-filtering-config-validator.zip|PARTIALMERGE
+    {{- if .Values.global.nrSolutionsSwitches.qaUsers.enabled}}
+    # WLMSP Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/WLMSP/WLMSP-queues-and-rules-configuration.xml|importSubscribers=true
+    {{- else }}
+    # WLMSP Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/WLMSP/WLMSP-queues-and-rules-configuration.xml|importSubscribers=false
+    {{- end }}
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.wlmTf.enabled }}
+    {{- if .Values.global.nrSolutionsSwitches.qaUsers.enabled}}
+    # IETWLM Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/IETWLM/IETWLM-queues-and-rules-configuration.xml|importSubscribers=true
+    {{- else }}
+    # IETWLM Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/IETWLM/IETWLM-queues-and-rules-configuration.xml|importSubscribers=false
+    {{- end }}
+    #IETWLM scoring model
+    reload|permissions
+    import|monitoring[operation=import to production,domainName=Transaction Filtering,dataTypeModel=/opt/netreveal/standaloneHome/conf/acquisition/datatypemodel.xml]|/opt/netreveal/standaloneHome/configuration/IETWLM/scenario_engine/processingmodel.xml
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.wlmSp.enabled }}
+    {{- if .Values.global.nrSolutionsSwitches.qaUsers.enabled}}
+    # IETWLMSP Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/IETWLMSP/IETWLMSP-queues-and-rules-configuration.xml|importSubscribers=true
+    {{- else }}
+    # IETWLMSP Workflow Rules/Queue configuration
+    import|queuesrules|/opt/netreveal/standaloneHome/configuration/IETWLMSP/IETWLMSP-queues-and-rules-configuration.xml|importSubscribers=false
+    {{- end }}
+    #IETWLMSP scoring model
+    reload|permissions
+    import|monitoring[operation=import to production,domainName=Sanctions & PEP,dataTypeModel=/opt/netreveal/standaloneHome/conf/acquisition/datatypemodel.xml]|/opt/netreveal/standaloneHome/configuration/IETWLMSP/scenario_engine/processingmodel.xml
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+    #
+    # WLMEN
+    #
+    import|wlm-synonym|/opt/netreveal/standaloneHome/configuration/WLMEN/synonyms/synonyms-config_nick_name.zip|MERGE
+    import|wlm-synonym|/opt/netreveal/standaloneHome/configuration/WLMEN/synonyms/synonyms-config_weighted_words.zip|MERGE
+  {{- end }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: "{{ include "config.map.standalone.scheduler.config.name" . }}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: "{{ include "config.map.standalone.scheduler.config.name" . }}"
+  annotations:
+    reloader.stakater.com/match: "true"
+data:
+  scheduleconfig_compliance_standalone.xml: |
+    <schedule name="Acquisition Schedule" comments="Acquisition Schedule">
+  {{- if .Values.global.nrSolutionsSwitches.aml.enableAmlAlertGeneration.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLDET/scheduleconfig_aml.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AML-SA/scheduleconfig_aml_bd.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.aml.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLAGT/ALERT-GENERATION/scheduleconfig_amlagt_alert_generation.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLAGT/ALERT-GENERATION/scheduleconfig_amlagt_customer_update.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLBPR/scheduleconfig_amlbpr.xml</import>
+  {{- end }}
+  {{- if or .Values.global.nrSolutionsSwitches.aml.amlcb.enabled (not (hasKey .Values.global.nrSolutionsSwitches.aml.amlcb "enabled") ) }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AML-CB/scheduleconfig_aml_cb.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLCBDET/scheduleconfig_amlcbdet.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.aml.enableAmlAlertGeneration.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLDET/scheduleconfig_amldet.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLDET/scheduleconfig_sensa.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.aml.amlcust.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLCUSTDET/scheduleconfig_amlcustdet.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.aml.amlOpt.enabled }}
+      <!--<import>/opt/netreveal/standaloneHome/conf/acquisition/AMLOPTSP/PROD_SYNCH/scheduleconfig_prod_synch.xml</import>-->
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.aml.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLORCH/scheduleconfig_amlorch.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.cdd.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/CDD/scheduleconfig_cdd.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/CDD/scheduleconfig_cdd_periodic_rescore.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/CDD/scheduleconfig_CDD_Upgrade_to_4.1.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/CDDCPS/scheduleconfig_cddcps_update_BO_flag.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/CDDAUS/scheduleconfig_cddaus.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.aml.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/EIMAGT/ALERT-GENERATION/scheduleconfig_EIMAGT.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/IETAML/scheduleconfig_ietaml.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/WLM/scheduleconfig_wlm(batchbridge).xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/WLM/scheduleconfig_wlm(deltavsfull).xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/WLM/scheduleconfig_wlm(fullvsdelta).xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/WLM/scheduleconfig_wlm(fullvsfull).xml</import>
+      <!--<import>/opt/netreveal/standaloneHome/conf/acquisition/WLM/scheduleconfig_wlm(crontrigger).xml</import>-->
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/WLM/scheduleconfig_wlmThrChangeReScreen.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/WLM/scheduleconfig_wlmAcqReScreen.xml</import>
+    {{- if .Values.global.nrSolutionsSwitches.wlm.sensaAiSanctions.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/WLMAI/scheduleconfig_WLMAI.xml</import>
+    {{- end }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/WLMLV/scheduleconfig_WLMLV.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/WLMBPR/scheduleconfig_WLMBPR.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.wlmTf.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/IETWLM/scheduleconfig_IETWLMTF_AlertEscalate.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.wlmSp.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/IETWLMSP/scheduleconfig_IETWLMSP.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.wlm.wlmTf.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/IETWLM/scheduleconfig_IETWLM.xml</import>
+  {{- end }}
+  {{- if .Values.global.nrSolutionsSwitches.cdd.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/ODDIS/scheduleconfig_cdd_ind.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/ODDIS/scheduleconfig_cdd_agg.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/CDDAAT/scheduleconfig_CDDAAT.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/CDDBPR/scheduleconfig_cdd_bpr.xml</import>
+      <!-- read the documentation in BuildNotes before removing this comment
+            <import>/opt/netreveal/standaloneHome/conf/acquisition/CDDTPDI/scheduleconfig_CDDTPDI.xml</import> -->
+  {{- end }}
+      <!-- read the documentation in BuildNotes before removing this comment -->
+      <!--import>/opt/netreveal/standaloneHome/conf/acquisition/COMPL/scheduleconfig_compl_fingerprint.xml</import-->
+
+
+      <!--import>/opt/netreveal/standaloneHome/conf/acquisition/WLMMIG/schedule_alert_migration.xml</import-->
+      <!--import>/opt/netreveal/standaloneHome/conf/acquisition/WLMMIG/schedule_alert_migration_flagFile.xml</import-->
+        <import>/opt/netreveal/standaloneHome/conf/acquisition/ComplianceTestingHelper/scheduleconfig_CTH.xml</import>
+        <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLTestingHelper/scheduleconfig_AMLTH.xml</import>
+
+  {{- if .Values.global.nrSolutionsSwitches.aml.amlOpt.enabled }}
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLOPT/scheduleconfig_simulator.xml</import>
+      <!-- <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLOPT/scheduleconfig_simulator_smbd.xml</import> -->
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLOPT/scheduleconfig_fingerprint.xml</import>
+
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLOPT/scheduleconfig_parameterization.xml</import>
+      <import>/opt/netreveal/standaloneHome/conf/acquisition/AMLOPT/scheduleconfig_profilestorebuild.xml</import>
+  {{- end }}
+    </schedule>

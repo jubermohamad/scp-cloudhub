@@ -1,0 +1,98 @@
+{{- if .Values.backupConfig.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: minio-mirror
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.backupConfig.schedule | quote }}
+  concurrencyPolicy: {{ .Values.backupConfig.concurrencyPolicy | default "Forbid" | quote }}
+  failedJobsHistoryLimit: {{ .Values.backupConfig.failedJobsHistoryLimit | default 3 }}
+  successfulJobsHistoryLimit: {{ .Values.backupConfig.successfulJobsHistoryLimit | default 7 }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.backupConfig.backoffLimit | default 0 }}
+      activeDeadlineSeconds: {{ .Values.backupConfig.activeDeadlineSeconds | default 3600 }}
+      ttlSecondsAfterFinished: {{ .Values.backupConfig.ttlSecondsAfterFinished | default 86400 }}
+      template:
+        spec:
+          restartPolicy: Never
+          volumes:
+            - name: minio-tls
+              secret:
+                secretName: minio-tls
+                items:
+                  - key: public.crt
+                    path: public.crt
+          containers:
+          - name: rclone
+            image: "{{ .Values.mirror.image.repository }}:{{ .Values.mirror.image.tag }}"
+            volumeMounts:
+              - name: minio-tls
+                mountPath: /tls/minio
+                readOnly: true
+            env:
+            - name: RCLONE_CONFIG_IHMINIO_TYPE
+              value: "s3"
+            - name: RCLONE_CONFIG_IHMINIO_PROVIDER
+              value: "Minio"
+            - name: RCLONE_CONFIG_IHMINIO_ENDPOINT
+              value: https://minio:443
+            - name: RCLONE_CONFIG_IHMINIO_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: root-user
+            - name: RCLONE_CONFIG_IHMINIO_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: root-password
+            - name: RCLONE_CONFIG_AZURE_TYPE
+              value: "azureblob"
+            - name: RCLONE_CONFIG_AZURE_ACCOUNT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backupConfig.mirror.mirrorObjectStore.azureCredentials.storageAccount.name }}
+                  key: {{ .Values.backupConfig.mirror.mirrorObjectStore.azureCredentials.storageAccount.key }}
+            - name: RCLONE_CONFIG_AZURE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.backupConfig.mirror.mirrorObjectStore.azureCredentials.storageKey.name }}
+                  key: {{ .Values.backupConfig.mirror.mirrorObjectStore.azureCredentials.storageKey.key }}
+            - name: DESTINATION_PATH
+              value: {{ .Values.backupConfig.mirror.mirrorObjectStore.destinationPath | quote }}
+            - name: BUCKETS_TO_MIRROR
+              value: {{ .Values.backupConfig.mirror.mirrorObjectStore.bucketsToMirror | join "," | quote }}
+            command:
+              - /bin/sh
+              - -c
+              - |
+                set -eu
+                set -o pipefail >/dev/null 2>&1 || true
+
+                minio_url_no_protocol=${RCLONE_CONFIG_IHMINIO_ENDPOINT#*://}
+                minio_host=$(echo $minio_url_no_protocol | cut -d':' -f1)
+                minio_port=$(echo $minio_url_no_protocol | cut -d':' -f2)
+
+                max_attempts="${MINIO_MIRROR_WAIT_ATTEMPTS:-120}"
+                attempt=1
+                while ! nc -z -v -w5 "$minio_host" "$minio_port" >/dev/null 2>&1; do
+                  if [ "${attempt}" -ge "${max_attempts}" ]; then
+                    echo "Timed out waiting for Minio server to become reachable (${minio_host}:${minio_port})"
+                    exit 1
+                  fi
+                  echo "Waiting for Minio server to become reachable (${attempt}/${max_attempts})..."
+                  attempt=$((attempt+1))
+                  sleep 5
+                done
+                echo "Minio server is reachable. Proceeding with bucket mirroring..."
+
+                BUCKETS=$(echo $BUCKETS_TO_MIRROR | tr -d '[:space:]')
+                OLD_IFS=$IFS
+                IFS=','
+                for BUCKET in $BUCKETS; do
+                  echo "Processing bucket: $BUCKET"
+                  time rclone sync --ca-cert /tls/minio/public.crt ihminio:$BUCKET azure:${DESTINATION_PATH%/}/$BUCKET
+                done
+{{- end }}

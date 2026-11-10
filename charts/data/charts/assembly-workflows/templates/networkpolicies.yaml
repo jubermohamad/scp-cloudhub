@@ -1,0 +1,273 @@
+{{- if .Values.networkPolicies.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aw.prefix" . }}-default-deny-ingress
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+
+{{/*
+  Infra that is NOT covered by the blanket same-namespace allow below. Each of
+  these gets its own `*-access` policy naming only its legitimate clients, so a
+  foothold in one application pod does not automatically reach the databases or
+  the identity provider. Lateral movement is the standard second move after any
+  initial compromise, and until this list existed every `app`-labelled pod could
+  open a socket to Postgres and Keycloak.
+
+  temporal-history / -matching / -worker are DELIBERATELY absent — see the
+  temporal-access policy for why.
+*/}}
+{{- $scopedInfra := list "assembly-postgres" "assembly-postgres-temporal" "assembly-redis" "assembly-keycloak" "assembly-temporal" "assembly-temporal-frontend" }}
+
+{{/*
+  Client lists, derived from the rendered pod specs rather than assumed. A
+  selector naming a pod that this deployment does not run is harmless (it
+  matches nothing), so optional components are listed unconditionally instead of
+  being wrapped in `if` blocks that could drift from their own enable flags.
+*/}}
+{{- $engineFamily := list "assembly-engine" "assembly-engine-worker" "assembly-engine-code-worker" "assembly-engine-subflow-worker" }}
+{{- $temporalComponents := list "assembly-temporal" "assembly-temporal-frontend" "assembly-temporal-history" "assembly-temporal-matching" "assembly-temporal-worker" "assembly-temporal-schema-migrate" "assembly-temporal-table-tuning" }}
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aw.prefix" . }}-allow-app-same-namespace-ingress
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: Exists
+      # Infra is carved out here and re-admitted, per component, by the
+      # *-access policies below. Adding a name to $scopedInfra without adding a
+      # matching policy would black-hole that component.
+      - key: app
+        operator: NotIn
+        values:
+          {{- range $scopedInfra }}
+          - {{ . }}
+          {{- end }}
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: Exists
+  policyTypes:
+    - Ingress
+---
+# Postgres holds every tenant's data. Clients are the services that are actually
+# wired to `database-url` (or a JDBC URL) in their rendered pod spec.
+#
+# The temporal components are here because `infra.postgresTemporal.enabled`
+# defaults to FALSE — in that configuration Temporal shares this database. When
+# a dedicated postgres-temporal IS enabled they use that instead, and listing
+# them in both places is what makes the policy correct under either setting.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres-access
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: assembly-postgres
+  ingress:
+    - from:
+        {{- range concat (list "assembly-core" "assembly-core-migrate" "assembly-llm-gateway" "assembly-mcp-hub" "assembly-sandbox-trigger" "assembly-keycloak" "assembly-postgres-init") $engineFamily $temporalComponents }}
+        - podSelector:
+            matchLabels:
+              app: {{ . }}
+        {{- end }}
+      ports:
+        - port: 5432
+          protocol: TCP
+  policyTypes:
+    - Ingress
+---
+# Temporal's own database when split out. Only Temporal components and its
+# schema jobs ever speak to it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aw.prefix" . }}-postgres-temporal-access
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: assembly-postgres-temporal
+  ingress:
+    - from:
+        {{- range $temporalComponents }}
+        - podSelector:
+            matchLabels:
+              app: {{ . }}
+        {{- end }}
+      ports:
+        - port: 5432
+          protocol: TCP
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aw.prefix" . }}-redis-access
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: assembly-redis
+  ingress:
+    - from:
+        {{- range concat (list "assembly-core" "assembly-mcp-hub" "assembly-sandbox-trigger") $engineFamily }}
+        - podSelector:
+            matchLabels:
+              app: {{ . }}
+        {{- end }}
+      ports:
+        - port: 6379
+          protocol: TCP
+  policyTypes:
+    - Ingress
+---
+# Keycloak is the identity provider: reaching it is the first step in most
+# credential attacks, so its client list is the tightest one here.
+#
+# The port is 8080, the CONTAINER port — NOT the Service's 8091. NetworkPolicy
+# is evaluated at the pod, after Service port translation. Using 8091 here would
+# render a policy that silently matches nothing and locks out every client.
+# (Same trap as the apisix 9080/9443 policy above.)
+#
+# `frontend` is deliberately NOT a client. Its VITE_KEYCLOAK_* values are baked
+# into browser JavaScript and the browser reaches Keycloak through APISIX; the
+# frontend pod is nginx serving static assets and never contacts Keycloak
+# server-side. Verified: no keycloak upstream in its nginx config.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aw.prefix" . }}-keycloak-access
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: assembly-keycloak
+  ingress:
+    - from:
+        {{- range concat (list "assembly-apisix" "assembly-core" "assembly-llm-gateway" "assembly-mcp-hub") $engineFamily }}
+        - podSelector:
+            matchLabels:
+              app: {{ . }}
+        {{- end }}
+      ports:
+        - port: 8080
+          protocol: TCP
+  policyTypes:
+    - Ingress
+---
+# The Temporal front door (7233) in both topologies: `temporal` in the default
+# auto-setup mode, `temporal-frontend` when infra.temporal.mode=split.
+#
+# temporal-history / -matching / -worker are intentionally left under the
+# blanket same-namespace allow rather than scoped. In split mode those
+# components form a membership ring over gossip ports (6933/6934/6935/6939)
+# alongside their RPC ports, and a mis-scoped policy there would partition the
+# cluster in a way that is slow and confusing to diagnose. They hold no
+# credentials, and the data they protect lives in postgres-temporal, which IS
+# scoped — so the isolation this buys is small and the risk is not.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-access
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values:
+          - assembly-temporal
+          - assembly-temporal-frontend
+  ingress:
+    - from:
+        {{- range concat (list "assembly-core" "assembly-temporal-namespace-setup") $engineFamily $temporalComponents }}
+        - podSelector:
+            matchLabels:
+              app: {{ . }}
+        {{- end }}
+      ports:
+        - port: 7233
+          protocol: TCP
+        # Membership/gossip between split components. Present unconditionally:
+        # in auto-setup mode nothing dials it, and a port nobody uses costs
+        # nothing, whereas omitting it in split mode breaks the ring.
+        - port: 6933
+          protocol: TCP
+  policyTypes:
+    - Ingress
+---
+# The gateway is the ONE pod that must accept traffic from outside the cluster.
+#
+# `default-deny-ingress` selects every pod, and `allow-app-same-namespace-ingress`
+# only re-allows pod->pod WITHIN the namespace. A request arriving from the
+# internet has no pod source, so no `podSelector` can ever match it — meaning
+# that without this policy, enabling a policy engine (#2111) silently takes the
+# public URL offline. Demo already carries an equivalent rule; the chart did not,
+# which is why enabling Calico on dev was unsafe before this.
+#
+# Deliberately has NO `from`: an ingress rule without one admits every source,
+# which is the point — the client is the internet. It stays narrow by being
+# scoped to the gateway pod and to its two listener ports, so this does not
+# re-open the rest of the namespace.
+#
+# Ports are the CONTAINER ports (9080/9443), not the Service ports (80/443):
+# NetworkPolicy is evaluated at the pod, after Service port translation. Both
+# are listed unconditionally because the Deployment declares both containerPorts
+# unconditionally, even though the 443 Service port is TLS-gated.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aw.prefix" . }}-allow-apisix-public-ingress
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: assembly-apisix
+  ingress:
+    - ports:
+        - port: 9080
+          protocol: TCP
+        - port: 9443
+          protocol: TCP
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aw.prefix" . }}-block-link-local-egress
+  labels:
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.0.0/16
+  policyTypes:
+    - Egress
+{{- end }}

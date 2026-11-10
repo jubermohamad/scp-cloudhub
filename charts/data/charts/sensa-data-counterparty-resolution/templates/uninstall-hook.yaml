@@ -1,0 +1,118 @@
+{{- if .Values.uninstallHook.enabled }}
+{{- $name := printf "%s-uninstall" (include "cpr.fullname" .) -}}
+# ── Clean-uninstall pre-delete hook ────────────────────────────────────────────────────────────────
+# A SparkApplication carries a finalizer the Spark Operator must clear; if the operator is torn down
+# first, `helm uninstall` can hang with the CR stuck Terminating (see deploy/README.md caveat). This
+# pre-delete Job removes the release's SparkApplications (clearing finalizers first, so it works even
+# if the operator is already gone) BEFORE Helm deletes the operator. It reuses the cpr-api image
+# (python + the kubernetes client — already present in-cluster after an install, so no extra pull),
+# with a dedicated least-privilege SA scoped to exactly this. Toggle with uninstallHook.enabled.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["sparkoperator.k8s.io"]
+    resources: ["sparkapplications"]
+    verbs: ["get", "list", "delete", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  labels: {{- include "cpr.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  # >= helm wait window (SRI convention; see the skill) — though as a
+  # pre-delete hook with hook-succeeded delete policy this is belt+braces
+  ttlSecondsAfterFinished: 7200
+  # Bound so a bad image/RBAC can't hang `helm uninstall` forever — the hook fails fast and the
+  # user can force-clean per the README (kubectl patch finalizers).
+  activeDeadlineSeconds: 120
+  backoffLimit: 1
+  template:
+    metadata:
+      labels: {{- include "cpr.labels" . | nindent 8 }}
+    spec:
+      {{- include "cpr.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ $name }}
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: "{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          env:
+            - name: CPR_RELEASE_NS
+              value: {{ .Release.Namespace | quote }}
+            - name: CPR_INSTANCE
+              value: {{ .Release.Name | quote }}
+          command: ["python", "-c"]
+          args:
+            - |
+              import os
+              from kubernetes import client, config
+              config.load_incluster_config()
+              api = client.CustomObjectsApi()
+              ns = os.environ["CPR_RELEASE_NS"]
+              inst = os.environ["CPR_INSTANCE"]
+              g, v, p = "sparkoperator.k8s.io", "v1beta2", "sparkapplications"
+              try:
+                  items = api.list_namespaced_custom_object(g, v, ns, p).get("items", [])
+              except Exception as e:
+                  print(f"list sparkapplications failed (nothing to clean?): {e}")
+                  raise SystemExit(0)
+              for it in items:
+                  meta = it.get("metadata", {})
+                  name = meta.get("name", "")
+                  labels = meta.get("labels", {}) or {}
+                  # Only this release's SparkApplications (install-time backfill + R38 on-demand builds).
+                  if labels.get("app.kubernetes.io/instance") not in (inst, None) and \
+                     labels.get("app.kubernetes.io/managed-by") != "cpr-api":
+                      continue
+                  try:
+                      api.patch_namespaced_custom_object(
+                          g, v, ns, p, name, {"metadata": {"finalizers": []}})
+                  except Exception as e:
+                      print(f"finalizer patch {name}: {e}")
+                  try:
+                      api.delete_namespaced_custom_object(g, v, ns, p, name)
+                      print(f"deleted sparkapplication {name}")
+                  except Exception as e:
+                      print(f"delete {name}: {e}")
+{{- end }}

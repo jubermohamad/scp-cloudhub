@@ -1,0 +1,115 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: nr-ui
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+spec:
+  secretName: {{ .Release.Name }}-cert-nr-ui
+  duration: {{ .Values.global.certificate.duration }}
+  renewBefore: {{ .Values.global.certificate.renewBefore }}
+  dnsNames:
+  - localhost
+  - {{ .Release.Name }}-nr-ui.{{ .Values.global.namespace }}.svc.cluster.local
+  {{- $stsName := include "generate.name.with.release.name" (list $ . "nr-ui") }}
+{{- range $i := until (int .Values.pod.replicas) }}
+  - {{ $stsName }}-{{ $i }}.{{ $.Release.Name }}-nr-ui.{{ $.Values.global.namespace }}.svc.cluster.local
+  - {{ $stsName }}-{{ $i }}
+{{- end }}
+  subject:
+    organizations: {{ .Values.global.certificate.subject.organizations }}
+    countries: {{ .Values.global.certificate.subject.countries }}
+    organizationalUnits: {{ .Values.global.certificate.subject.organizationalUnits }}
+    localities: {{ .Values.global.certificate.subject.localities }}
+    provinces: {{ .Values.global.certificate.subject.provinces }}
+  issuerRef:
+    name: {{ .Values.global.issuer.ca.name }}
+  keystores:
+    pkcs12:
+      create: true
+      passwordSecretRef:
+        name: {{ .Release.Name }}-jks-password
+        key: password
+  secretTemplate:
+      annotations:
+        reloader.stakater.com/match: "true"
+
+{{- if .Values.global.nrSubChartSwitches.enableKeycloak }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-keycloak-crt
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+spec:
+  secretName: {{ .Release.Name }}-keycloak-crt
+  duration: {{ .Values.global.certificate.duration }}
+  renewBefore: {{ .Values.global.certificate.renewBefore }}
+  dnsNames:
+  - {{ .Release.Name }}-keycloak.{{ .Values.global.namespace }}.svc.cluster.local
+  - {{ .Release.Name }}-keycloak.{{ .Values.global.namespace }}
+  - {{ .Release.Name }}-keycloak
+  - {{ .Release.Name }}-keycloak-headless.{{ .Values.global.namespace }}.svc.cluster.local
+  - {{ .Release.Name }}-keycloak-headless.{{ .Values.global.namespace }}
+  - {{ .Release.Name }}-keycloak-headless
+  subject:
+    organizations: {{ .Values.global.certificate.subject.organizations }}
+    countries: {{ .Values.global.certificate.subject.countries }}
+    organizationalUnits: {{ .Values.global.certificate.subject.organizationalUnits }}
+    localities: {{ .Values.global.certificate.subject.localities }}
+    provinces: {{ .Values.global.certificate.subject.provinces }}
+  issuerRef:
+    name: {{ .Values.global.issuer.ca.name }}
+  keystores:
+    pkcs12:
+      create: true
+      passwordSecretRef:
+        name: {{ .Release.Name }}-jks-password
+        key: password
+  secretTemplate:
+      annotations:
+        reloader.stakater.com/match: "true"
+{{- end }}
+{{- if .Values.global.saml.enabled }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ .Release.Name }}-application-keycloak-crt
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+spec:
+  secretName: {{ .Release.Name }}-application-keycloak-crt
+  duration: {{ .Values.global.certificate.duration }}
+  renewBefore: {{ .Values.global.certificate.renewBefore }}
+  dnsNames:
+  - localhost
+  - {{ .Release.Name }}-nr-ui.{{ .Values.global.namespace }}.svc.cluster.local
+  {{- $stsName := include "generate.name.with.release.name" (list $ . "nr-ui") }}
+{{- range $i := until (int .Values.pod.replicas) }}
+  - {{ $stsName }}-{{ $i }}.{{ $.Release.Name }}-nr-ui.{{ $.Values.global.namespace }}.svc.cluster.local
+  - {{ $stsName }}-{{ $i }}
+{{- end }}
+  subject:
+    organizations: {{ .Values.global.certificate.subject.organizations }}
+    countries: {{ .Values.global.certificate.subject.countries }}
+    organizationalUnits: {{ .Values.global.certificate.subject.organizationalUnits }}
+    localities: {{ .Values.global.certificate.subject.localities }}
+    provinces: {{ .Values.global.certificate.subject.provinces }}
+  issuerRef:
+    name: {{ .Values.global.issuer.ca.name }}
+  keystores:
+    pkcs12:
+      create: true
+      passwordSecretRef:
+        name: {{ .Release.Name }}-jks-password
+        key: password
+  secretTemplate:
+      annotations:
+        reloader.stakater.com/match: "true"
+{{- end }}

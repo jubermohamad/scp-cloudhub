@@ -1,0 +1,79 @@
+{{- if and .Values.infra.enabled .Values.infra.temporal.ui.enabled }}
+{{- /*
+Temporal's web UI — read-mostly operator console for the bundled Temporal.
+
+OFF by default, and deliberately NOT routed through APISIX: the UI ships no
+authentication of its own, so anything that exposes it also exposes full visibility
+into (and control over) every workflow — including inputs, which carry user data.
+Reach it with `kubectl port-forward svc/temporal-ui 8080:8080`.
+
+If an install ever does want it fronted by the gateway, put it behind the same
+openid-connect route treatment as the rest of /api rather than adding a public route.
+*/ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-ui
+  labels:
+    app: assembly-temporal-ui
+    tier: infra
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: assembly-temporal-ui
+  template:
+    metadata:
+      labels:
+        app: assembly-temporal-ui
+        tier: infra
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.infraScheduling" . | nindent 6 }}
+      containers:
+        - name: {{ include "aw.prefix" . }}-temporal-ui
+          image: {{ include "aw.infraImage" (dict "ref" .Values.infra.temporal.ui.image "ctx" $) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: TEMPORAL_ADDRESS
+              value: {{ include "aw.temporalHost" . | quote }}
+            - name: TEMPORAL_DEFAULT_NAMESPACE
+              value: {{ .Values.externalInfra.temporal.namespace | quote }}
+            # The UI serves from / and builds its own asset URLs; leaving these at the
+            # defaults is what keeps a port-forward on :8080 working unmodified.
+            - name: TEMPORAL_UI_PORT
+              value: "8080"
+            {{- with .Values.infra.temporal.ui.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.infra.temporal.ui.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aw.prefix" . }}-temporal-ui
+  labels:
+    app: assembly-temporal-ui
+    tier: infra
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: assembly-temporal-ui
+{{- end }}

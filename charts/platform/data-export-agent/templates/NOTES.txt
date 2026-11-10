@@ -1,0 +1,15 @@
+Data Export Hub agent deployed to namespace {{ include "dxa.namespace" . }} for cluster {{ .Values.clusterName }}.
+
+Prerequisites (see the chart README for details):
+  1. User-assigned managed identity {{ .Values.workloadIdentity.clientId }} with a federated credential for
+     system:serviceaccount:{{ include "dxa.namespace" . }}:{{ include "dxa.serviceAccountName" . }} on this cluster's OIDC issuer.
+  2. PostgreSQL AAD role "{{ .Values.postgres.user }}" on {{ .Values.postgres.host }} with read-only grants.
+  3. Storage Blob Data Contributor on each ADLS Gen2 destination account.
+  4. Key Vault Secrets User on vaults holding SFTP private keys.
+  5. The identity's object ID registered as this cluster's agent in CloudHub.
+
+Check it:
+  kubectl -n {{ include "dxa.namespace" . }} logs deploy/{{ include "dxa.name" . }} -f
+  kubectl -n {{ include "dxa.namespace" . }} get pods -l app.kubernetes.io/name={{ include "dxa.name" . }}
+
+The pod becomes Ready after its first successful heartbeat to {{ .Values.controlPlane.url }}.

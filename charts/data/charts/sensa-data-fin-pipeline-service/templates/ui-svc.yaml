@@ -1,0 +1,84 @@
+{{- if .Values.uiSvc.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-ui-svc
+  labels:
+    app: pipeline-ui-svc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pipeline-ui-svc
+  template:
+    metadata:
+      labels:
+        app: pipeline-ui-svc
+      {{- include "finPipeline.podAnnotations" . | nindent 6 }}
+    spec:
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      containers:
+        - name: pipeline-ui-svc
+          image: {{ include "finPipeline.image" (dict "root" . "name" .Values.uiSvc.imageName) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default (default dict .Values.global).imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: {{ .Values.uiSvc.port }}
+          env:
+            - name: CONFIG_SVC_URL
+              value: http://{{ include "finPipeline.prefix" . }}-config-svc:{{ .Values.configSvc.port }}
+            - name: EXEC_SVC_URL
+              value: http://{{ include "finPipeline.prefix" . }}-exec-svc:{{ .Values.execSvc.port }}
+            - name: AI_SVC_URL
+              value: {{ .Values.uiSvc.aiSvcUrl | quote }}
+            - name: ORCH_SVC_URL
+              value: {{ .Values.uiSvc.orchSvcUrl | default (printf "http://%s-orch-svc:%v" (include "finPipeline.prefix" .) .Values.orchSvc.port) | quote }}
+            {{- with .Values.uiSvc.craSvcUrl }}
+            # The CRA/KYC backend: the Signal Map + Event Map widgets proxy here
+            # (/api/kyc). Lives in its own namespace, so this must be an FQDN.
+            - name: CRA_SVC_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.uiSvc.dataSvcUrl }}
+            # The data service: the Data Map widget's ontology + map surfaces proxy here
+            # (/api/ontology, /api/data-svc). fs-mock-data-svc, which used to back the
+            # ontology locally, is retired.
+            - name: DATA_SVC_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.uiSvc.craWidgetsUrl }}
+            # cra-widget-ui remote bundle (BROWSER-fetched module-federation remote):
+            # served to the client at runtime via /api/widget-remotes. Must be a host the
+            # user's browser can reach — the widget ingress, never a ClusterIP name.
+            - name: CRA_WIDGETS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.uiSvc.dataWidgetsUrl }}
+            # data-process-ui remote bundle — same contract as CRA_WIDGETS_URL.
+            - name: DATA_WIDGETS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: PORT
+              value: {{ .Values.uiSvc.port | quote }}
+            - name: HOSTNAME
+              value: 0.0.0.0
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.uiSvc.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "finPipeline.prefix" . }}-ui-svc
+  labels:
+    app: pipeline-ui-svc
+spec:
+  selector:
+    app: pipeline-ui-svc
+  ports:
+    - port: {{ .Values.uiSvc.port }}
+      targetPort: {{ .Values.uiSvc.port }}
+{{- end }}

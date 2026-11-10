@@ -1,0 +1,83 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+enabled: true
+replicaCount: 1
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: ""
+
+image:
+  repository: "<acr_host>/training-api/model-training-tool"
+  tag: "<training_api_image_tag>"
+  # Use Always when tag is floating (e.g. :latest) so nodes re-pull after registry updates.
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+# Optional pod annotations; changing a value changes the pod template and forces a rollout
+# even when image.repository:tag is unchanged (pair with image.pullPolicy: Always for :latest).
+podAnnotations: {}
+
+# Deployment command is fixed to /app/.venv/bin/python (see templates/deployment.yaml). UV_PROJECT_ENVIRONMENT
+# + PATH + VIRTUAL_ENV below avoid `/usr/local/bin/python: No module named uvicorn` when a subprocess calls bare `python -m uvicorn`.
+uvProjectEnvironment: "/app/.venv"
+
+workerImage:
+  repository: "<acr_host>/training-api/model-training-tool-worker"
+  tag: "<training_worker_image_tag>"
+
+service:
+  type: ClusterIP
+  httpPort: 9000
+  mcpPort: 8002
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Keys in the parent Secret (global.secretName)
+secretKeys:
+  apiKey: mcp-api-key
+  databaseUrl: model-training-database-url
+  minioAccessKey: aws-access-key-id
+  minioSecretKey: aws-secret-access-key
+  mlflowTrackingUsername: mlflow-tracking-username
+  mlflowTrackingPassword: mlflow-tracking-password
+  awsAccessKeyId: aws-access-key-id
+  awsSecretAccessKey: aws-secret-access-key
+
+# Additional env vars (list of {name, value}); do not duplicate fixed keys set in deployment.yaml
+extraEnv:
+  - name: APP_NAME
+    value: model-training-tool
+  - name: MINIO_ENDPOINT_URL
+    value: "http://minio:9000"
+  - name: MLFLOW_TRACKING_URI
+    value: "http://mlflow-tracking:5000"
+  - name: MLFLOW_S3_ENDPOINT_URL
+    value: "http://minio:9000"
+  - name: DATASET_CACHE_BUCKET
+    value: datasets
+  - name: MODEL_TRAINING_SERVER_HOST
+    value: "0.0.0.0"
+
+ingress:
+  enabled: false
+  className: nginx
+  # Single hostname for /docs, /openapi.json, and /mcp (e.g. training-api.example.com)
+  host: ""
+  tlsSecretName: ""
+  # TM-31 / AC-449: nginx per-source-IP edge rate limits for the training host
+  # (throttles POST /train bursts). Empty => annotation omitted (no limit).
+  limitRps: "10"
+  limitConnections: "20"
+  limitBurstMultiplier: "5"
+  limitWhitelist: ""

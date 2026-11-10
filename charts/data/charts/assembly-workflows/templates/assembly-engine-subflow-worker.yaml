@@ -1,0 +1,170 @@
+{{- if .Values.agentsSubflowWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aw.prefix" . }}-engine-subflow-worker
+  labels:
+    app: assembly-engine-subflow-worker
+    tier: backend
+    {{- include "aw.labels" . | nindent 4 }}
+spec:
+  {{- $tunerMode := .Values.agentsSubflowWorker.temporal.tunerMode | default "" }}
+  replicas: {{ .Values.agentsSubflowWorker.replicas }}
+  revisionHistoryLimit: 3
+  {{- include "aw.noSurgeStrategy" . | nindent 2 }}
+  selector:
+    matchLabels:
+      app: assembly-engine-subflow-worker
+  template:
+    metadata:
+      annotations:
+        # SDK worker metrics (schedule-to-start latency, slot usage, sticky
+        # cache hits) — tier-2 §2.4 observability bring-up. Inert without a
+        # cluster Prometheus; any annotation-based scraper picks them up.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+        prometheus.io/path: "/metrics"
+        # Forces a rollout whenever platform-secrets changes -- secretKeyRef env
+        # vars are read once at container start, so without this a secret rotation
+        # never reaches already-running pods (#1325). Secrets are deterministic now
+        # (no randAlphaNum/lookup), so we hash the rendered Secret directly: it
+        # changes iff the actual content changes (incl. database-url, derived from
+        # the pg password) -- no spurious rollout on values-structure changes, and
+        # no need to fold in infra.postgres/externalInfra.
+        checksum/secrets: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+      labels:
+        app: assembly-engine-subflow-worker
+        tier: backend
+        {{- include "aw.labels" . | nindent 8 }}
+    spec:
+      # Must exceed the worker's graceful_shutdown_timeout (90s) so a drain
+      # lets in-flight activities finish instead of SIGKILLing them; with the
+      # old implicit 30s every rollout killed running >30s activities.
+      terminationGracePeriodSeconds: {{ .Values.agentsSubflowWorker.terminationGracePeriodSeconds | default 120 }}
+      # This workload does not call the Kubernetes API.
+      automountServiceAccountToken: false
+      {{- include "aw.imagePullSecrets" . | nindent 6 }}
+      {{- include "aw.scheduling" . | nindent 6 }}
+      {{- include "aw.waitForAgentBuilderTemporalInitContainer" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      topologySpreadConstraints:
+        # Soft: this tier has not been measured as placement-sensitive the way
+        # sandbox-execute was (#2123), so the spread stays a preference rather
+        # than a scheduling gate.
+        #
+        # matchLabelKeys still matters even while soft. Without it the scheduler
+        # scores a new pod against the OUTGOING revision's placement too, so
+        # during a rollout it can "prefer" a node that is only empty of new pods
+        # while already crowded with old ones. Per-revision scoring is what makes
+        # the preference actually spread the new ReplicaSet.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app: assembly-engine-subflow-worker
+      containers:
+        - name: agents
+          image: {{ include "aw.image" (dict "registry" .Values.image.registry "repo" .Values.agentsSubflowWorker.image.repository "default" "assembly-workflows-engine" "tag" .Values.agentsSubflowWorker.image.tag "globalTag" .Values.image.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | default $.Values.global.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 8000
+            - containerPort: 9100
+              name: metrics
+          env:
+            - name: AGENTS_ROLE
+              value: "worker"
+            - name: ASSEMBLY_ENGINE_ROLE
+              value: "worker"
+            - name: ENABLE_PHOENIX_TRACING
+              value: "false"
+            - name: ENABLE_PHOENIX_WORKFLOW_TRACING
+              value: "false"
+            - name: TEMPORAL_WORKER_TYPE
+              value: "agent-builder-only"
+            - name: TEMPORAL_AGENT_BUILDER_WORKER_QUEUES
+              value: {{ .Values.agentsSubflowWorker.temporal.workerQueues | default "subflow" | quote }}
+            # Workflow code reads this to resolve which queue to dispatch
+            # aux activities (save_workflow_checkpoint, etc.) to.
+            - name: TEMPORAL_AGENT_BUILDER_AUX_TASK_QUEUE
+              value: "agent-builder-aux-tasks"
+            # Worker Versioning (Build IDs) — playbook 39. Runs subflow child
+            # workflows, so it must advertise the same build as the other
+            # main-queue runners. Chart-wide `workerVersioning` source of truth.
+            - name: TEMPORAL_WORKER_VERSIONING_ENABLED
+              value: {{ include "aw.workerVersioning.enabled" . | quote }}
+            - name: ASSEMBLY_WORKER_BUILD_ID
+              value: {{ include "aw.workerVersioning.buildId" . | quote }}
+            - name: ASSEMBLY_TRACE_ASYNC_INGEST
+              # Batched trace ingestion (#507): trace writes ride a redis
+              # stream + per-process batch consumer; every run keeps its full
+              # trace (sync fallback on enqueue failure). +28% runs/hr
+              # measured at C=1200. Set "false" to restore synchronous writes.
+              value: {{ .Values.traceAsyncIngest | default "true" | quote }}
+            - name: TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS
+              value: {{ .Values.agentsSubflowWorker.temporal.maxConcurrentWorkflowTasks | default 200 | quote }}
+            - name: TEMPORAL_MAX_CONCURRENT_ACTIVITIES
+              value: {{ .Values.agentsSubflowWorker.temporal.maxConcurrentActivities | default 100 | quote }}
+            {{- if .Values.agentsSubflowWorker.temporal.maxCachedWorkflows }}
+            - name: TEMPORAL_MAX_CACHED_WORKFLOWS
+              value: {{ .Values.agentsSubflowWorker.temporal.maxCachedWorkflows | quote }}
+            {{- end }}
+            {{- if $tunerMode }}
+            - name: TEMPORAL_ENABLE_RESOURCE_TUNER
+              value: {{ if eq $tunerMode "resource-based" }}"true"{{ else }}"false"{{ end }}
+            - name: TEMPORAL_WORKER_TUNER_MODE
+              value: {{ $tunerMode | quote }}
+            {{- end }}
+            - name: TEMPORAL_WORKFLOW_TASK_POLLER_MAX
+              value: {{ .Values.agentsSubflowWorker.temporal.workflowTaskPollerMax | default 100 | quote }}
+            # Lower than the main worker's 100 on purpose: subflow pods only run
+            # child-agent activities, a fraction of main-queue volume. Raise via
+            # values if the split pool becomes the bottleneck.
+            - name: TEMPORAL_ACTIVITY_TASK_POLLER_MAX
+              value: {{ .Values.agentsSubflowWorker.temporal.activityTaskPollerMax | default 20 | quote }}
+            - name: TEMPORAL_METRICS_PROMETHEUS_BIND_ADDRESS
+              value: "0.0.0.0:9100"
+            - name: WORKER_ID
+              value: "assembly-engine-subflow-worker"
+            - name: ASSEMBLY_FAST_CUSTOM_CODE_ACTIVITY_TIMEOUT_SECONDS
+              value: {{ .Values.agentsSubflowWorker.fastCodeActivityTimeout | default 60 | quote }}
+            - name: ASSEMBLY_DEFAULT_ACTIVITY_RETRY_MAX_ATTEMPTS
+              value: {{ .Values.agentsSubflowWorker.temporal.defaultActivityRetryMaxAttempts | default 3 | quote }}
+            # Subflow pods run the same workflow code as the main worker —
+            # keep dispatch behavior identical (see assembly-engine-worker).
+            - name: ASSEMBLY_LOCAL_ACTIVITY_NODE_TYPES
+              value: {{ .Values.agentsSubflowWorker.localActivityNodeTypes | default "api_request,transform,condition,while" | quote }}
+            - name: ASSEMBLY_WORKFLOW_PLANNING_YIELD_NODE_THRESHOLD
+              value: {{ .Values.agentsSubflowWorker.planningYieldNodeThreshold | default 150 | quote }}
+            {{- include "aw.agentEnv" . | nindent 12 }}
+            {{- with .Values.agentsSubflowWorker.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.agentsSubflowWorker.resources | nindent 12 }}
+          # TCP liveness, not httpGet /health — see assembly-engine-worker.yaml
+          # for the full rationale: this pod runs the Temporal worker + uvicorn
+          # on one asyncio loop, and httpGet liveness killed busy-but-alive
+          # workers under load (in-flight activities lost → retry storm →
+          # throughput collapse). tcpSocket can't be fooled by a busy loop.
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+{{- end }}

@@ -1,0 +1,9 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.global.issuer.ca.name }}
+  namespace: {{ .Values.global.namespace }}
+spec:
+  ca:
+    secretName: {{ .Values.issuer.selfSigned.certificate.secretName }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: secret
+description: Simple Helm chart to create Kubernetes Secrets with custom labels
+type: application
+version: 0.1.0
+appVersion: "1.0"

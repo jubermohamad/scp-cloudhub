@@ -1,0 +1,49 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    service: {{ .Release.Name }}-nr-ui
+    app: {{ .Release.Name }}-nr-ui
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+  name: {{ .Release.Name }}-nr-ui
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+    app: {{ .Release.Name }}-nr-ui-instance-pod
+  type: ClusterIP
+  ports:
+    - name: ui-port
+      port: 8443
+      targetPort: 8443
+    {{- if eq .Values.pod.java.switchOnDebug true }}
+    - name: ui-debug-port
+      port: 8787
+      targetPort: 8787
+    {{- end }}
+# http://localhost:<metrics-port>/metrics
+    - name: metrics-port
+      port: 9990
+      targetPort: 9990
+
+{{- if .Values.global.kubePrometheusStackPresent }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-nr-ui-monitor
+  labels:
+    release: {{ .Values.global.prometheus.release }}
+    {{- include "common.helm.metadata.labels" . | indent 4 }}
+  namespace: {{ .Values.global.namespace }}
+spec:
+  selector:
+   matchLabels:
+      app: {{ .Release.Name }}-nr-ui
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.global.namespace }}
+  endpoints:
+  - port: metrics-port
+    interval: 1s
+{{- end }}

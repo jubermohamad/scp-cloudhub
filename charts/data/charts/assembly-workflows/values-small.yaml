@@ -1,0 +1,69 @@
+# Sizing profile: small (3-node B2ms cluster, ~$250/mo)
+agents:
+  replicas: 1
+  hpa: { enabled: false }
+agentsWorker:
+  replicas: 1
+agentsCodeWorker:
+  replicas: 1
+agentsSubflowWorker:
+  enabled: false
+llmGateway:
+  replicas: 1
+userProject:
+  replicas: 1
+frontend:
+  replicas: 1
+apisix:
+  replicas: 1
+sandboxExecute:
+  # Moderate bump 1 -> 2 to partially absorb custom_code moving off the
+  # in-process exec() path (trustedCodeInprocess: false, #1372). Measured on
+  # assembly-perf-small: sandboxed custom_code costs ~+81 ms/node and
+  # sandbox-execute — not Postgres — becomes the ceiling, CPU-throttled at its
+  # limit while the code-worker sits at 0.08 cores.
+  #
+  # For a SIZE-overlay deployment this is broken -> working, NOT fast -> slow.
+  # small/medium/large inherit the chart default, which on main is
+  # `local-nsjail` — and that HARD-FAILS custom_code on a non-root code-worker
+  # (exit 255, no fallback). So there is no ~8/s SIZE-tier ceiling being given
+  # up here; there was no working custom_code to regress from.
+  #
+  # Measured ceilings on assembly-perf-small (codeheavy-10), single variable:
+  #   in-process ~10/s (p50 1046 ms @ c=8)   sandboxed ~1.6/s (p50 4700 ms @ c=8)
+  # Scaling is near-linear in sandbox CPU for this shape, so ~6/s would need
+  # ~8 sandbox cores. perf-small's app pool is 8 vCPU TOTAL, shared with
+  # engine/core/frontend/apisix — so that genuinely does not fit, and the small
+  # tier's custom_code ceiling is legitimately lower. Do not raise replicas
+  # beyond 2 without more app-pool headroom.
+  #
+  # Prefer replicas over a bigger cpu limit: CFS throttling on a raised limit
+  # produces latency pathology rather than throughput.
+  replicas: 2
+  resources:
+    requests: { memory: 512Mi, cpu: 250m }
+    # Chart default limit is 500m, so 2 x 1 core is a 4x sandbox-CPU increase
+    # over what a SIZE-overlay deployment gets on main — substantial, not token.
+    # Verified as the binding constraint: under sandboxed load on perf-small,
+    # sandbox-execute sat at 1943-1999m of its 2000m limit while the
+    # code-worker idled at ~0.08 cores and postgres-temporal at ~0.26 of 4
+    # cores. Prefer replicas over a bigger single limit: CFS throttling on a
+    # raised limit gives latency pathology rather than throughput (untested
+    # rationale — 2x1core vs 1x2core has not been measured head to head).
+    # cpu stays at 1 deliberately — see the replicas-over-limit reasoning above,
+    # and perf-small's 8 vCPU app pool genuinely does not fit more.
+    #
+    # memory goes 1Gi -> 3Gi because #2118 made it real. It was written while
+    # the egress filter had the service in a cgroup outside the kubelet
+    # hierarchy, so no memory.max applied and 1Gi was never tested. Enforced,
+    # it OOM-kills rather than erroring: a single custom_code node measured at
+    # 400 MB resident on dev, and 4 uvicorn workers share this cap. Raising a
+    # LIMIT does not reserve capacity — the 512Mi request is unchanged, so
+    # perf-small's scheduling density is untouched.
+    limits: { memory: 3Gi, cpu: "1" }
+sandboxTrigger:
+  replicas: 1
+mcpHub:
+  replicas: 1
+podDisruptionBudgets:
+  enabled: false

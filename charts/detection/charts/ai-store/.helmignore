@@ -1,0 +1,34 @@
+# Patterns to ignore when building packages.
+# This supports shell glob matching, relative path matching, and
+# negation (prefixed with !). Only one pattern per line.
+.DS_Store
+# Common VCS dirs
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+# Common backup files
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+# Various IDEs
+.project
+.idea/
+*.tmproj
+.vscode/
+# Local Python envs (never package; symlinks can confuse Helm into following system binaries)
+.venv/
+venv/
+ENV/
+# subchart sources — charts/*.tgz are the deployable copies (file://./ deps)
+mlflow/
+minio/
+zot/
+model_training_tool/
+monitoring_tool/
+values-scp.yaml

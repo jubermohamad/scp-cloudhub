@@ -1,0 +1,46 @@
+<dbspec name="IETAlert" comments="Alerts from V_SM_IETALERTS">
+
+    <!-- Read Alert data from V_SM_IETALERTS view -->
+    <source-query>
+SELECT
+	ALERT_ID as "AlertID",
+	RUN_DATE as "AlertDate",
+	CUSTOMER_ID as "CustomerID",
+	ACCOUNT_ID as "AccountID",
+	CDD_RISK_LEVEL as "CDDRiskLevel",
+	DISCLOSURE_COUNT as "DisclosureCount",
+	EMPLOYMENT_STATUS as "EmploymentStatus",
+	SOURCE_OF_FUNDS as "SourceOfFunds",
+	PEP_FLAG as "PEPFlag",
+	CUSTOMER_SEGMENT as "CustomerSegment",
+	ORGUNIT_ID as "OrgunitID",
+	ORGUNIT_CODE as "OrgunitCode",
+	CUSTOMER_TYPE_DESC as "CustomerType",
+	NATIONALITY_CODE as "NationalityCode",
+	MONTHS_SINCE_INCORPORATED as "MonthsSinceIncorporated",
+	MONTHS_SINCE_ACQUISITION as "MonthsSinceAcquisition",
+	GENDER_CODE as "Gender",
+	CUSTOMER_AGE as "CustomerAge",
+	COUNTRY_OF_RESIDENCE as "CountryOfResidence",
+	COUNTRY_OF_ORIGIN as "CountryOfOrigin",
+	PREVIOUS_ALERT_COUNT as "PreviousAlertCount",
+	ALERT_SCORE as "AlertScore",
+	ALERT_FOR_EACH_TRANSACTION as "AlertForEachTransaction",
+	ALERT_DAILY as "AlertDaily",
+	ALERT_WEEKLY as "AlertWeekly",
+	ALERT_MONTHLY as "AlertMonthly",
+	ALERT_ACCOUNT as "AlertAccount",
+	ALERT_CLIENT as "AlertClient"
+FROM
+	V_SM_IETALERTS
+WHERE
+	VALID_FLAG = 'N'	
+ORDER BY 
+	ALERT_ID
+    </source-query>
+    <timefield>AlertDate</timefield>
+
+ 
+	<column fieldname="AlertDate" dataType="DATE" columnname="RUN_DATE"/>
+	
+</dbspec>

@@ -1,0 +1,195 @@
+{{- $releaseName := .Release.Name -}}
+{{- $releaseNamespace := .Release.Namespace -}}
+{{- $helmSolution := .Values.helmSolution -}}
+
+apiVersion: "sparkoperator.k8s.io/v1beta2"
+kind: SparkApplication
+metadata:
+  name: "{{ include "smbd.fullname" . }}-{{ .Values.helmSolution }}"
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    {{- include "smbd.labels" . | nindent 4 }}
+spec:
+  {{- if eq .Values.global.useImagePullSecrets "true" }}
+  imagePullSecrets:
+    - regcred
+  {{- end }}
+  sparkConf:
+  {{- range $key, $value := .Values.sparkConf }}
+    {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  type: Scala
+  mode: cluster
+  {{- if eq .Values.useNodeSelector "true" }}
+  nodeSelector:
+  {{- toYaml .Values.nodeSelector | nindent 4 }}
+  {{- end }}
+  timeToLiveSeconds: {{ .Values.timeToLiveSeconds }}
+  image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+  imagePullPolicy: {{ .Values.imagePullPolicy }}
+  mainClass: {{ .Values.mainClass }}
+  mainApplicationFile: {{ .Values.mainApplicationFile }}
+  {{- if .Values.arguments }}
+  arguments: {{- $args := splitList ";" .Values.arguments -}}
+    {{- range $args }}
+    - "{{ . }}"
+    {{- end }}
+  {{- end }}
+  sparkVersion: {{ .Values.sparkVersion  }}
+  restartPolicy:
+    type: {{ .Values.restartPolicy.type  }}
+    {{if eq .Values.restartPolicy.type "OnFailure" }}
+{{ .Values.restartPolicy.retries | toYaml | indent 4 }}
+    {{ end }}
+  volumes:
+{{ include "postgres.server.secret-volume" . | nindent 4 }}
+{{ include "smbd.config-volumes" . | nindent 4 }}
+{{- if or (eq .Values.app_env "qa") (eq .Values.app_env "dev") }}
+{{ include "smbd.qa-volumes" . | nindent 4 }}
+{{- end }}
+    {{- $volumes := index .Values (printf "%sVolumes" $helmSolution) -}}
+    {{- range $volumes }}
+    - name: {{ printf "%s-%s" $releaseName .name  | quote }}
+      persistentVolumeClaim:
+        claimName: {{ include "generate.name.with.release.name" (list $ . .persistentVolumeClaim.claimName) | quote }}
+    {{- end }}
+    {{- range .Values.s3Volumes }}
+    {{ $hostPathPath := .hostPath.path  }}
+    - name: {{ printf "%s-%s" $releaseName .name  | quote }}
+      hostPath:
+        path: {{ printf "%s/%s" $hostPathPath $releaseNamespace | quote }}
+    {{- end }}
+{{- if .Values.extraVolumes }}
+{{ .Values.extraVolumes | toYaml | indent 4 }}
+{{- end }}
+
+{{- if .Values.monitoring }}
+  monitoring:
+{{ .Values.monitoring | toYaml | indent 4}}
+{{- end }}
+  driver:
+    {{- if eq .Values.global.useResourceConstraints "true" }}
+    cores: {{ .Values.driver.cores }}
+    coreLimit: {{ .Values.driver.coreLimit }}
+    memory: {{ .Values.driver.memory }}
+    {{- end }}
+    securityContext:
+      privileged: true
+    javaOptions: {{ .Values.driver.javaOptions }}
+    labels:
+      version: {{ .Values.sparkVersion  }}
+    {{- if .Values.labels }}
+    {{- toYaml .Values.labels | nindent 6 }}
+    {{- end }}
+    serviceAccount: {{ .Values.serviceAccount }}
+    volumeMounts:
+    {{ include "postgres.server.secret-mount" . | nindent 6 }}
+    {{ include "smbd.cm-mount" . | nindent 4 }}
+    {{ include "smbd.secret-mount" . | nindent 4 }}
+    {{- if or (eq .Values.app_env "qa") (eq .Values.app_env "dev") }}
+    {{ include "smbd.aml-cm-mount" . | nindent 4 }}
+    {{ include "smbd.aml2-cm-mount" . | nindent 4 }}
+    {{ include "smbd.model-cm-mount" . | nindent 4 }}
+    {{- end }}
+      {{- $volumemounts := index .Values (printf "%sVolumemounts" $helmSolution) -}}
+      {{- range $volumemounts }}
+      - name: {{ printf "%s-%s" $releaseName .name | quote }}
+        mountPath: {{ .mountPath | quote }}
+      {{- if .subPath }}
+        subPath: {{ .subPath | quote }}
+      {{- end }}
+      {{- end }}
+      {{- $s3Volumesmounts := .Values.s3Volumesmounts -}}
+      {{- range $s3Volumesmounts }}
+      - name: {{ printf "%s-%s" $releaseName .name | quote }}
+        mountPath: {{ .mountPath | quote }}
+      {{- if .subPath }}
+        subPath: {{ .subPath | quote }}
+      {{- end }}
+      {{- if .mountPropagation }}
+        mountPropagation: {{ .mountPropagation | quote }}
+      {{- end }}
+      {{- end }}
+    initContainers:
+    - name: folder-init
+      {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.smbd }}
+      image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.global.override.overrideDockerImageName }}"
+      {{- else }}
+      image: "{{ .Values.global.dockerRegistryName }}/{{ .Values.imageRepository }}:{{ .Values.imageTag }}"
+      {{- end }}
+      imagePullPolicy: {{ .Values.imagePullPolicy }}
+      command:
+        - /bin/bash
+        - -exec
+        - |
+          cp -r /opt/tmpConf/. /opt/smbd/conf/;
+          {{- if and .Values.global.override.overrideDockerImageName .Values.global.override.chartEnable.smbd }}
+          if [ -f /opt/override/override_version.properties ]; then cp /opt/override/override_version.properties /opt/smbd/conf; fi
+          if [ -d  /opt/override/conf/smbd/{{ $helmSolution }} ]; then cp -r /opt/override/conf/smbd/{{ $helmSolution }}/. /opt/smbd/conf/; fi
+          {{- end }}
+          chown -R 200:200 /opt/smbd/;
+      securityContext:
+        {{- if .Values.global.useRootAccountForInit }}
+        runAsUser: 0
+        {{- end }}
+        allowPrivilegeEscalation: false
+        {{- if not .Values.global.useRootAccountForInit }}
+        runAsNonRoot: true
+        {{- end }}
+      volumeMounts:
+        {{ include "smbd.cm-mount" . | nindent 6 }}
+        {{ include "smbd.secret-mount" . | nindent 6 }}
+        {{- if or (eq .Values.app_env "qa") (eq .Values.app_env "dev") }}
+        {{ include "smbd.aml-cm-mount" . | nindent 6 }}
+        {{ include "smbd.aml2-cm-mount" . | nindent 6 }}
+        {{ include "smbd.model-cm-mount" . | nindent 6 }}
+        {{- end }}
+        {{- $volumemounts := index .Values (printf "%sVolumemounts" $helmSolution) -}}
+        {{- range $volumemounts }}
+        - name: {{ printf "%s-%s" $releaseName .name | quote }}
+          mountPath: {{ .mountPath | quote }}
+        {{- if .subPath }}
+          subPath: {{ .subPath | quote }}
+        {{- end }}
+        {{- end }}
+{{- if .Values.extraVolumemounts }}
+{{ .Values.extraVolumemounts | toYaml | indent 6 }}
+{{- end }}
+  executor:
+    {{- if eq .Values.global.useResourceConstraints "true" }}
+    cores: {{ .Values.executor.cores }}
+    memory: {{ .Values.executor.memory }}
+    {{- end }}
+    securityContext:
+      privileged: true
+    instances: {{ .Values.executor.instances }}
+    javaOptions: {{ .Values.executor.javaOptions }}
+    labels:
+      version: {{ .Values.sparkVersion  }}
+    {{- if .Values.labels }}
+    {{- toYaml .Values.labels | nindent 6 }}
+    {{- end }}
+    volumeMounts:
+      {{ include "postgres.server.secret-mount" . | nindent 6 }}
+      {{- $volumemounts := index .Values (printf "%sVolumemounts" $helmSolution) -}}
+      {{- range $volumemounts }}
+      - name: {{ printf "%s-%s" $releaseName .name | quote }}
+        mountPath: {{ .mountPath | quote }}
+      {{- if .subPath }}
+        subPath: {{ .subPath | quote }}
+      {{- end }}
+      {{- end }}
+      {{- $s3Volumesmounts := .Values.s3Volumesmounts -}}
+      {{- range $s3Volumesmounts }}
+      - name: {{ printf "%s-%s" $releaseName .name | quote }}
+        mountPath: {{ .mountPath | quote }}
+      {{- if .subPath }}
+        subPath: {{ .subPath | quote }}
+      {{- end }}
+      {{- if .mountPropagation }}
+        mountPropagation: {{ .mountPropagation | quote }}
+      {{- end }}
+      {{- end }}
+{{- if .Values.extraVolumemounts }}
+{{ .Values.extraVolumemounts | toYaml | indent 6 }}
+{{- end }}

@@ -1,0 +1,23 @@
+{{- if .Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor" -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "transac-api.fullname" . }}-monitor
+  labels:
+    {{- include "transac-api.labels" . | nindent 4 }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  endpoints:
+    {{- range .Values.service.ports }}
+    {{- if eq .name "transac-api" }}
+    - path: /v1/metrics
+      port: {{ .name }}
+    {{- end }}
+    {{- end }}
+  namespaceSelector: 
+    matchNames:
+      -  {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "transac-api.selectorLabels" . | nindent 6 }}
+{{- end }}

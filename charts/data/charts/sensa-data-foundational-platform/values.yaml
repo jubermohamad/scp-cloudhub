@@ -1,0 +1,415 @@
+# Prism — FS Foundation data platform.
+#
+# Two install shapes, one chart:
+#
+#   STANDALONE (what deploy/remote/*.yaml does today)
+#     helm install prism deploy/helm -n prism --set fullnameOverride=prism
+#
+#   INSIDE THE SRI PLATFORM (as a data-domain subchart, replacing Lens)
+#     names render `<release>-data-prism-<component>` with no overrides.
+#
+# Nothing here is a credential. Every password/API key is read from a Secret
+# that must already exist in the namespace — see README.md § Prerequisites.
+
+# ── NAMING ───────────────────────────────────────────────────────────────────
+# Resources are `<fullname>-<component>` and labels are `app: prism-<component>`.
+# Both are deliberately SCOPED: a bare label like `app: postgres` or
+# `app: frontend` is a standing collision in a shared namespace — on sri-qa two
+# products both carried `app: frontend` and each Service selected the other's
+# pods, splitting traffic between two different apps.
+#
+# fullname = fullnameOverride, else `<release>-<namePrefix>`.
+#   SRI platform:  release sri-qa + default prefix -> sri-qa-data-prism-api
+#   standalone:    fullnameOverride: prism         -> prism-api
+namePrefix: data-prism
+fullnameOverride: ""
+
+# Deploy-time pod annotation, applied to every Deployment this chart owns
+# (api, console, chatBackend). The CI pipeline stamps the deploying commit's
+# sha here (`--set podAnnotations.gitSha=<sha>`) because api/console/
+# chatBackend all ride a MUTABLE branch tag (see image: below) — redeploying
+# the same branch pushes new bytes to an unchanged tag string, which alone
+# changes nothing in a pod template, so Kubernetes would never roll the pods.
+# A changing annotation value forces a new ReplicaSet every deploy regardless
+# of whether the tag string moved.
+podAnnotations: {}
+
+global:
+  # Standalone default for the platform-wide pull-policy knob. In the SRI
+  # umbrella `global.imagePullPolicy` is set once and every chart follows.
+  # Always because the first-party images ride mutable tags in dev.
+  imagePullPolicy: Always
+  # NO `pullSecrets` KEY HERE, deliberately.
+  #
+  # `global` is SHARED by every chart in an umbrella, and the SRI platform's
+  # global.pullSecrets is a MAP ({enabled, dockerconfigjson, names}) describing
+  # how the pull secret is created. Declaring a LIST here makes helm refuse the
+  # whole merge for that branch — "destination for global.pullSecrets is a
+  # table. Ignoring non-table value ([])" / "cannot merge map onto non-map ...
+  # Skipping" — and the skip takes UNRELATED sibling values with it. That is not
+  # theoretical: this one line silently dropped another product's database DSN
+  # and failed the SRI platform install on 2026-08-25, taking the environment
+  # from 97 pods to 19. Standalone installs use imagePullSecrets below.
+  # Free-form labels every resource inherits (SRI passes environment/topology).
+  labels: {}
+
+# Pull secret for the prism images (symphonyfs.azurecr.io — the org-standard
+# registry every other sensa-data repo publishes to and the one the SRI
+# platform's pull secrets already exist for). Not created here — it holds a
+# registry credential.
+#
+# CUTOVER (2026-08): images used to live at fsaisrieurekaaiacr.azurecr.io
+# under a `prism-prism-<component>`-shaped secret (`acr-prism`). That secret
+# is still whatever it was in any namespace that predates this change; it is
+# NOT read anymore and is safe to delete once this registry is confirmed
+# working. `symphonyfs-acr-secret` is the name every sibling repo's chart
+# already uses for this same registry (see e.g. sensa-data-ontology's
+# lens-platform chart) — kept identical here on purpose so one org-wide
+# credential name means one thing everywhere.
+imagePullSecrets:
+  - name: symphonyfs-acr-secret
+
+image:
+  # Registry + repository prefix shared by the three first-party images.
+  registry: symphonyfs.azurecr.io
+  repository: sensa-data-foundational-platform
+
+# ── SECRETS (the chart CREATES these; see templates/secrets.yaml) ────────────
+# Generated once and then preserved: an upgrade re-emits whatever is already in
+# the cluster rather than rotating it, because rotating a database password locks
+# the app out of its own data. Supply a value below to pin one, or point
+# `<name>Existing` at a Secret you manage (Vault, SOPS, the platform's generate
+# mode) and the chart creates nothing for it.
+#
+# The Anthropic key is the exception a chart cannot invent: without a value no
+# Secret is created, the chat-backend mounts it optional, and the assistant
+# reports it is not configured instead of the pod failing to start.
+secrets:
+  # keys: NEO4J_AUTH ("neo4j/<password>") and password
+  neo4jAuth: neo4j-auth
+  # key: password — the LEDGER credential (truth). Never reused for the warehouse.
+  ledgerPg: ledger-pg
+  # key: password — the WAREHOUSE credential (disposable data plane).
+  warehousePg: warehouse-pg
+  # key: api_key — the assistant's model credential. Mounted `optional: true`:
+  # without it the pod still runs and the assistant answers "not logged in".
+  anthropicAuth: anthropic-auth
+
+  # Pin a value (otherwise generated); leave empty for the generated default.
+  neo4jPassword: ""
+  ledgerPgPassword: ""
+  warehousePgPassword: ""
+  # No generated default — see above.
+  anthropicApiKey: ""
+
+  # Bring your own Secret instead: set these to an existing object's name and
+  # the chart will not create that one. The keys it must carry are the same
+  # ones documented against each name above.
+  neo4jAuthExisting: ""
+  ledgerPgExisting: ""
+  warehousePgExisting: ""
+  anthropicAuthExisting: ""
+
+# ── BUNDLED INFRA (true = as deployed today) ─────────────────────────────────
+# Flip one to false and set the matching externalInfra entry to point Prism at
+# infrastructure the platform already runs — this is what will let the SRI
+# umbrella hand Prism the platform Postgres instead of a private instance.
+infra:
+  neo4j:
+    # How long a consumer's wait-for-bolt initContainer waits before giving up.
+    # Generous on purpose: a cold neo4j replaying its transaction log can take
+    # minutes, and failing the pod early only moves the crash-loop one container
+    # to the left.
+    waitTimeoutSeconds: 600
+    enabled: true
+    image:
+      repository: neo4j
+      tag: 5.26.9-community
+      pullPolicy: ""            # empty = inherit global.imagePullPolicy
+    plugins: '["apoc"]'
+    # Heap and page cache are set EXPLICITLY because Neo4j otherwise sizes them
+    # from the container's visible memory and overshoots the limit. Keep
+    # heap(512m) + pagecache(128m) + JVM overhead comfortably under limits.memory
+    # (1400Mi): the community edition has no way to recover from an OOMKill mid
+    # transaction other than replaying the ledger.
+    heapInitial: 512m
+    heapMax: 512m
+    pageCache: 128m
+    resources:
+      requests: { cpu: 100m, memory: 700Mi }
+      limits: { memory: 1400Mi }
+    persistence:
+      size: 4Gi
+      storageClass: managed-csi
+      accessModes: ["ReadWriteOnce"]
+
+  ledgerPostgres:
+    # The source of truth, on its own instance BY DESIGN. Never merge it with
+    # the warehouse: the warehouse rebuild job runs DROP DATABASE as that
+    # instance's superuser, and the two stores have opposite contracts (the
+    # warehouse is disposable and rebuilt from dumps; the ledger is append-only
+    # forever).
+    enabled: true
+    image:
+      repository: postgres
+      tag: 16-alpine
+      pullPolicy: ""
+    user: prism
+    database: prism_ledger
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { memory: 512Mi }
+    persistence:
+      size: 2Gi
+      storageClass: managed-csi
+      accessModes: ["ReadWriteOnce"]
+
+  warehousePostgres:
+    enabled: true
+    image:
+      repository: postgres
+      tag: 16-alpine
+      pullPolicy: ""
+    user: prism
+    # No POSTGRES_DB: the warehouse databases (foundation_warehouse,
+    # kyc_warehouse) are CREATEd by the restore/rebuild jobs, not by the image's
+    # entrypoint, so the instance comes up with only the default `postgres` db.
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 768Mi }
+    persistence:
+      size: 4Gi
+      storageClass: managed-csi
+      accessModes: ["ReadWriteOnce"]
+
+# The warehouse databases, named in ONE place: the ensure-databases Job creates
+# them, and the restore Job seeds each from /dumps/<name>.sql — the dump
+# filenames baked into the API image are exactly these names, so the list is
+# load-bearing on both sides. `prism` is deliberately NOT here: the live
+# warehouse server has one, but only because POSTGRES_USER=prism with no
+# POSTGRES_DB makes the entrypoint create a same-named database. Nothing uses it.
+warehouseDatabases:
+  - kyc_warehouse
+  - foundation_warehouse
+
+# ── ENSURE DATABASES (provisioning an EXTERNAL server) ───────────────────────
+# Pointing Prism at a server someone else runs does not make its databases
+# appear. This Job creates the owner role and the databases, idempotently, and
+# keeps the role's password in step with the secret the apps read.
+#
+# One Job per SERVER (see templates/job-ensure-databases.yaml for why), gated so
+# it runs for whichever store is EXTERNAL.
+ensureDatabases:
+  enabled: true
+
+  # Bundled servers are excluded by default for two reasons, not one:
+  #   1. they do not need it — the postgres image's entrypoint creates
+  #      POSTGRES_DB on first boot, and the restore/rebuild Jobs create the
+  #      warehouse databases;
+  #   2. as a PRE-install hook it would deadlock — the StatefulSet it would
+  #      provision on does not exist until the apply phase.
+  # Set true anyway and the Job switches itself to a POST-phase hook, which is
+  # the only phase that can work for a server this release creates.
+  includeBundled: false
+
+  # ~10 minutes of exponential backoff on top of the in-pod wait loop: enough
+  # for a cold or failing-over server, short enough to fail fast on a bad
+  # credential or an unreachable host.
+  backoffLimit: 6
+
+  # The SUPERUSER credential, used by this Job and nothing else. Required
+  # whenever the Job renders. Keys default to CNPG's superuser secret shape.
+  adminExistingSecret: ""
+  adminSecretKeys:
+    username: username
+    password: password
+  # Per-server override, for the case where truth and the warehouse live on
+  # different servers with different admin credentials.
+  # Per-server switches. False when something ELSE already owns that server's
+  # role and database — SRI's platform-services runs its own ensure-db for every
+  # product on the shared Postgres, and two creators of one database end up
+  # disagreeing about who owns it. Disabling ensureDatabases wholesale to avoid
+  # that overlap silently took the bundled warehouse's databases with it.
+  ledgerPostgres:
+    enabled: true
+    adminExistingSecret: ""
+  warehousePostgres:
+    enabled: true
+    adminExistingSecret: ""
+
+# ── EXTERNAL INFRA (used for whichever infra.* is disabled) ──────────────────
+externalInfra:
+  neo4j:
+    uri: ""                     # e.g. bolt://neo4j.data.svc.cluster.local:7687
+    user: neo4j
+    database: neo4j
+  ledgerPostgres:
+    host: ""
+    port: 5432
+    user: prism
+    database: prism_ledger
+    # Optional full DSN override. Leave empty to have the chart compose
+    # postgresql://<user>:$(LEDGER_PG_PASSWORD)@<host>:<port>/<database>.
+    dsn: ""
+  warehousePostgres:
+    host: ""
+    port: 5432
+    user: prism
+
+# ── APPLICATIONS ─────────────────────────────────────────────────────────────
+api:
+  # ONE replica, Recreate strategy: the write lock lives in the process, so two
+  # API pods would both believe they hold it. Do not scale this.
+  enabled: true
+  image:
+    # optional: override registry/repository for THIS component only
+    registry: ""
+    repository: ""
+    # main = the MUTABLE branch tag CI publishes. The old vNN tags (v22/v9/v12)
+    # only ever existed in fsaisrieurekaaiacr and 404 in symphonyfs, so a chart
+    # defaulting to them installs three ImagePullBackOffs. CD overrides this per
+    # run with the branch tag it just built; podAnnotations.gitSha is what makes
+    # a mutable tag still roll the pods.
+    tag: main
+    pullPolicy: ""
+  port: 8000
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 768Mi }
+  extraEnv: []
+
+console:
+  enabled: true
+  image:
+    # optional: override registry/repository for THIS component only
+    registry: ""
+    repository: ""
+    tag: main
+    pullPolicy: ""
+  port: 80
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 128Mi }
+  # The console image BAKES an nginx.conf that proxies /rigraph/ -> prism-api
+  # and /chat/ -> chat-backend by those bare service names. Scoped service
+  # names would not resolve, so the chart renders its own nginx.conf from the
+  # real (templated) service names and mounts it over the baked copy. Set to
+  # false only if you also pin the service names back to the bare originals.
+  overrideNginxConf: true
+  extraEnv: []
+
+chatBackend:
+  enabled: true
+  image:
+    # optional: override registry/repository for THIS component only
+    registry: ""
+    repository: ""
+    tag: main
+    pullPolicy: ""
+  port: 8023
+  replicas: 1
+  # The claude CLI refuses bypassPermissions as root, and the image ships a
+  # pre-warmed uv cache owned by uid 10001 — see deploy/remote/Dockerfile.
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+  agentConfigsDir: /agents
+  mcpLauncher: /app/mcp_neo4j.sh
+  uvCacheDir: /opt/uv-cache
+  # Idle is ~50Mi, but every live session spawns its own subprocess tree (the
+  # node claude CLI plus a uvx-launched MCP server) and sessions are held for up
+  # to SESSION_IDLE_TIMEOUT_S (2h). 1Gi was OOMKilled by a single real
+  # conversation.
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits: { memory: 4Gi }
+  extraEnv: []
+
+# ── INGRESS (off: inside SRI the portal proxies the console same-origin) ─────
+# A second public hostname publishes the same app under a second identity — a
+# second certificate, a second Keycloak redirect surface, a second login. Two
+# such hostnames were retired from sri-qa for exactly that reason. Enable this
+# only for a standalone install with no portal in front.
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+# ── OPERATIONAL JOBS (all off) ───────────────────────────────────────────────
+# These are RUN ON DEMAND, not install steps, so none is a helm hook: a hook
+# would fire them on every upgrade, and two of them destroy data. Enable one,
+# run `helm upgrade`, let it finish, disable it again. `nameSuffix` exists
+# because a Job's spec is immutable — re-running with a changed body needs a new
+# name, which is why the live namespace holds reproject-v16/-v20/-v22.
+#
+# ttlSecondsAfterFinished is 7200 everywhere: a TTL shorter than helm's --wait
+# reaps the completed Job before the watcher sees it, which fails a release that
+# actually worked.
+jobs:
+  ttlSecondsAfterFinished: 7200
+
+  # Rebuild the DERIVED stores from truth. Wipes the graph and TRUNCATEs
+  # term_version — never the `changeset` table. Safe: truth is untouched.
+  reproject:
+    enabled: false
+    nameSuffix: ""
+    backoffLimit: 1
+    # Second gate, external mode only: the graph wipe empties the WHOLE Neo4j
+    # database, so against a shared graph it is cross-tenant data loss. Without
+    # this the render FAILS rather than skipping — a silently skipped
+    # destructive job reads as "it ran".
+    allowExternalDestructive: false
+
+  # Restore the warehouse databases from the dumps baked into the API image.
+  # SKIP-IF-EXISTS, so it cannot carry a schema change.
+  restoreWarehouses:
+    enabled: false
+    nameSuffix: ""
+    backoffLimit: 2
+
+  # DROP and recreate foundation_warehouse from the shipped dump. Use when the
+  # dump intentionally REPLACES the remote database (a schema change).
+  rebuildWarehouse:
+    enabled: false
+    nameSuffix: ""
+    backoffLimit: 1
+    database: foundation_warehouse
+    # Second gate, external mode only: this runs DROP DATABASE. On the
+    # platform's shared Postgres a values typo would drop a database other
+    # products depend on. RECOMMENDATION: keep the warehouse bundled instead.
+    allowExternalDestructive: false
+
+  # DESTRUCTIVE: discards this environment's truth AND its projections
+  # (TRUNCATE term_version, changeset). Whatever it discards should already be
+  # archived with scripts/export_ledger.py. It installs no world — push records
+  # back with scripts/sync_ledger.py afterwards.
+  # Loads seed/*.json through POST /v1/changesets on the running API. Appends
+  # only, and the seed files carry changeset_ids, so a re-run is recorded as
+  # `replayed` — safe to leave enabled, but see the template for why it is not a
+  # hook. `files` empty means the script's own default (seed/estate.json then
+  # seed/seed.json); name specific files to load a subset.
+  seed:
+    enabled: false
+    nameSuffix: ''
+    backoffLimit: 3
+    files: []
+    waitTimeoutSeconds: 300
+    resources: {}
+  resetWorld:
+    enabled: false
+    nameSuffix: ""
+    backoffLimit: 1
+    # Second gate, external mode only, and the widest blast radius here: it
+    # empties the whole graph AND truncates `changeset` — truth. Guarded on both
+    # the graph and the ledger being external.
+    allowExternalDestructive: false
+
+# Extra pod scheduling applied to every workload in this chart.
+nodeSelector: {}
+tolerations: []
+affinity: {}

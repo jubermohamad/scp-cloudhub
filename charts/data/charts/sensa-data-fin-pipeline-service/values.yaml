@@ -1,0 +1,215 @@
+# Defaults mirror the running sri-dev-pipeline deployment; environment
+# overrides live in deployments/<env>/values.overrides.yaml.
+
+image:
+  registry: symphonyfs.azurecr.io
+  # <registry>/<prefix>/<service image name>:<tag>
+  prefix: sensa-data-fin-pipeline-service
+  # Mutable branch tag by convention — CD stamps podAnnotations.gitSha so a
+  # rebuilt tag still rolls pods (a mutable tag alone changes nothing in the
+  # pod spec).
+  tag: develop
+  pullPolicy: Always
+
+# Pre-existing in the namespace (not chart-managed) — the kubectl-applied
+# era created it and the chart keeps referencing it.
+imagePullSecret: symphonyfs-acr-secret
+
+# Stamped by CD (gitSha=<commit>) onto EVERY pod template below — the
+# lesson from the lens chart: stamp one service only and the others keep
+# running stale images forever.
+podAnnotations: {}
+
+postgres:
+  # Shared instance owned by the lens release (its chart's ensure-database
+  # pattern); this stack only points at it.
+  host: lens-sensa-data-ontology-postgres.sri-dev-ontology.svc.cluster.local
+  port: 5432
+  # envFrom secret carrying POSTGRES_USER/POSTGRES_PASSWORD/etc. Exists in
+  # the namespace already; not chart-managed, so no secrets ride in values.
+  existingSecret: postgres-secret
+
+kafka:
+  bootstrapServers: sri-dev-kafka-bootstrap.common-res.svc.cluster.local:9092
+  # Topic names (env-overridable in both services). SAFE BY DEFAULT: the
+  # FIN_ names differ from the binaries' built-in defaults, so a bare
+  # `helm install` onto a shared cluster can never collide with a
+  # non-chart deployment of the same services. Environments sharing one
+  # cluster must still use names distinct from EACH OTHER.
+  topicPlan: FIN_PIPELINE_PLAN_PUBLISHED
+  topicResults: FIN_PIPELINE_EXEC_RESULTS
+
+valkey:
+  # Bundled single-node Valkey (StatefulSet valkey + Service). For the
+  # dedicated external instance (namespace sri-cdd-valkey, managed by
+  # deploy/infra-helm): enabled=false + host=<its FQDN>. Keep the engine
+  # version in lockstep with that chart's valkey.image.
+  enabled: true
+  # empty = derived from the release prefix (<release>-data-fin-pipeline-svc-valkey).
+  # A bare "valkey" is the standalone-namespace name and collides in a shared one.
+  host: ""
+  port: 6379
+  image: valkey/valkey:8.1-alpine
+  storage: 2Gi
+
+minio:
+  # Object-store wiring for config-svc's node-package registry (CRA plugin
+  # artifacts). OFF by default: config-svc fail-softs to in-tree plugins.
+  # endpoint is host:port WITHOUT scheme (MinIO SDK convention); secure is
+  # "0"/"1". The secret needs keys access_key/secret_key and must exist in
+  # THIS namespace; when orchSvc.s3Endpoint is set, a secret of the
+  # orchSvc.s3CredsSecret name must also exist in the Spark JOB namespace
+  # (S3_CREDS_REF resolves there).
+  enabled: false
+  endpoint: ""
+  secure: "0"
+  nodepackBucket: node-packages
+  existingSecret: minio-creds
+
+configSvc:
+  enabled: true
+  imageName: fs-pipeline-config-svc
+  port: 8001
+  # In-cluster URL of fs-fin-data-svc (the Data Mapping Service), e.g.
+  # http://data-engine.data-engine.svc.cluster.local:8000
+  # REQUIRED for pipelines with a DataMapping node — see the template comment. Empty means the
+  # var is not set at all, which publishes script-less steps that fail at run.
+  dataSvcUrl: ""
+  # fs-cra-svc (the CRA/KYC backend): strategy LOWERING reads the scoped Risk Event
+  # Library from it (/event-library). FULLY QUALIFIED for the same reason as
+  # uiSvc.craSvcUrl — cra-svc is deployed from the cra-service repo into its OWN
+  # namespace, and the code's fallback is the bare in-namespace name "cra-svc", which
+  # does not resolve here. Unset → POST /strategies/lower 502s, and the UI's publish
+  # (best-effort by design) silently creates UNMANAGED Risk Profile instances carrying
+  # template defaults instead of the wizard's calibration.
+  craSvcUrl: http://fs-cra-svc.sri-dev-domain.svc.cluster.local:8080
+  # Live sri-dev-pipeline mounts a hand-created ConfigMap over the
+  # DataMapping planner contract. The ConfigMap itself is NOT chart-managed
+  # (it predates the chart); disable on clusters that don't have it or the
+  # pod's volume mount will fail.
+  datamappingOverride:
+    enabled: false
+    configMap: datamapping-contract-override
+
+execSvc:
+  enabled: true
+  imageName: fs-pipeline-exec-svc-go
+  port: 8002
+  kycViaEvaluator: "false"
+  kycSvcAddr: kyc-svc:9000
+  dataViaService: "false"
+  dataSvcAddr: data-svc:9100
+  # Kafka consumer-group prefix. The binary's defaults are STATIC
+  # (exec-svc-go-*): two exec instances on the same shared Kafka — e.g. a
+  # second environment — would join the SAME groups and steal partitions
+  # from each other. SAFE BY DEFAULT (non-empty); make it per-environment
+  # when several releases share one cluster. NOTE: this does NOT isolate
+  # dynamically-subscribed per-pipeline SOURCE topics — pipelines in two
+  # environments listening on the same source topic name will both consume
+  # those transactions.
+  kafkaGroupPrefix: fin-pipeline
+
+orchSvc:
+  # Batch coordinator + data-plane submitter (SparkApplications + the data
+  # service's file-event jobs). Deploying it via the chart closes
+  # deployment-checklist blocker B2.
+  enabled: true
+  imageName: fs-pipeline-orch-svc
+  port: 8004
+  # Namespace SparkApplications + per-job ConfigMaps are created in, and
+  # where S3_CREDS_REF / WAREHOUSE_PW_REF secretKeyRefs resolve. Empty →
+  # the release namespace (local layout: the operator watches the app ns);
+  # sri-dev sets "spark" (the operator there watches ONLY ns spark).
+  sparkNamespace: ""
+  runnerImageName: fs-spark-runner
+  # Driver SA in the job namespace. Local: the operator chart's
+  # spark-operator-spark; sri-dev: spark-apps.
+  driverServiceAccount: spark-operator-spark
+  executorInstances: 1
+  # s3a endpoint for job pods, WITH scheme. Empty → no hadoopConf stamped.
+  s3Endpoint: ""
+  s3CredsSecret: minio-creds
+  warehouseSecret: warehouse-creds
+  # Key WITHIN warehouseSecret. Configurable because these secrets are created
+  # out-of-band and do not agree on a key name across environments.
+  warehouseSecretKey: password
+  warehouseUser: lens
+  # Pin ONLY this service to a different image tag; empty = the stack-wide image.tag.
+  tag: ""
+  # Warehouse tenant for the data service's __TENANT_ID__ token (numeric).
+  # Deliberately EMPTY by default — see the comment on the env var in
+  # templates/orch-svc.yaml. An unset tenant fails the submit of a script that
+  # needs it, which is the safe outcome; a guessed one silently misattributes rows.
+  warehouseTenantId: ""
+  # fs-fin-data-svc job API (file_event_generator driver). Empty → off.
+  dataSvcUrl: ""
+  leaseSeconds: 300
+
+uiSvc:
+  enabled: true
+  # Standalone flavour by default. Portal-embedded environments set
+  # fs-pipeline-ui-svc-embedded (BASE_PATH=/pipeline baked at build) —
+  # the two flavours are separate images built from the same commit.
+  imageName: fs-pipeline-ui-svc
+  port: 3000
+  aiSvcUrl: http://mapping-ai-svc:8006
+  # empty = derived from the release prefix, like the config/exec URLs above
+  orchSvcUrl: ""
+  # fs-cra-svc (the CRA/KYC backend): backs the Signal Map / Event Map widgets'
+  # /api/kyc surface. FULLY QUALIFIED on purpose — cra-svc is deployed from the
+  # cra-service repo into its OWN namespace, not alongside this chart, and the
+  # route's fallback is the bare in-namespace name "cra-svc", which does not
+  # resolve here. Empty → the widgets 503 and report the template as missing.
+  craSvcUrl: http://fs-cra-svc.sri-dev-domain.svc.cluster.local:8080
+  # fs-fin-data-svc (the Data Mapping Service): backs the Data Map widget's ontology and
+  # map surfaces. Empty → those panels report 503 rather than serving a stand-in catalog.
+  dataSvcUrl: ""
+  # Module-federation remote bundles the BROWSER fetches — must be user-reachable hosts
+  # (ingress), never cluster-internal names. Served at runtime via /api/widget-remotes;
+  # contracts/dev defaults name localhost:5300/:5200 and these override them per
+  # environment. Empty → no override (local-dev behaviour: widgets load from localhost).
+  craWidgetsUrl: https://sri-dev-domain.invhub.fseng.net/assets/remoteEntry.js
+  dataWidgetsUrl: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  clusterIssuer: letsencrypt-production
+  host: sri-dev-pipeline.invhub.fseng.net
+  tlsSecretName: sri-dev-pipeline-tls
+
+# ── Setup jobs (all idempotent Helm hooks, all off by default) ──────────
+
+# Pre-install: create the app role + database on the shared Postgres if
+# missing. Needs an in-namespace admin secret — no secret material in values.
+ensureDatabase:
+  enabled: false
+  image: postgres:16-alpine
+  adminExistingSecret: postgres-admin
+  adminUserKey: username
+  adminPasswordKey: password
+
+# Declarative KafkaTopic CRs for the Strimzi topic operator, created in the
+# Kafka cluster's own namespace (that's what the operator watches). Topic
+# NAMES come from kafka.topicPlan/topicResults above.
+kafkaTopics:
+  enabled: false
+  clusterName: sri-dev
+  namespace: common-res
+  partitions: 1
+  replicas: 1
+
+# Post-install: add an aud=<audience> mapper to the SRI portal's Keycloak
+# client so its tokens can be validated by pipeline backends (the lens
+# aud=lens pattern). Needs an in-namespace admin secret with keys
+# keycloak-admin-user / keycloak-admin-password.
+keycloakSetup:
+  enabled: false
+  image: quay.io/keycloak/keycloak
+  imageTag: "26.0"
+  url: ""                      # e.g. http://keycloak.sri-dev-keycloak.svc.cluster.local
+  realm: SRI
+  adminRealm: master           # kcadm authenticates here (verified: admins live in master)
+  adminExistingSecret: keycloak-admin
+  portalClientId: common-ui
+  audience: pipeline

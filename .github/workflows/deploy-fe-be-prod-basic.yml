@@ -1,0 +1,1352 @@
+name: Deploy FE/BE Production (BASIC)
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_component:
+        description: 'Which App Service(s) to deploy'
+        required: true
+        default: both
+        type: choice
+        options:
+          - both
+          - frontend
+          - backend
+      image_version:
+        description: 'Build output image version (for traceability, optional)'
+        required: false
+        default: ''
+        type: string
+      frontend_image:
+        description: 'Build output full frontend image reference (overrides frontend_tag/image_tag)'
+        required: false
+        default: ''
+        type: string
+      backend_image:
+        description: 'Build output full backend image reference (overrides backend_tag/image_tag)'
+        required: false
+        default: ''
+        type: string
+      image_tag:
+        description: 'Shared existing container image tag for frontend and backend'
+        required: false
+        default: ''
+        type: string
+      frontend_tag:
+        description: 'Optional frontend-specific existing tag (overrides image_tag)'
+        required: false
+        default: ''
+        type: string
+      backend_tag:
+        description: 'Optional backend-specific existing tag (overrides image_tag)'
+        required: false
+        default: ''
+        type: string
+      configure_backend_app_settings:
+        description: 'Apply Azure PostgreSQL + Microsoft auth app settings on backend'
+        required: true
+        default: true
+        type: boolean
+      backend_startup_command:
+        description: 'Backend startup command'
+        required: true
+        default: 'node packages/backend --config app-config.yaml --config app-config.production.yaml'
+        type: string
+      backend_health_url:
+        description: 'Backend readiness URL'
+        required: true
+        default: 'https://cloudhub.symphonyai.cloud/.backstage/health/v1/readiness'
+        type: string
+      strict_backend_health_check:
+        description: 'Fail deployment when backend health endpoint checks do not succeed from GitHub runner'
+        required: true
+        default: false
+        type: boolean
+      backend_db_check_url:
+        description: 'Optional backend endpoint that verifies database connectivity (leave empty to skip)'
+        required: false
+        default: ''
+        type: string
+      frontend_health_url:
+        description: 'Frontend URL'
+        required: true
+        default: 'https://cloudhub.symphonyai.cloud/'
+        type: string
+      backend_origin:
+        description: 'Frontend nginx upstream origin for backend routing'
+        required: false
+        default: ''
+        type: string
+      require_backend_vnet_integration:
+        description: 'Fail deployment if backend has no VNet integration'
+        required: true
+        default: true
+        type: boolean
+      strict_postgres_preflight:
+        description: 'Fail deployment when GitHub runner cannot connect to PostgreSQL'
+        required: true
+        default: false
+        type: boolean
+      strict_auth_smoke_check:
+        description: 'Fail deployment when Microsoft auth smoke check fails or detects AADSTS500113'
+        required: true
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      deploy_component:
+        required: false
+        default: both
+        type: string
+      image_version:
+        required: false
+        default: ''
+        type: string
+      frontend_image:
+        required: false
+        default: ''
+        type: string
+      backend_image:
+        required: false
+        default: ''
+        type: string
+      image_tag:
+        required: false
+        default: ''
+        type: string
+      frontend_tag:
+        required: false
+        default: ''
+        type: string
+      backend_tag:
+        required: false
+        default: ''
+        type: string
+      configure_backend_app_settings:
+        required: false
+        default: true
+        type: boolean
+      backend_startup_command:
+        required: false
+        default: 'node packages/backend --config app-config.yaml --config app-config.production.yaml'
+        type: string
+      backend_health_url:
+        required: false
+        default: 'https://cloudhub.symphonyai.cloud/.backstage/health/v1/readiness'
+        type: string
+      strict_backend_health_check:
+        required: false
+        default: false
+        type: boolean
+      backend_db_check_url:
+        required: false
+        default: ''
+        type: string
+      frontend_health_url:
+        required: false
+        default: 'https://cloudhub.symphonyai.cloud/'
+        type: string
+      backend_origin:
+        required: false
+        default: ''
+        type: string
+      require_backend_vnet_integration:
+        required: false
+        default: true
+        type: boolean
+      strict_postgres_preflight:
+        required: false
+        default: false
+        type: boolean
+      strict_auth_smoke_check:
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudhub-deploy-fe-be-prod-basic
+  cancel-in-progress: false
+
+env:
+  WORKFLOW_DEPLOY_REV: 2026-08-02-split-deploy-v1
+  REGISTRY: symphonyfs.azurecr.io
+  ACR_NAME: symphonyfs
+  RESOURCE_GROUP: rg-cfe-apps-mj
+  APP_SERVICE_PLAN: app-service-cfe
+  FRONTEND_WEBAPP_NAME: cloudhub-frontend
+  BACKEND_WEBAPP_NAME: cloudhub-backend
+  CANONICAL_PUBLIC_URL: https://cloudhub.symphonyai.cloud
+  FRONTEND_REPOSITORY: cloudhub-platform/frontend
+  BACKEND_REPOSITORY: cloudhub-platform/backend
+
+jobs:
+  resolve-image-tags:
+    name: Resolve Frontend and Backend Tags
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_component: ${{ steps.tags.outputs.deploy_component }}
+      deploy_frontend: ${{ steps.tags.outputs.deploy_frontend }}
+      deploy_backend: ${{ steps.tags.outputs.deploy_backend }}
+      frontend_tag: ${{ steps.tags.outputs.frontend_tag }}
+      backend_tag: ${{ steps.tags.outputs.backend_tag }}
+      frontend_repository: ${{ steps.tags.outputs.frontend_repository }}
+      backend_repository: ${{ steps.tags.outputs.backend_repository }}
+      frontend_image: ${{ steps.tags.outputs.frontend_image }}
+      backend_image: ${{ steps.tags.outputs.backend_image }}
+
+    steps:
+      - name: Resolve tag values for deployment
+        id: tags
+        env:
+          DEPLOY_COMPONENT: ${{ inputs.deploy_component }}
+          IMAGE_VERSION: ${{ inputs.image_version }}
+          DIRECT_FRONTEND_IMAGE: ${{ inputs.frontend_image }}
+          DIRECT_BACKEND_IMAGE: ${{ inputs.backend_image }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          FRONTEND_TAG: ${{ inputs.frontend_tag }}
+          BACKEND_TAG: ${{ inputs.backend_tag }}
+        run: |
+          set -euo pipefail
+
+          trim() {
+            printf '%s' "$1" | xargs
+          }
+
+          deploy_component="$(trim "${DEPLOY_COMPONENT:-both}")"
+          want_frontend=0
+          want_backend=0
+          case "$deploy_component" in
+            ''|both) deploy_component=both; want_frontend=1; want_backend=1 ;;
+            frontend) want_frontend=1 ;;
+            backend) want_backend=1 ;;
+            *)
+              echo "::error::deploy_component must be one of: both, frontend, backend (got: ${deploy_component})."
+              exit 1
+              ;;
+          esac
+
+          image_tag="$(trim "${IMAGE_TAG:-}")"
+          direct_frontend_image="$(trim "${DIRECT_FRONTEND_IMAGE:-}")"
+          direct_backend_image="$(trim "${DIRECT_BACKEND_IMAGE:-}")"
+          frontend_tag="$(trim "${FRONTEND_TAG:-}")"
+          backend_tag="$(trim "${BACKEND_TAG:-}")"
+
+          if [ -n "$direct_frontend_image" ] || [ -n "$direct_backend_image" ]; then
+            if [ "$want_frontend" -eq 1 ] && [ -z "$direct_frontend_image" ]; then
+              echo "::error::frontend_image is required when deploy_component includes the frontend."
+              exit 1
+            fi
+            if [ "$want_backend" -eq 1 ] && [ -z "$direct_backend_image" ]; then
+              echo "::error::backend_image is required when deploy_component includes the backend."
+              exit 1
+            fi
+
+            frontend_image="$direct_frontend_image"
+            backend_image="$direct_backend_image"
+            frontend_tag="${frontend_image##*:}"
+            backend_tag="${backend_image##*:}"
+
+            frontend_repository="${frontend_image#*/}"
+            frontend_repository="${frontend_repository%:*}"
+            backend_repository="${backend_image#*/}"
+            backend_repository="${backend_repository%:*}"
+
+            if [ "$want_frontend" -eq 1 ] && { [ -z "$frontend_tag" ] || [ -z "$frontend_repository" ]; }; then
+              echo "::error::Unable to parse repository/tag from provided frontend image reference."
+              exit 1
+            fi
+            if [ "$want_backend" -eq 1 ] && { [ -z "$backend_tag" ] || [ -z "$backend_repository" ]; }; then
+              echo "::error::Unable to parse repository/tag from provided backend image reference."
+              exit 1
+            fi
+
+            {
+              echo "deploy_component=$deploy_component"
+              echo "deploy_frontend=$want_frontend"
+              echo "deploy_backend=$want_backend"
+              echo "frontend_tag=$frontend_tag"
+              echo "backend_tag=$backend_tag"
+              echo "frontend_repository=$frontend_repository"
+              echo "backend_repository=$backend_repository"
+              echo "frontend_image=$frontend_image"
+              echo "backend_image=$backend_image"
+            } >> "$GITHUB_OUTPUT"
+
+            echo "Deploying using build outputs image_version=${IMAGE_VERSION:-<not-provided>}"
+            exit 0
+          fi
+
+          if [ -z "$frontend_tag" ] && [ -n "$image_tag" ]; then
+            frontend_tag="$image_tag"
+          fi
+          if [ -z "$backend_tag" ] && [ -n "$image_tag" ]; then
+            backend_tag="$image_tag"
+          fi
+
+          if [ "$want_frontend" -eq 1 ] && [ -z "$frontend_tag" ]; then
+            echo "::error::Deploy requires an existing frontend tag. Provide image_tag or frontend_tag."
+            exit 1
+          fi
+          if [ "$want_backend" -eq 1 ] && [ -z "$backend_tag" ]; then
+            echo "::error::Deploy requires an existing backend tag. Provide image_tag or backend_tag."
+            exit 1
+          fi
+
+          frontend_repository="$FRONTEND_REPOSITORY"
+          backend_repository="$BACKEND_REPOSITORY"
+
+          {
+            echo "deploy_component=$deploy_component"
+            echo "deploy_frontend=$want_frontend"
+            echo "deploy_backend=$want_backend"
+            echo "frontend_tag=$frontend_tag"
+            echo "backend_tag=$backend_tag"
+            echo "frontend_repository=$frontend_repository"
+            echo "backend_repository=$backend_repository"
+            echo "frontend_image=${REGISTRY}/${frontend_repository}:${frontend_tag}"
+            echo "backend_image=${REGISTRY}/${backend_repository}:${backend_tag}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Deploy mode summary
+        env:
+          DEPLOY_COMPONENT: ${{ steps.tags.outputs.deploy_component }}
+          DEPLOY_FRONTEND: ${{ steps.tags.outputs.deploy_frontend }}
+          DEPLOY_BACKEND: ${{ steps.tags.outputs.deploy_backend }}
+          FRONTEND_IMAGE: ${{ steps.tags.outputs.frontend_image }}
+          BACKEND_IMAGE: ${{ steps.tags.outputs.backend_image }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Deploy Mode"
+            echo "- Workflow deploy revision: ${WORKFLOW_DEPLOY_REV}"
+            echo "- Component selection: ${DEPLOY_COMPONENT}"
+            if [ "$DEPLOY_FRONTEND" = "1" ]; then
+              echo "- Frontend image target: ${FRONTEND_IMAGE}"
+            else
+              echo "- Frontend: skipped"
+            fi
+            if [ "$DEPLOY_BACKEND" = "1" ]; then
+              echo "- Backend image target: ${BACKEND_IMAGE}"
+            else
+              echo "- Backend: skipped"
+            fi
+            echo "- Trigger branch: ${GITHUB_REF_NAME}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  validate-existing-images:
+    name: Validate Existing Images
+    runs-on: ubuntu-latest
+    needs: resolve-image-tags
+
+    steps:
+      - name: Authenticate to Azure (SPN)
+        env:
+          SPN_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          SPN_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SPN_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          SPN_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          if [ "${SPN_CLIENT_ID,,}" != "73b2043b-6230-480a-8a9a-fd37f68af1b2" ] || [ "${SPN_TENANT_ID,,}" != "d0fec9dd-9219-4514-a1d8-1a872244bf6e" ] || [ -z "${SPN_CLIENT_SECRET:-}" ]; then
+            echo "::error::Azure operations require the CloudHub platform service principal and tenant."
+            exit 1
+          fi
+          az login --service-principal \
+            --username "$SPN_CLIENT_ID" \
+            --password "$SPN_CLIENT_SECRET" \
+            --tenant "$SPN_TENANT_ID" \
+            --output none
+          if [ -n "${SPN_SUBSCRIPTION_ID:-}" ]; then
+            az account set --subscription "$SPN_SUBSCRIPTION_ID"
+          fi
+
+      - name: Fail fast when tags are not in ACR
+        env:
+          DEPLOY_FRONTEND: ${{ needs.resolve-image-tags.outputs.deploy_frontend }}
+          DEPLOY_BACKEND: ${{ needs.resolve-image-tags.outputs.deploy_backend }}
+          FRONTEND_TAG: ${{ needs.resolve-image-tags.outputs.frontend_tag }}
+          BACKEND_TAG: ${{ needs.resolve-image-tags.outputs.backend_tag }}
+          FRONTEND_REPOSITORY: ${{ needs.resolve-image-tags.outputs.frontend_repository }}
+          BACKEND_REPOSITORY: ${{ needs.resolve-image-tags.outputs.backend_repository }}
+        run: |
+          set -euo pipefail
+
+          check_tag() {
+            repo="$1"
+            tag="$2"
+            count="$(az acr repository show-tags --name "$ACR_NAME" --repository "$repo" --query "[?@=='$tag'] | length(@)" -o tsv)"
+            if [ "$count" != "1" ]; then
+              echo "::error::Deploy requires existing image tag '$tag' in repository '$repo'."
+              exit 1
+            fi
+          }
+
+          if [ "$DEPLOY_BACKEND" = "1" ]; then
+            check_tag "$BACKEND_REPOSITORY" "$BACKEND_TAG"
+            echo "Image validation passed for backend=${BACKEND_TAG}."
+          fi
+          if [ "$DEPLOY_FRONTEND" = "1" ]; then
+            check_tag "$FRONTEND_REPOSITORY" "$FRONTEND_TAG"
+            echo "Image validation passed for frontend=${FRONTEND_TAG}."
+          fi
+
+  deploy-backend:
+    name: Deploy Backend App Service
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-image-tags
+      - validate-existing-images
+    if: ${{ needs.resolve-image-tags.result == 'success' && needs.validate-existing-images.result == 'success' && needs.resolve-image-tags.outputs.deploy_backend == '1' }}
+    environment: production
+    outputs:
+      previous_image: ${{ steps.capture_previous.outputs.previous_image }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Authenticate to Azure (SPN)
+        env:
+          SPN_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          SPN_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SPN_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          SPN_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          if [ "${SPN_CLIENT_ID,,}" != "73b2043b-6230-480a-8a9a-fd37f68af1b2" ] || [ "${SPN_TENANT_ID,,}" != "d0fec9dd-9219-4514-a1d8-1a872244bf6e" ] || [ -z "${SPN_CLIENT_SECRET:-}" ]; then
+            echo "::error::Azure operations require the CloudHub platform service principal and tenant."
+            exit 1
+          fi
+          az login --service-principal \
+            --username "$SPN_CLIENT_ID" \
+            --password "$SPN_CLIENT_SECRET" \
+            --tenant "$SPN_TENANT_ID" \
+            --output none
+          if [ -n "${SPN_SUBSCRIPTION_ID:-}" ]; then
+            az account set --subscription "$SPN_SUBSCRIPTION_ID"
+          fi
+
+      - name: Validate target resources
+        run: |
+          set -euo pipefail
+          az appservice plan show -g "$RESOURCE_GROUP" -n "$APP_SERVICE_PLAN" -o none
+          az webapp show -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" -o none
+
+      - name: Enforce secrets-only for sensitive backend values
+        env:
+          SECRET_POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          SECRET_AUTH_MS_CLIENT_ID: ${{ secrets.AUTH_MICROSOFT_CLIENT_ID }}
+          SECRET_AUTH_MS_CLIENT_SECRET: ${{ secrets.AUTH_MICROSOFT_CLIENT_SECRET }}
+          SECRET_AUTH_MS_TENANT_ID: ${{ secrets.AUTH_MICROSOFT_TENANT_ID }}
+          SECRET_AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          SECRET_AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SECRET_AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          VAR_POSTGRES_PASSWORD: ${{ vars.POSTGRES_PASSWORD }}
+          VAR_AUTH_MS_CLIENT_ID: ${{ vars.AUTH_MICROSOFT_CLIENT_ID }}
+          VAR_AUTH_MS_CLIENT_SECRET: ${{ vars.AUTH_MICROSOFT_CLIENT_SECRET }}
+          VAR_AUTH_MS_TENANT_ID: ${{ vars.AUTH_MICROSOFT_TENANT_ID }}
+          VAR_AZURE_CLIENT_SECRET: ${{ vars.AZURE_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${SECRET_POSTGRES_PASSWORD:-}" ]; then
+            echo "::error::POSTGRES_PASSWORD must be configured in GitHub Secrets (not Variables)."
+            exit 1
+          fi
+
+          if [ -z "${SECRET_AUTH_MS_CLIENT_ID:-}" ] || [ -z "${SECRET_AUTH_MS_CLIENT_SECRET:-}" ] || [ -z "${SECRET_AUTH_MS_TENANT_ID:-}" ]; then
+            echo "::error::AUTH_MICROSOFT_CLIENT_ID, AUTH_MICROSOFT_CLIENT_SECRET, and AUTH_MICROSOFT_TENANT_ID must be configured as dedicated GitHub Secrets for user sign-in."
+            exit 1
+          fi
+
+          if [ "${SECRET_AZURE_CLIENT_ID,,}" != "73b2043b-6230-480a-8a9a-fd37f68af1b2" ] || [ "${SECRET_AZURE_TENANT_ID,,}" != "d0fec9dd-9219-4514-a1d8-1a872244bf6e" ] || [ -z "${SECRET_AZURE_CLIENT_SECRET:-}" ]; then
+            echo "::error::Azure platform integration requires the CloudHub platform service principal in AZURE_* GitHub Secrets."
+            exit 1
+          fi
+          if [ "${SECRET_AUTH_MS_CLIENT_ID,,}" = "${SECRET_AZURE_CLIENT_ID,,}" ]; then
+            echo "::error::Microsoft user sign-in must use its dedicated AUTH_MICROSOFT_* app registration, not the Azure platform service principal."
+            exit 1
+          fi
+
+          if [ -n "${VAR_POSTGRES_PASSWORD:-}" ]; then
+            echo "::error::POSTGRES_PASSWORD is set in GitHub Variables. Move it to GitHub Secrets and remove the variable."
+            exit 1
+          fi
+
+          if [ -n "${VAR_AUTH_MS_CLIENT_ID:-}" ] || [ -n "${VAR_AUTH_MS_CLIENT_SECRET:-}" ] || [ -n "${VAR_AUTH_MS_TENANT_ID:-}" ] || [ -n "${VAR_AZURE_CLIENT_SECRET:-}" ]; then
+            echo "::error::A Microsoft client secret is set in GitHub Variables. Move it to GitHub Secrets and remove variable values."
+            exit 1
+          fi
+
+          echo "Sensitive value source check passed: required values are present in Secrets and absent from Variables."
+
+      - name: Inspect backend VNet integration
+        env:
+          REQUIRE_BACKEND_VNET_INTEGRATION: ${{ inputs.require_backend_vnet_integration }}
+        run: |
+          set -euo pipefail
+          integration_count="$(az webapp vnet-integration list -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --query "length(@)" -o tsv || echo 0)"
+          vnet_resource_id="$(az webapp vnet-integration list -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --query "[0].vnetResourceId" -o tsv || true)"
+          if [ -z "$vnet_resource_id" ]; then
+            vnet_resource_id="$(az webapp vnet-integration list -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --query "[0].subnetResourceId" -o tsv || true)"
+          fi
+
+          if [ "$integration_count" != "0" ]; then
+            echo "Backend VNet integration detected (${integration_count}): ${vnet_resource_id:-id-not-returned}"
+          else
+            if [ "$REQUIRE_BACKEND_VNET_INTEGRATION" = "true" ]; then
+              echo "::error::No backend VNet integration detected. This release requires VNet integration for private PostgreSQL connectivity."
+              exit 1
+            fi
+            echo "::warning::No backend VNet integration detected. Azure PostgreSQL private access may fail."
+          fi
+
+      - name: Capture current backend image
+        id: capture_previous
+        run: |
+          set -euo pipefail
+          linux_fx_version="$(az webapp config show -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --query linuxFxVersion -o tsv)"
+          previous_image="${linux_fx_version#DOCKER|}"
+          echo "previous_image=$previous_image" >> "$GITHUB_OUTPUT"
+          echo "PREVIOUS_BACKEND_IMAGE=$previous_image" >> "$GITHUB_ENV"
+
+      - name: Validate backend image tag exists
+        env:
+          BACKEND_TAG: ${{ needs.resolve-image-tags.outputs.backend_tag }}
+          BACKEND_REPOSITORY: ${{ needs.resolve-image-tags.outputs.backend_repository }}
+        run: |
+          set -euo pipefail
+          az acr repository show-tags \
+            --name "$ACR_NAME" \
+            --repository "$BACKEND_REPOSITORY" \
+            --query "[?@=='${BACKEND_TAG}'] | length(@)" \
+            -o tsv | grep -q '^1$'
+
+      - name: Configure backend app settings (Azure PostgreSQL + Microsoft auth)
+        if: ${{ inputs.configure_backend_app_settings == true }}
+        env:
+          APP_BASE_URL: ${{ env.CANONICAL_PUBLIC_URL }}
+          BACKEND_BASE_URL: ${{ env.CANONICAL_PUBLIC_URL }}
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST != '' && secrets.POSTGRES_HOST || vars.POSTGRES_HOST != '' && vars.POSTGRES_HOST || 'cloudhub-pg-sdc.postgres.database.azure.com' }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT != '' && secrets.POSTGRES_PORT || '5432' }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER != '' && secrets.POSTGRES_USER || vars.POSTGRES_USER != '' && vars.POSTGRES_USER || 'cloudhubadmin' }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB != '' && secrets.POSTGRES_DB || 'cloudhub' }}
+          PGSSLMODE: ${{ secrets.PGSSLMODE != '' && secrets.PGSSLMODE || vars.PGSSLMODE != '' && vars.PGSSLMODE || 'require' }}
+          AUTH_MICROSOFT_CLIENT_ID: ${{ secrets.AUTH_MICROSOFT_CLIENT_ID }}
+          AUTH_MICROSOFT_CLIENT_SECRET: ${{ secrets.AUTH_MICROSOFT_CLIENT_SECRET }}
+          AUTH_MICROSOFT_TENANT_ID: ${{ secrets.AUTH_MICROSOFT_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          GPU_ENTRA_GROUP_ID: ${{ secrets.GPU_ENTRA_GROUP_ID != '' && secrets.GPU_ENTRA_GROUP_ID || vars.GPU_ENTRA_GROUP_ID }}
+          GPU_GRAPH_ENABLED: ${{ secrets.GPU_GRAPH_ENABLED != '' && secrets.GPU_GRAPH_ENABLED || vars.GPU_GRAPH_ENABLED || 'false' }}
+          BACKEND_SECRET: ${{ secrets.BACKEND_SECRET }}
+          CLOUDHUB_TFC_TOKEN: ${{ secrets.CLOUDHUB_TFC_TOKEN }}
+          CLOUDHUB_TFC_VCS_OAUTH_TOKEN_ID: ${{ secrets.CLOUDHUB_TFC_VCS_OAUTH_TOKEN_ID }}
+          CLOUDHUB_TFC_PROJECT_ID: ${{ secrets.CLOUDHUB_TFC_PROJECT_ID != '' && secrets.CLOUDHUB_TFC_PROJECT_ID || vars.CLOUDHUB_TFC_PROJECT_ID }}
+          GITHUB_ACTIONS_TOKEN: ${{ secrets.GITHUB_ACTIONS_TOKEN }}
+          CLOUDHUB_NETWORKS_JSON: ${{ secrets.CLOUDHUB_NETWORKS_JSON != '' && secrets.CLOUDHUB_NETWORKS_JSON || vars.CLOUDHUB_NETWORKS_JSON }}
+          CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT: ${{ secrets.CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT != '' && secrets.CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT || vars.CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT || 'cloudhubdataexports' }}
+          CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT_RESOURCE_ID: ${{ secrets.CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT_RESOURCE_ID != '' && secrets.CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT_RESOURCE_ID || vars.CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT_RESOURCE_ID || '/subscriptions/b0799078-b42a-4b59-9e70-22cd09a20ee2/resourceGroups/rg-cfe-apps-mj/providers/Microsoft.Storage/storageAccounts/cloudhubdataexports' }}
+          CLOUDHUB_DATA_EXPORT_STORAGE_CLIENT_ID: ${{ secrets.CLOUDHUB_DATA_EXPORT_STORAGE_CLIENT_ID != '' && secrets.CLOUDHUB_DATA_EXPORT_STORAGE_CLIENT_ID || vars.CLOUDHUB_DATA_EXPORT_STORAGE_CLIENT_ID }}
+          # GpuQuotaService resolves vCPU-family quota against this subscription
+          # before dispatching a GPU VM. Without it every GPU quota check throws
+          # and creation fails with "Unable to validate GPU quota".
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID != '' && secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$POSTGRES_PASSWORD"
+          echo "::add-mask::$AUTH_MICROSOFT_CLIENT_SECRET"
+          echo "::add-mask::$AZURE_CLIENT_SECRET"
+          echo "::add-mask::$CLOUDHUB_TFC_TOKEN"
+          echo "::add-mask::$BACKEND_SECRET"
+          echo "::add-mask::$GITHUB_ACTIONS_TOKEN"
+          required=(
+            APP_BASE_URL
+            POSTGRES_HOST
+            POSTGRES_PORT
+            POSTGRES_USER
+            POSTGRES_PASSWORD
+            POSTGRES_DB
+            AUTH_MICROSOFT_CLIENT_ID
+            AUTH_MICROSOFT_CLIENT_SECRET
+            AUTH_MICROSOFT_TENANT_ID
+            BACKEND_SECRET
+            CLOUDHUB_TFC_TOKEN
+            CLOUDHUB_TFC_VCS_OAUTH_TOKEN_ID
+            GITHUB_ACTIONS_TOKEN
+            CLOUDHUB_NETWORKS_JSON
+            AZURE_SUBSCRIPTION_ID
+          )
+
+          missing=0
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required value for ${name}"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          resolved_backend_base_url="${BACKEND_BASE_URL:-$APP_BASE_URL}"
+          if [ -z "$resolved_backend_base_url" ]; then
+            echo "::error::Could not resolve BACKEND_BASE_URL. Set BACKEND_BASE_URL or APP_BASE_URL explicitly."
+            exit 1
+          fi
+
+          validate_public_url() {
+            local name="$1"
+            local value="$2"
+            local lower
+            lower="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+
+            if [[ "$lower" != http://* && "$lower" != https://* ]]; then
+              echo "::error::${name} must be an absolute URL including the https:// scheme (got: ${value}). A scheme-less value breaks the frontend static-asset publicPath and OAuth redirect URIs."
+              exit 1
+            fi
+
+            if [[ "$lower" == *"localhost"* ]] || [[ "$lower" == *"127.0.0.1"* ]] || [[ "$lower" == *"[::1]"* ]]; then
+              echo "::error::${name} is set to a loopback URL (${value}). This breaks production OAuth redirect URI generation."
+              exit 1
+            fi
+
+            if [[ "$lower" == *".azurewebsites.net"* ]]; then
+              echo "::error::${name} cannot use an azurewebsites.net hostname in production (${value}). Use https://cloudhub.symphonyai.cloud."
+              exit 1
+            fi
+          }
+
+          validate_public_url "APP_BASE_URL" "$APP_BASE_URL"
+          validate_public_url "BACKEND_BASE_URL" "$resolved_backend_base_url"
+
+          redirect_uri="${APP_BASE_URL%/}/api/auth/microsoft/handler/frame"
+          echo "Verifying Entra redirect URI registration for appId ${AUTH_MICROSOFT_CLIENT_ID}: ${redirect_uri}"
+
+          if app_json="$(az ad app show --id "$AUTH_MICROSOFT_CLIENT_ID" -o json 2>/dev/null)"; then
+            current_web_redirects_json="$(printf '%s' "$app_json" | jq -c '.web.redirectUris // []')"
+
+            if printf '%s' "$current_web_redirects_json" | jq -e --arg uri "$redirect_uri" 'index($uri) != null' >/dev/null; then
+              echo "Entra redirect URI already present"
+            else
+              echo "Entra redirect URI missing; attempting to add it"
+              updated_web_redirects_json="$(printf '%s' "$current_web_redirects_json" | jq -c --arg uri "$redirect_uri" '. + [$uri] | unique')"
+
+              mapfile -t updated_web_redirects < <(printf '%s' "$updated_web_redirects_json" | jq -r '.[]')
+              if [ "${#updated_web_redirects[@]}" -eq 0 ]; then
+                echo "::error::Unable to construct updated web redirect URI list for Microsoft app registration."
+                exit 1
+              fi
+
+              if az ad app update --id "$AUTH_MICROSOFT_CLIENT_ID" --web-redirect-uris "${updated_web_redirects[@]}" --output none; then
+                echo "Entra redirect URI added successfully"
+              else
+                echo "::warning::Insufficient privileges to update Entra app redirect URIs. Continuing without automatic redirect URI mutation."
+              fi
+            fi
+          else
+            echo "::warning::Could not query Entra app registration. Continuing without automatic redirect URI verification/update."
+          fi
+
+          az webapp config appsettings set \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$BACKEND_WEBAPP_NAME" \
+            --settings \
+              APP_BASE_URL="$APP_BASE_URL" \
+              BACKEND_BASE_URL="$resolved_backend_base_url" \
+              APP_CONFIG_backend_baseUrl="$APP_BASE_URL" \
+              APP_CONFIG_auth_environment="production" \
+              APP_CONFIG_backend_database_knexConfig_pool_min=0 \
+              APP_CONFIG_backend_database_knexConfig_pool_max=10 \
+              APP_CONFIG_auth_providers_microsoft_production_callbackUrl="$APP_BASE_URL/api/auth/microsoft/handler/frame" \
+              POSTGRES_HOST="$POSTGRES_HOST" \
+              POSTGRES_PORT="$POSTGRES_PORT" \
+              POSTGRES_USER="$POSTGRES_USER" \
+              POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+              POSTGRES_DB="$POSTGRES_DB" \
+              PGSSLMODE="$PGSSLMODE" \
+              AUTH_MICROSOFT_CLIENT_ID="$AUTH_MICROSOFT_CLIENT_ID" \
+              AUTH_MICROSOFT_CLIENT_SECRET="$AUTH_MICROSOFT_CLIENT_SECRET" \
+              AUTH_MICROSOFT_TENANT_ID="$AUTH_MICROSOFT_TENANT_ID" \
+              AZURE_CLIENT_ID="$AZURE_CLIENT_ID" \
+              AZURE_CLIENT_SECRET="$AZURE_CLIENT_SECRET" \
+              AZURE_TENANT_ID="$AZURE_TENANT_ID" \
+                            BACKEND_SECRET="$BACKEND_SECRET" \
+              GPU_ENTRA_GROUP_ID="$GPU_ENTRA_GROUP_ID" \
+              GPU_GRAPH_ENABLED="$GPU_GRAPH_ENABLED" \
+              CLOUDHUB_TFC_TOKEN="$CLOUDHUB_TFC_TOKEN" \
+              CLOUDHUB_TFC_VCS_OAUTH_TOKEN_ID="$CLOUDHUB_TFC_VCS_OAUTH_TOKEN_ID" \
+              CLOUDHUB_TFC_PROJECT_ID="$CLOUDHUB_TFC_PROJECT_ID" \
+              GITHUB_ACTIONS_TOKEN="$GITHUB_ACTIONS_TOKEN" \
+              CLOUDHUB_NETWORKS_JSON="$CLOUDHUB_NETWORKS_JSON" \
+              CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT="$CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT" \
+              CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT_RESOURCE_ID="$CLOUDHUB_DATA_EXPORT_STORAGE_ACCOUNT_RESOURCE_ID" \
+              CLOUDHUB_DATA_EXPORT_STORAGE_CLIENT_ID="$CLOUDHUB_DATA_EXPORT_STORAGE_CLIENT_ID" \
+              AZURE_SUBSCRIPTION_ID="$AZURE_SUBSCRIPTION_ID" \
+              WEBSITES_PORT="7007" \
+              NODE_ENV="production" \
+            --output none
+
+          subscription_id="$(az account show --query id -o tsv)"
+          auth_settings_id="/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${BACKEND_WEBAPP_NAME}/config/authsettingsV2"
+          az resource update \
+            --ids "$auth_settings_id" \
+            --set properties.platform.enabled=false \
+            --set properties.globalValidation.requireAuthentication=false \
+            --set properties.identityProviders.azureActiveDirectory.enabled=false \
+            --output none
+
+          backend_easy_auth_enabled="$(az resource show --ids "$auth_settings_id" --query "properties.platform.enabled" -o tsv)"
+          if [ "$backend_easy_auth_enabled" != "false" ]; then
+            echo "::error::App Service Easy Auth is still enabled on ${BACKEND_WEBAPP_NAME} (platform.enabled=${backend_easy_auth_enabled}); it shadows the Backstage sign-in flow." 
+            exit 1
+          fi
+
+          # The backend's version is its running image tag (asserted later against
+          # linuxFxVersion). A CLOUDHUB_VERSION app setting is a second, writable
+          # copy that silently goes stale on any deploy made outside this workflow.
+          if az webapp config appsettings list \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$BACKEND_WEBAPP_NAME" \
+              --query "[?name=='CLOUDHUB_VERSION'] | length(@)" -o tsv | grep -q '^1$'; then
+            echo "Removing stale CLOUDHUB_VERSION app setting from $BACKEND_WEBAPP_NAME"
+            az webapp config appsettings delete \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$BACKEND_WEBAPP_NAME" \
+              --setting-names CLOUDHUB_VERSION \
+              --output none
+          fi
+
+          # GPU network onboarding now uses only CLOUDHUB_NETWORKS_JSON.
+          # Remove stale legacy setting to avoid operator confusion.
+          if az webapp config appsettings list \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$BACKEND_WEBAPP_NAME" \
+              --query "[?name=='GPU_ONBOARDED_VNETS_JSON'] | length(@)" -o tsv | grep -q '^1$'; then
+            echo "Removing legacy GPU_ONBOARDED_VNETS_JSON app setting from $BACKEND_WEBAPP_NAME"
+            az webapp config appsettings delete \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$BACKEND_WEBAPP_NAME" \
+              --setting-names GPU_ONBOARDED_VNETS_JSON \
+              --output none
+          fi
+
+      - name: Preflight PostgreSQL connectivity from runner
+        if: ${{ inputs.configure_backend_app_settings == true }}
+        env:
+          POSTGRES_HOST: ${{ secrets.POSTGRES_HOST != '' && secrets.POSTGRES_HOST || vars.POSTGRES_HOST != '' && vars.POSTGRES_HOST || 'cloudhub-pg-sdc.postgres.database.azure.com' }}
+          POSTGRES_PORT: ${{ secrets.POSTGRES_PORT != '' && secrets.POSTGRES_PORT || '5432' }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER != '' && secrets.POSTGRES_USER || vars.POSTGRES_USER != '' && vars.POSTGRES_USER || 'cloudhubadmin' }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ secrets.POSTGRES_DB != '' && secrets.POSTGRES_DB || 'cloudhub' }}
+          STRICT_POSTGRES_PREFLIGHT: ${{ inputs.strict_postgres_preflight }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$POSTGRES_PASSWORD"
+
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+          export PGPASSWORD="$POSTGRES_PASSWORD"
+
+          echo "Resolved PostgreSQL target host: ${POSTGRES_HOST}"
+          echo "Resolved PostgreSQL user source value is set"
+
+          server_name="${POSTGRES_HOST%%.postgres.database.azure.com}"
+          candidate_users=("$POSTGRES_USER")
+          if [[ "$POSTGRES_HOST" == *.postgres.database.azure.com ]] && [[ "$POSTGRES_USER" != *@* ]]; then
+            candidate_users+=("${POSTGRES_USER}@${server_name}")
+          fi
+
+          ok=0
+          for candidate_user in "${candidate_users[@]}"; do
+            echo "Testing PostgreSQL connectivity as user candidate: $candidate_user"
+            if psql \
+              "host=${POSTGRES_HOST} port=${POSTGRES_PORT} user=${candidate_user} dbname=${POSTGRES_DB} sslmode=require connect_timeout=10" \
+              -c 'select 1;' >/dev/null 2>&1; then
+              echo "PostgreSQL connectivity preflight succeeded"
+              ok=1
+              break
+            fi
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            if [ "$STRICT_POSTGRES_PREFLIGHT" = "true" ]; then
+              echo "::error::PostgreSQL connectivity preflight failed and strict mode is enabled."
+              exit 1
+            fi
+            echo "::warning::PostgreSQL connectivity preflight failed from GitHub runner. Continuing because strict mode is disabled."
+          fi
+
+      - name: Deploy backend container image
+        env:
+          BACKEND_IMAGE: ${{ needs.resolve-image-tags.outputs.backend_image }}
+          STARTUP_COMMAND: ${{ inputs.backend_startup_command }}
+          ACR_USER: ${{ secrets.PLATFORM_AZURE_ACR_USERNAME != '' && secrets.PLATFORM_AZURE_ACR_USERNAME || secrets.AZURE_ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.PLATFORM_AZURE_ACR_PASSWORD != '' && secrets.PLATFORM_AZURE_ACR_PASSWORD || secrets.AZURE_ACR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ACR_PASSWORD:-}" ]; then
+            echo "::add-mask::$ACR_PASSWORD"
+          fi
+          image="$BACKEND_IMAGE"
+
+          if [ -n "${ACR_USER:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
+            echo "Using ACR username/password for backend image pull"
+            az webapp config container set \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$BACKEND_WEBAPP_NAME" \
+              --container-image-name "$image" \
+              --container-registry-url "https://${REGISTRY}" \
+              --container-registry-user "$ACR_USER" \
+              --container-registry-password "$ACR_PASSWORD" \
+              --output none
+          else
+            echo "ACR credentials not provided; using managed identity for backend image pull"
+            backend_cfg="$(jq -nc --arg image "$image" '{acrUseManagedIdentityCreds:true,linuxFxVersion:("DOCKER|"+$image)}')"
+            az webapp config set \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$BACKEND_WEBAPP_NAME" \
+              --generic-configurations "$backend_cfg" \
+              --output none
+          fi
+
+          az webapp config set \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$BACKEND_WEBAPP_NAME" \
+            --startup-file "$STARTUP_COMMAND" \
+            --output none
+
+      - name: Restart backend app
+        run: |
+          set -euo pipefail
+          az webapp restart -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --output none
+
+      - name: Verify backend health
+        env:
+          HEALTH_URL: ${{ inputs.backend_health_url }}
+          STRICT_BACKEND_HEALTH_CHECK: ${{ inputs.strict_backend_health_check }}
+        run: |
+          set -euo pipefail
+          echo "Backend health checker revision: ${WORKFLOW_DEPLOY_REV}"
+          host="$(az webapp show -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --query defaultHostName -o tsv || true)"
+          readiness_path="$(echo "$HEALTH_URL" | sed -E 's#^[a-zA-Z]+://[^/]+(/.*)$#\1#')"
+          if [ -z "$host" ]; then
+            if [ "${STRICT_BACKEND_HEALTH_CHECK}" = "true" ]; then
+              echo "::error::Could not resolve backend App Service default hostname from Azure control plane."
+              exit 1
+            fi
+            echo "::warning::Could not resolve backend App Service default hostname from Azure control plane; continuing because strict_backend_health_check=false."
+            exit 0
+          fi
+          if [ "$readiness_path" = "$HEALTH_URL" ]; then
+            readiness_path="/.backstage/health/v1/readiness"
+          fi
+
+          probe_url="https://${host}${readiness_path}"
+          echo "Probing backend health URL: $probe_url"
+
+          ok=0
+          for i in $(seq 1 60); do
+            code="$(curl -k -sS -o /dev/null -w "%{http_code}" "$probe_url" || true)"
+            echo "backend health probe attempt ${i}: HTTP ${code}"
+            if [ "$code" = "200" ] || [ "$code" = "401" ] || [ "$code" = "302" ] || [ "$code" = "403" ]; then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+
+          if [ "$ok" -eq 1 ]; then
+            echo "Backend health check passed"
+            exit 0
+          fi
+
+          if [ "${STRICT_BACKEND_HEALTH_CHECK}" = "true" ]; then
+            echo "::error::Backend health check did not return an acceptable HTTP status (200/401/302/403) within timeout."
+            exit 1
+          fi
+
+          echo "::warning::Backend health check did not return an acceptable HTTP status (200/401/302/403), continuing because strict_backend_health_check=false."
+
+      - name: Verify Microsoft auth smoke
+        env:
+          STRICT_AUTH_SMOKE_CHECK: ${{ inputs.strict_auth_smoke_check }}
+        run: |
+          set -euo pipefail
+
+          fail_or_warn() {
+            local msg="$1"
+            if [ "${STRICT_AUTH_SMOKE_CHECK}" = "true" ]; then
+              echo "::error::${msg}"
+              exit 1
+            fi
+            echo "::warning::${msg}"
+          }
+
+          backend_host="$(az webapp show --resource-group "$RESOURCE_GROUP" --name "$BACKEND_WEBAPP_NAME" --query defaultHostName -o tsv || true)"
+          if [ -z "$backend_host" ]; then
+            fail_or_warn "Could not resolve backend App Service hostname for auth smoke test."
+            exit 0
+          fi
+
+          app_base_url="$(az webapp config appsettings list \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$BACKEND_WEBAPP_NAME" \
+            --query "[?name=='APP_BASE_URL'].value | [0]" \
+            -o tsv || true)"
+
+          if [ -z "${app_base_url:-}" ]; then
+            fail_or_warn "APP_BASE_URL backend app setting is empty; cannot validate Microsoft auth callback URL."
+            exit 0
+          fi
+
+          expected_callback="${app_base_url%/}/api/auth/microsoft/handler/frame"
+          expected_callback_enc="$(printf '%s' "$expected_callback" | jq -sRr @uri)"
+          start_url="https://${backend_host}/api/auth/microsoft/start?env=production&origin=${app_base_url}&flow=popup"
+
+          headers_file="$(mktemp)"
+          body_file="$(mktemp)"
+          status="$(curl -k -sS -D "$headers_file" -o "$body_file" -w "%{http_code}" "$start_url" || true)"
+
+          if [ "$status" != "302" ] && [ "$status" != "303" ]; then
+            fail_or_warn "Auth start endpoint did not redirect (status ${status}) at ${start_url}."
+            exit 0
+          fi
+
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/, "", $2); print $2}' "$headers_file" | tail -n1)"
+          if [ -z "$location" ]; then
+            fail_or_warn "Auth start endpoint did not include a Location header."
+            exit 0
+          fi
+
+          if ! printf '%s' "$location" | grep -q 'login.microsoftonline.com'; then
+            fail_or_warn "Auth redirect target is not Microsoft login: ${location}"
+            exit 0
+          fi
+
+          if ! printf '%s' "$location" | grep -q "redirect_uri=${expected_callback_enc}"; then
+            fail_or_warn "Auth redirect URI mismatch. Expected encoded callback for ${expected_callback}."
+            exit 0
+          fi
+
+          auth_page="$(curl -k -sS -L --max-redirs 5 "$location" || true)"
+          if printf '%s' "$auth_page" | grep -qi 'AADSTS500113'; then
+            fail_or_warn "Microsoft returned AADSTS500113 during auth smoke check. Ensure redirect URI is registered in Entra app."
+            exit 0
+          fi
+
+          echo "Microsoft auth smoke check passed."
+
+      - name: Verify backend database endpoint
+        if: ${{ inputs.backend_db_check_url != '' }}
+        env:
+          DB_CHECK_URL: ${{ inputs.backend_db_check_url }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -sS -f -m 10 "$DB_CHECK_URL" >/dev/null; then
+              echo "Backend DB endpoint check passed"
+              exit 0
+            fi
+            echo "Attempt ${i}/30: backend DB endpoint not healthy yet"
+            sleep 5
+          done
+          echo "::error::Backend DB endpoint check failed: $DB_CHECK_URL"
+          exit 1
+
+      - name: Verify backend runs the intended version
+        env:
+          EXPECTED_IMAGE: ${{ needs.resolve-image-tags.outputs.backend_image }}
+        run: |
+          set -euo pipefail
+          running_image="$(az webapp config show -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --query linuxFxVersion -o tsv)"
+          running_image="${running_image#DOCKER|}"
+          if [ "$running_image" != "$EXPECTED_IMAGE" ]; then
+            echo "::error::Backend is configured to run '${running_image}' but this deploy targeted '${EXPECTED_IMAGE}'."
+            exit 1
+          fi
+          echo "Backend runs the intended image: ${running_image}"
+
+      - name: Roll back backend on failure
+        if: ${{ failure() }}
+        env:
+          ACR_USER: ${{ secrets.PLATFORM_AZURE_ACR_USERNAME != '' && secrets.PLATFORM_AZURE_ACR_USERNAME || secrets.AZURE_ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.PLATFORM_AZURE_ACR_PASSWORD != '' && secrets.PLATFORM_AZURE_ACR_PASSWORD || secrets.AZURE_ACR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PREVIOUS_BACKEND_IMAGE:-}" ]; then
+            echo "Skipping backend rollback: no previous image recorded"
+            exit 0
+          fi
+
+          echo "Rolling back backend to: $PREVIOUS_BACKEND_IMAGE"
+          if [ -n "${ACR_USER:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
+            az webapp config container set \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$BACKEND_WEBAPP_NAME" \
+              --container-image-name "$PREVIOUS_BACKEND_IMAGE" \
+              --container-registry-url "https://${REGISTRY}" \
+              --container-registry-user "$ACR_USER" \
+              --container-registry-password "$ACR_PASSWORD" \
+              --output none
+          else
+            backend_rollback_cfg="$(jq -nc --arg image "$PREVIOUS_BACKEND_IMAGE" '{acrUseManagedIdentityCreds:true,linuxFxVersion:("DOCKER|"+$image)}')"
+            az webapp config set \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$BACKEND_WEBAPP_NAME" \
+              --generic-configurations "$backend_rollback_cfg" \
+              --output none
+          fi
+
+          az webapp restart -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --output none
+
+  deploy-frontend:
+    name: Deploy Frontend App Service
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-image-tags
+      - validate-existing-images
+      - deploy-backend
+    if: ${{ always() && needs.resolve-image-tags.result == 'success' && needs.validate-existing-images.result == 'success' && needs.resolve-image-tags.outputs.deploy_frontend == '1' && (needs.deploy-backend.result == 'success' || needs.deploy-backend.result == 'failure' || needs.deploy-backend.result == 'skipped') }}
+    environment: production
+
+    steps:
+      - name: Authenticate to Azure (SPN)
+        env:
+          SPN_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          SPN_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SPN_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          SPN_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          if [ "${SPN_CLIENT_ID,,}" != "73b2043b-6230-480a-8a9a-fd37f68af1b2" ] || [ "${SPN_TENANT_ID,,}" != "d0fec9dd-9219-4514-a1d8-1a872244bf6e" ] || [ -z "${SPN_CLIENT_SECRET:-}" ]; then
+            echo "::error::Azure operations require the CloudHub platform service principal and tenant."
+            exit 1
+          fi
+          az login --service-principal \
+            --username "$SPN_CLIENT_ID" \
+            --password "$SPN_CLIENT_SECRET" \
+            --tenant "$SPN_TENANT_ID" \
+            --output none
+          if [ -n "${SPN_SUBSCRIPTION_ID:-}" ]; then
+            az account set --subscription "$SPN_SUBSCRIPTION_ID"
+          fi
+
+      - name: Validate target resources
+        run: |
+          set -euo pipefail
+          az appservice plan show -g "$RESOURCE_GROUP" -n "$APP_SERVICE_PLAN" -o none
+          az webapp show -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" -o none
+
+      - name: Capture current frontend image
+        run: |
+          set -euo pipefail
+          linux_fx_version="$(az webapp config show -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --query linuxFxVersion -o tsv)"
+          previous_image="${linux_fx_version#DOCKER|}"
+          echo "PREVIOUS_FRONTEND_IMAGE=$previous_image" >> "$GITHUB_ENV"
+
+      - name: Validate frontend image tag exists
+        env:
+          FRONTEND_TAG: ${{ needs.resolve-image-tags.outputs.frontend_tag }}
+          FRONTEND_REPOSITORY: ${{ needs.resolve-image-tags.outputs.frontend_repository }}
+        run: |
+          set -euo pipefail
+          az acr repository show-tags \
+            --name "$ACR_NAME" \
+            --repository "$FRONTEND_REPOSITORY" \
+            --query "[?@=='${FRONTEND_TAG}'] | length(@)" \
+            -o tsv | grep -q '^1$'
+
+      - name: Deploy frontend container image
+        env:
+          FRONTEND_IMAGE: ${{ needs.resolve-image-tags.outputs.frontend_image }}
+          BACKEND_ORIGIN: ${{ inputs.backend_origin }}
+          ACR_USER: ${{ secrets.PLATFORM_AZURE_ACR_USERNAME != '' && secrets.PLATFORM_AZURE_ACR_USERNAME || secrets.AZURE_ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.PLATFORM_AZURE_ACR_PASSWORD != '' && secrets.PLATFORM_AZURE_ACR_PASSWORD || secrets.AZURE_ACR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ACR_PASSWORD:-}" ]; then
+            echo "::add-mask::$ACR_PASSWORD"
+          fi
+          image="$FRONTEND_IMAGE"
+
+          if [ -n "${ACR_USER:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
+            echo "Using ACR username/password for frontend image pull"
+            az webapp config container set \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$FRONTEND_WEBAPP_NAME" \
+              --container-image-name "$image" \
+              --container-registry-url "https://${REGISTRY}" \
+              --container-registry-user "$ACR_USER" \
+              --container-registry-password "$ACR_PASSWORD" \
+              --output none
+          else
+            echo "ACR credentials not provided; using managed identity for frontend image pull"
+            frontend_cfg="$(jq -nc --arg image "$image" '{acrUseManagedIdentityCreds:true,linuxFxVersion:("DOCKER|"+$image)}')"
+            az webapp config set \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$FRONTEND_WEBAPP_NAME" \
+              --generic-configurations "$frontend_cfg" \
+              --output none
+          fi
+
+          if [ -z "${BACKEND_ORIGIN:-}" ]; then
+            backend_host="$(az webapp show -g "$RESOURCE_GROUP" -n "$BACKEND_WEBAPP_NAME" --query defaultHostName -o tsv || true)"
+            if [ -z "$backend_host" ]; then
+              echo "::error::Could not resolve backend App Service default hostname for BACKEND_ORIGIN."
+              exit 1
+            fi
+            BACKEND_ORIGIN="https://${backend_host}"
+          fi
+
+          validate_public_url() {
+            local name="$1"
+            local value="$2"
+            local lower
+            lower="$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"
+
+            if [[ "$lower" != http://* && "$lower" != https://* ]]; then
+              echo "::error::${name} must be an absolute URL including the https:// scheme (got: ${value})."
+              exit 1
+            fi
+
+            if [[ "$lower" == *"localhost"* ]] || [[ "$lower" == *"127.0.0.1"* ]] || [[ "$lower" == *"[::1]"* ]]; then
+              echo "::error::${name} is set to a loopback URL (${value}). This breaks frontend-to-backend proxy routing."
+              exit 1
+            fi
+          }
+
+          validate_public_url "BACKEND_ORIGIN" "$BACKEND_ORIGIN"
+
+          az webapp config appsettings set \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$FRONTEND_WEBAPP_NAME" \
+            --settings \
+              BACKEND_ORIGIN="$BACKEND_ORIGIN" \
+              WEBSITES_PORT="80" \
+            --output none
+
+          # CLOUDHUB_VERSION is baked into the image (docker/Dockerfile.frontend).
+          # A leftover app setting overrides the baked value at nginx envsubst
+          # time and makes the UI report a stale version after any deploy that
+          # does not go through this workflow (for example Deployment Center).
+          if az webapp config appsettings list \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$FRONTEND_WEBAPP_NAME" \
+              --query "[?name=='CLOUDHUB_VERSION'] | length(@)" -o tsv | grep -q '^1$'; then
+            echo "Removing CLOUDHUB_VERSION app setting so the image-baked version wins"
+            az webapp config appsettings delete \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$FRONTEND_WEBAPP_NAME" \
+              --setting-names CLOUDHUB_VERSION \
+              --output none
+          fi
+
+          # CloudHub signs users in through Backstage's own Microsoft provider.
+          # App Service Easy Auth on top of it intercepts the SPA and every
+          # non-excluded /api/* call, which breaks the sign-in popup.
+          #
+          # Written through the authsettingsV2 resource rather than
+          # `az webapp auth update`: that command targets the legacy v1 auth API
+          # unless the `authV2` az extension happens to be installed, and ARM
+          # rejects v1 writes on a v2 site with
+          # "Cannot execute the request ... because the site is running on auth version v2".
+          subscription_id="$(az account show --query id -o tsv)"
+          auth_settings_id="/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.Web/sites/${FRONTEND_WEBAPP_NAME}/config/authsettingsV2"
+          az resource update \
+            --ids "$auth_settings_id" \
+            --set properties.platform.enabled=false \
+            --set properties.globalValidation.requireAuthentication=false \
+            --set properties.identityProviders.azureActiveDirectory.enabled=false \
+            --output none
+
+          easy_auth_enabled="$(az resource show --ids "$auth_settings_id" --query "properties.platform.enabled" -o tsv)"
+          if [ "$easy_auth_enabled" != "false" ]; then
+            echo "::error::App Service Easy Auth is still enabled on ${FRONTEND_WEBAPP_NAME} (platform.enabled=${easy_auth_enabled}); it shadows the SPA and breaks Backstage sign-in."
+            exit 1
+          fi
+
+      - name: Restart frontend app
+        run: |
+          set -euo pipefail
+          az webapp restart -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --output none
+
+      - name: Verify frontend health
+        env:
+          FRONTEND_URL: ${{ inputs.frontend_health_url }}
+        run: |
+          set -euo pipefail
+          host="$(az webapp show -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --query defaultHostName -o tsv)"
+          frontend_path="$(echo "$FRONTEND_URL" | sed -E 's#^[a-zA-Z]+://[^/]+(/.*)$#\1#')"
+          if [ "$frontend_path" = "$FRONTEND_URL" ] || [ -z "$frontend_path" ]; then
+            frontend_path="/"
+          fi
+          probe_url="https://${host}${frontend_path}"
+          echo "Probing frontend health URL: $probe_url"
+
+          reachable=0
+          for i in $(seq 1 60); do
+            code="$(curl -k -sS -o /dev/null -w "%{http_code}" "$probe_url" || true)"
+            echo "frontend health probe attempt ${i}: HTTP ${code}"
+            # 401/403 are NOT accepted: they mean an edge auth layer (Easy Auth)
+            # is shadowing the SPA, which breaks the Backstage sign-in popup.
+            if [ "$code" = "200" ] || [ "$code" = "301" ] || [ "$code" = "302" ]; then
+              reachable=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$reachable" -ne 1 ]; then
+            echo "::error::Frontend health check did not return an acceptable HTTP status (200/301/302) within timeout."
+            exit 1
+          fi
+
+          # A mis-baked app.baseUrl (e.g. missing https:// scheme) still serves
+          # index.html with HTTP 200 while every /static/* asset 404s, shipping a
+          # blank app. Fetch a hashed asset exactly as index.html references it
+          # (including any publicPath prefix) so this class of breakage fails the
+          # deploy instead of passing.
+          index_html="$(curl -k -sS "https://${host}/" || true)"
+          asset_ref="$(printf '%s' "$index_html" \
+            | grep -oE '(src|href)="[^"]*/static/[^"]+\.(js|css)"' \
+            | head -n1 \
+            | sed -E 's/.*="([^"]+)".*/\1/')"
+          if [ -z "$asset_ref" ]; then
+            echo "::warning::No /static asset reference found in index.html; skipping asset verification."
+            echo "Frontend reachable; health check passed."
+            exit 0
+          fi
+          case "$asset_ref" in
+            http://*|https://*) asset_url="$asset_ref" ;;
+            /*) asset_url="https://${host}${asset_ref}" ;;
+            *) asset_url="https://${host}/${asset_ref}" ;;
+          esac
+          echo "Verifying static asset loads as referenced: $asset_url"
+          acode=""
+          for i in $(seq 1 12); do
+            acode="$(curl -k -sS -o /dev/null -w "%{http_code}" "$asset_url" || true)"
+            echo "static asset probe attempt ${i}: HTTP ${acode}"
+            if [ "$acode" = "200" ]; then
+              echo "Frontend health check passed (index.html + static asset load)."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Frontend static asset (${asset_ref}) returned HTTP ${acode} instead of 200. This usually means app.baseUrl was baked without an https:// scheme, so the bundle references /static assets under a bogus path prefix."
+          exit 1
+
+      - name: Verify frontend runs the intended version
+        env:
+          EXPECTED_IMAGE: ${{ needs.resolve-image-tags.outputs.frontend_image }}
+          EXPECTED_TAG: ${{ needs.resolve-image-tags.outputs.frontend_tag }}
+        run: |
+          set -euo pipefail
+          host="$(az webapp show -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --query defaultHostName -o tsv)"
+
+          running_image="$(az webapp config show -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --query linuxFxVersion -o tsv)"
+          running_image="${running_image#DOCKER|}"
+          if [ "$running_image" != "$EXPECTED_IMAGE" ]; then
+            echo "::error::Frontend is configured to run '${running_image}' but this deploy targeted '${EXPECTED_IMAGE}'."
+            exit 1
+          fi
+
+          served_version=""
+          for i in $(seq 1 12); do
+            served_version="$(curl -k -sS "https://${host}/__cloudhub_version" || true)"
+            served_version="$(printf '%s' "$served_version" | tr -d '[:space:]')"
+            echo "version probe attempt ${i}: '${served_version}'"
+            if [ "$served_version" = "$EXPECTED_TAG" ]; then
+              echo "Frontend reports version ${served_version}, matching the deployed image."
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "::error::Frontend reports version '${served_version:-<empty>}' but '${EXPECTED_TAG}' was deployed."
+          if [ "$served_version" = "dev" ]; then
+            echo "::error::'dev' means the image predates version baking; rebuild it with build-fe-be-prod-basic.yml."
+          else
+            echo "::error::A stale CLOUDHUB_VERSION app setting overrides the image-baked value; remove it from ${FRONTEND_WEBAPP_NAME}."
+          fi
+          exit 1
+
+      - name: Roll back frontend on failure
+        if: ${{ failure() }}
+        env:
+          ACR_USER: ${{ secrets.PLATFORM_AZURE_ACR_USERNAME != '' && secrets.PLATFORM_AZURE_ACR_USERNAME || secrets.AZURE_ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.PLATFORM_AZURE_ACR_PASSWORD != '' && secrets.PLATFORM_AZURE_ACR_PASSWORD || secrets.AZURE_ACR_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PREVIOUS_FRONTEND_IMAGE:-}" ]; then
+            echo "Skipping frontend rollback: no previous image recorded"
+            exit 0
+          fi
+
+          echo "Rolling back frontend to: $PREVIOUS_FRONTEND_IMAGE"
+          if [ -n "${ACR_USER:-}" ] && [ -n "${ACR_PASSWORD:-}" ]; then
+            az webapp config container set \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$FRONTEND_WEBAPP_NAME" \
+              --container-image-name "$PREVIOUS_FRONTEND_IMAGE" \
+              --container-registry-url "https://${REGISTRY}" \
+              --container-registry-user "$ACR_USER" \
+              --container-registry-password "$ACR_PASSWORD" \
+              --output none
+          else
+            frontend_rollback_cfg="$(jq -nc --arg image "$PREVIOUS_FRONTEND_IMAGE" '{acrUseManagedIdentityCreds:true,linuxFxVersion:("DOCKER|"+$image)}')"
+            az webapp config set \
+              --resource-group "$RESOURCE_GROUP" \
+              --name "$FRONTEND_WEBAPP_NAME" \
+              --generic-configurations "$frontend_rollback_cfg" \
+              --output none
+          fi
+
+          az webapp restart -g "$RESOURCE_GROUP" -n "$FRONTEND_WEBAPP_NAME" --output none
+
+  release-summary:
+    name: Release Summary
+    runs-on: ubuntu-latest
+    needs:
+      - resolve-image-tags
+      - deploy-backend
+      - deploy-frontend
+    if: ${{ always() && needs.resolve-image-tags.result == 'success' && needs.deploy-backend.result != 'failure' && needs.deploy-frontend.result != 'failure' }}
+
+    steps:
+      - name: Publish summary
+        env:
+          DEPLOY_FRONTEND: ${{ needs.resolve-image-tags.outputs.deploy_frontend }}
+          DEPLOY_BACKEND: ${{ needs.resolve-image-tags.outputs.deploy_backend }}
+        run: |
+          {
+            echo "## CloudHub Production Deploy"
+            echo "- Workflow deploy revision: ${WORKFLOW_DEPLOY_REV}"
+            echo "- Component selection: ${{ needs.resolve-image-tags.outputs.deploy_component }}"
+            echo "- App Service Plan: ${APP_SERVICE_PLAN} (Linux)"
+            echo "- Resource Group: ${RESOURCE_GROUP}"
+            echo "- Registry: ${REGISTRY}"
+            if [ "$DEPLOY_FRONTEND" = "1" ]; then
+              echo "- Frontend App: ${FRONTEND_WEBAPP_NAME}"
+              echo "- Frontend image: ${{ needs.resolve-image-tags.outputs.frontend_image }}"
+              echo "- Frontend URL: ${{ inputs.frontend_health_url }}"
+            else
+              echo "- Frontend: not deployed in this run"
+            fi
+            if [ "$DEPLOY_BACKEND" = "1" ]; then
+              echo "- Backend App: ${BACKEND_WEBAPP_NAME}"
+              echo "- Backend image: ${{ needs.resolve-image-tags.outputs.backend_image }}"
+              echo "- Backend health URL: ${{ inputs.backend_health_url }}"
+              if [ -n "${{ inputs.backend_db_check_url }}" ]; then
+                echo "- Backend DB check URL: ${{ inputs.backend_db_check_url }}"
+              fi
+              echo "- Backend expected architecture: App Service -> VNet -> Azure PostgreSQL Flexible Server"
+            else
+              echo "- Backend: not deployed in this run"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

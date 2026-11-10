@@ -1,0 +1,52 @@
+name: CloudHub Quality Gates
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Lint, Typecheck, and Test Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: yarn
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Lint all workspaces
+        run: yarn lint:all
+
+      - name: Typecheck all workspaces
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: yarn tsc:full
+
+      - name: Run unit/integration tests with coverage
+        run: yarn test:all
+
+      - name: Run platform validation tests
+        run: ./tests/run.sh

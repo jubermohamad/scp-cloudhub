@@ -1,0 +1,383 @@
+# ============================================================================
+# assembly-aks-dev — CANONICAL values (single file, no overlay stacking)
+#
+#   helm upgrade --install workflows ./helm/assembly-workflows \
+#     -n assembly-workflows --create-namespace \
+#     -f helm/assembly-workflows/values-dev.yaml \
+#     --set image.tag=<sha>          # CI does exactly this
+#
+# This file is the complete delta between chart defaults (values.yaml) and
+# the dev cluster. It absorbed values-perf-optimized.yaml and
+# values-perf-small-700.yaml (now deleted) after their proven settings were
+# promoted to chart defaults; what remains is only what is genuinely
+# dev-specific. Equivalence with the old 3-overlay stack was render-diffed
+# at migration time.
+#
+# Secrets are `ref+op://` references into the 1Password `Assembly` item (section
+# `dev` + `common`), resolved by `vals eval` in deploy.yml before helm. A plain
+# `helm -f` without vals fails render (unresolved-ref guard); the render-only
+# escape hatch is --set validation.allowPlaceholders=true.
+# ============================================================================
+
+global:
+  environment: development
+
+image:
+  # One tag for the whole release. CI overrides with --set image.tag=<sha>.
+  tag: dev
+  # AKS managed-identity pull needs an AAD role assignment we lack Owner for;
+  # provision an ACR pull secret via the chart instead.
+  createPullSecret:
+    enabled: true
+    # ACR pull-token pair from the `common` section of the 1Password `Assembly`
+    # item (vault id nfrx352u56ryvyevbdyilpcji4 = "Emerging Tech Engineering
+    # Vault"). Resolved by `vals eval` in deploy.yml before helm ever sees them.
+    username: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/common/image__createPullSecret__username
+    password: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/common/image__createPullSecret__password
+  pullSecrets:
+    - name: acr-secret
+
+rollout:
+  # assembly-aks-dev runs close to its 4-node capacity. Default rolling updates
+  # create surge pods before old pods are removed, leaving replacements Pending
+  # and making Helm time out. Free old capacity first on this dev cluster.
+  noSurge: true
+
+# Explicit on purpose: an upgrade that omits this value must never flip the
+# release to external-infra mode and prune the in-cluster Postgres (the
+# dev-DB-wipe class of incident — data PVCs carry resource-policy keep as the
+# second line of defense).
+infra:
+  enabled: true
+  # Do not hard-pin dev infra pods by workload label here. The long-lived
+  # assembly-aks-dev nodepool has been recreated/scaled over time and currently
+  # does not consistently carry workload=infra; requiring it strands every
+  # replacement pod Pending during CI deploys. Perf/demo overlays with managed
+  # labeled pools should set their own selectors.
+  nodeSelector: {}
+  postgres:
+    password: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/infra__postgres__password
+    # Live postgres-pvc on assembly-aks-dev was manually resized to 20Gi at
+    # some point — k8s forbids a PVC resize request going backwards, so this
+    # must stay >= whatever the live PVC's actual capacity is or every
+    # deploy-aks-dev.yml run fails at the Helm upgrade step. Check
+    # `kubectl get pvc postgres-pvc -o jsonpath='{.status.capacity.storage}'`
+    # before ever lowering this.
+    storage: 20Gi
+    resources:
+      requests: { memory: 768Mi, cpu: 200m }
+      limits: { memory: 2Gi }
+  redis:
+    resources:
+      requests: { memory: 256Mi, cpu: 50m }
+      limits: { memory: 1Gi, cpu: 500m }
+  keycloak:
+    adminPassword: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/infra__keycloak__adminPassword
+    resources:
+      requests: { memory: 384Mi, cpu: 50m }
+  temporal:
+    # ⚠ IMMUTABLE once the Temporal DB is initialized. The dev DB was created
+    # with 256; changing this against an existing DB bricks the cluster
+    # (verify with cluster_metadata_info if unsure).
+    numHistoryShards: 256
+    dynamicConfig:
+      perfOptimized: true
+    gomaxprocs: 2
+    resources:
+      requests: { memory: 768Mi, cpu: 500m }
+      limits: { memory: 3Gi }
+  postgresTemporal:
+    # See issue #1620: this was true here but Temporal is actually still
+    # live-connected to the shared `postgres` instance (confirmed via the
+    # running pod's own env) — no `postgres-temporal` pod has ever actually
+    # been provisioned. templates/infra.yaml reads this flag directly to
+    # choose Temporal's POSTGRES_SEEDS target (postgres-temporal vs
+    # postgres) — flipping it to true on a real deploy would silently
+    # redirect Temporal off its live history onto a fresh empty DB. Keeping
+    # this false until the migration in #1620 is deliberately done; do not
+    # flip it back to true without following that issue's migration plan.
+    enabled: false
+    password: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/infra__postgresTemporal__password
+    storage: 32Gi
+    storageClass: managed-csi
+    # Dev accepts the crash-durability trade for throughput; chart default
+    # is durable (false). Real user data lives on demo, not here.
+    syncCommitOff: true
+    resources:
+      requests: { memory: 768Mi, cpu: 250m }
+      limits: { memory: 4Gi, cpu: "2" }
+
+minio:
+  enabled: true
+
+# ref+op:// references into the `dev` section of the 1Password `Assembly` item;
+# `vals eval` (deploy.yml) resolves them before helm. A plain `helm -f` without
+# vals fails render (aw.validate.noPlaceholders rejects an unresolved ref).
+secrets:
+  jwtSecret: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/secrets__jwtSecret
+  fernetKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/secrets__fernetKey
+  internalServiceApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/secrets__internalServiceApiKey
+  sandboxInternalServiceApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/secrets__sandboxInternalServiceApiKey
+  workspaceManagerInternalServiceApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/secrets__workspaceManagerInternalServiceApiKey
+  tavilyApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/secrets__tavilyApiKey
+  llmGateway:
+    userKeysInternalApiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/secrets__llmGateway__userKeysInternalApiKey
+    adminKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/secrets__llmGateway__adminKey
+  # Platform-default LLM provider (Azure Foundry @ assembly-models). Renders
+  # AZURE_FOUNDRY_URL/API_KEY, which the gateway SEEDS into its gateway_config
+  # row on first boot (empty DB). NOTE: on the existing dev cluster the row
+  # already exists, so this only takes effect on a fresh deploy — it makes the
+  # config reproducible (was previously only in the DB, seeded from a past env).
+  azureFoundry:
+    url: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/secrets__azureFoundry__url
+    apiKey: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/secrets__azureFoundry__apiKey
+
+apisix:
+  service:
+    type: LoadBalancer
+    loadBalancerIP: 51.132.165.237
+  tls:
+    enabled: true
+    # Standalone dev AKS: no shared ingress-nginx, so APISIX is the front door on
+    # its own public LB and terminates TLS from the apisix-tls Secret
+    # (cert-manager-issued in-cluster). Mounted into the pod, not inlined.
+    mode: apisix
+    publicHostname: assembly-workflows-dev.uksouth.cloudapp.azure.com
+
+# ----------------------------------------------------------------------------
+# Replicas + resources cut for the 4-node x 2-vCPU dev cluster (8 vCPU total).
+# Without these trims temporal and postgres-temporal cannot schedule (cluster
+# fills to 95-99% CPU requests).
+# ----------------------------------------------------------------------------
+agents:
+  replicas: 1
+  resources:
+    requests: { cpu: 150m }
+    limits: { cpu: "1" }
+  hpa:
+    enabled: false
+  # Payload-guard ceiling raised 1.8MB -> 10MB (PR #600's validated
+  # compressible-payload ceiling; TEMPORAL_PAYLOAD_COMPRESSION_ENABLED is
+  # already on chart-wide) + Tier-2 blob-offload turned on (#140/#2018/#2020
+  # investigation) so a legitimately large/incompressible node payload gets
+  # offloaded to the in-cluster MinIO instead of failing loud. Adding
+  # extraEnv here REPLACES rather than merges the chart-default list (see
+  # the agentsWorker note below), so the base HARD_LIMIT is re-specified
+  # explicitly rather than inherited.
+  extraEnv:
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_HARD_LIMIT_BYTES
+      value: "10000000"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_ENABLED
+      value: "true"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_S3_ENDPOINT
+      value: "http://minio:9000"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_TTL_DAYS
+      # >= the 72h retention on every dev Temporal namespace (default/sandbox/
+      # agent-builder/autonomous-executor), with margin, so a replay can never
+      # need a blob MinIO has already reclaimed.
+      value: "7"
+
+agentsWorker:
+  # Scaled up from the base default (2) after a heavy eval run starved
+  # workflow-task dispatch on agent-builder-tasks (backlog with dispatch=0)
+  # while activity slots were held by long agent/api_request activities. More
+  # replicas = more workflow+activity pollers/slots. CPU was never the limit.
+  replicas: 6
+  resources:
+    requests: { memory: 256Mi, cpu: 100m }
+    # Bumped 1Gi -> 2Gi (back to the chart default this pod was previously
+    # sized down from) to back the raised payload-guard ceiling below: a
+    # 10MB compact_state held as {dict + json.dumps copy + zlib.compress
+    # copy} simultaneously across a handful of the pod's 200 concurrent
+    # workflow-task slots needs real headroom, or a rare large-payload burst
+    # OOMKills the pod instead of the guard failing it cleanly. requests:
+    # unchanged (scheduling/bin-packing untouched) — cluster has headroom on
+    # the app nodepool (~40% mem used per node at last check).
+    limits: { memory: 2Gi }
+  temporal:
+    maxConcurrentActivities: 300
+    maxConcurrentWorkflowTasks: 200
+    maxCachedWorkflows: 384
+    disableResourceTuner: true
+    # Poller floors trimmed below chart defaults for the 2-vCPU nodes. These
+    # MUST go through the dedicated keys below, not extraEnv — the template
+    # (assembly-engine-worker.yaml) already emits
+    # TEMPORAL_{WORKFLOW,ACTIVITY}_TASK_POLLER_{MIN,INITIAL} from these same
+    # values. Re-declaring them via extraEnv creates a real duplicate env
+    # entry (same name twice in one container's env list), which server-side
+    # apply rejects outright ("duplicate entries for key") — found blocking
+    # deploy-aks-dev.yml end-to-end (see PR fixing this).
+    workflowTaskPollerMin: 6
+    workflowTaskPollerInitial: 10
+    activityTaskPollerMin: 8
+    activityTaskPollerInitial: 12
+  fastCodeActivityTimeout: 60
+  # NOTE: extraEnv REPLACES the chart-default list (helm lists don't merge),
+  # so every entry this worker needs — including the payload-guard knobs
+  # below, previously (unintentionally) dropped to the 1.2MB code default —
+  # must be listed explicitly here, not assumed inherited from values.yaml.
+  extraEnv:
+    - name: ASSEMBLY_INLINE_SIMPLE_CALL_WORKFLOW
+      value: "true"
+    - name: ASSEMBLY_INLINE_CONDITION_NODES
+      value: "true"
+    - name: ASSEMBLY_LOCAL_CUSTOM_CODE_NODES
+      value: "true"
+    - name: ASSEMBLY_TRUSTED_CODE_EXECUTOR_MAX_WORKERS
+      value: "12"
+    - name: ASSEMBLY_WORKFLOW_STATUS_BATCH_CONCURRENCY
+      value: "150"
+    # Payload guard (see the `agents` block above for the full rationale).
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_HARD_LIMIT_BYTES
+      value: "10000000"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_ENABLED
+      value: "true"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_S3_ENDPOINT
+      value: "http://minio:9000"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_TTL_DAYS
+      value: "7"
+
+agentsCodeWorker:
+  # 2 replicas so a single code-worker restart/wedge doesn't take ALL
+  # custom_code down (it owns the code + parallel-code queues, workflow +
+  # activity). Redundancy + headroom for eval bursts.
+  replicas: 2
+  codeExecutionTarget: sandbox-service
+  # SECURITY (#1372 / red-team prep): never enable in-process exec() on
+  # multi-tenant clusters — any canvas author gets worker credentials
+  # (FERNET_KEY, DATABASE_URL) and host filesystem. Keep false on dev/demo.
+  trustedCodeInprocess: false
+  resources:
+    requests: { memory: 256Mi, cpu: 100m }
+    # Bumped 1Gi -> 2Gi (chart default) — same payload-guard headroom
+    # rationale as agentsWorker above; custom_code nodes (the node type that
+    # always carries FULL, unprojected node_outputs) run here.
+    limits: { memory: 2Gi }
+  fastCodeActivityTimeout: 60
+  extraEnv:
+    # Payload guard (see the `agents` block above for the full rationale).
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_HARD_LIMIT_BYTES
+      value: "10000000"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_ENABLED
+      value: "true"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_S3_ENDPOINT
+      value: "http://minio:9000"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_TTL_DAYS
+      value: "7"
+
+agentsSubflowWorker:
+  enabled: true
+  replicas: 1
+  resources:
+    requests: { cpu: 100m }
+    # Bumped 768Mi -> 2Gi — same payload-guard headroom rationale as
+    # agentsWorker above. Single replica, so the absolute cost of the bump
+    # is small; this pool also inherits agentsWorker's own maxConcurrent*
+    # settings (base chart's agentsSubflowWorker.temporal defaults), so it
+    # carries comparable concurrent-slot exposure.
+    limits: { memory: 2Gi }
+  fastCodeActivityTimeout: 60
+  extraEnv:
+    # Payload guard (see the `agents` block above for the full rationale).
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_HARD_LIMIT_BYTES
+      value: "10000000"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_ENABLED
+      value: "true"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_S3_ENDPOINT
+      value: "http://minio:9000"
+    - name: ASSEMBLY_WORKFLOW_PAYLOAD_OFFLOAD_TTL_DAYS
+      value: "7"
+
+llmGateway:
+  replicas: 1
+  resources:
+    requests: { memory: 192Mi, cpu: 50m }
+    limits: { cpu: 500m }
+
+# Single replica during initial install to avoid the two-replica alembic race
+# (both migrate init containers run `alembic upgrade head` simultaneously,
+# the second crashloops with DuplicateTableError). Scale up after rollout.
+userProject:
+  replicas: 1
+
+frontend:
+  replicas: 1
+
+# A single replica is a SPOF: when it OOMKills mid-run, in-flight custom_code
+# activities get "Sandbox /execute-code unreachable", fall back to the local
+# CodeInterpreter (no Docker/nsjail in the worker pod), and fail hard with
+# "Docker is required for secure code execution". A multi-node workflow firing
+# several concurrent custom_code nodes (each allowed EXECUTE_CODE_MEMORY_LIMIT_MB
+# = 512) blew past the old 1Gi limit and OOMKilled the lone pod (exitCode 137).
+# Two replicas survive a single OOM-restart; the 3Gi limit gives headroom for
+# concurrent nsjail executions. Mirrors the perf-slice fix in
+# k8s/overlays/modules/workflows/lean-replicas.yaml (iter-312).
+sandboxExecute:
+  egressFilter:
+    enabled: true
+    dnsIP: "10.0.0.10"
+  replicas: 2
+  resources:
+    requests: { memory: 1Gi, cpu: 100m }
+    limits: { memory: 3Gi }
+  extraEnv:
+    # Pentest prep (#1352): require preview access token on the content proxy
+    # so an unauthenticated caller cannot hit a live slug and inherit the
+    # owner's minted credentials (confused deputy). Expose paths already mint
+    # preview_token into returned URLs when this flag is on.
+    - name: PREVIEW_REQUIRE_ACCESS_TOKEN
+      value: "true"
+
+sandboxTrigger:
+  resources:
+    requests: { memory: 256Mi, cpu: 50m }
+  # InvHub drop-in: the service account (Keycloak workflow-canvas client) may
+  # invoke deployments it does not own on the /run + webhook path only, run
+  # delegated to the deployment owner. Must match the email/sub the InvHub
+  # service user authenticates as. Empty (chart default) keeps it fail-closed.
+  # assembly-aks-dev does NOT enable infra.keycloak.flowsIntegration, so unlike
+  # dev-assembly-eng/assembly-pen-test this has no auto-derived fallback — this
+  # ref IS the only source of the entry. 1Password (not committed) so it can
+  # change without a chart release. See docs/invhub-legacy-webhook.md. (First-
+  # class knob — do NOT also set WEBHOOK_RUN_ALLOWLIST via extraEnv: the
+  # duplicate env name breaks server-side apply.)
+  webhookRunAllowlist: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/sandboxTrigger__webhookRunAllowlist
+  extraEnv:
+    # Dev runs load tests; deployment-run rate limiting off.
+    - name: DEPLOYMENT_RUN_RATE_LIMIT_PER_MINUTE
+      value: "0"
+
+# SSRF guard: public hosts already pass unconfigured, so this only exempts targets
+# that resolve into private space (in-cluster Services, split-horizon zones). No
+# committed baseline for dev — but the op-sourced channel is wired, so opening a
+# domain here is a 1Password edit + re-run of deploy.yml, no commit. The field is
+# empty today, which resolves to "" and renders no env at all (fail-closed).
+# Grammar (exact hosts or *.suffix wildcards, and the platform-infra carve-out) is
+# documented in values.yaml.
+urlValidation:
+  allowHosts: ""
+  extraAllowHosts: ref+op://nfrx352u56ryvyevbdyilpcji4/Assembly/assembly-aks-dev/urlValidation__extraAllowHosts
+
+mcpHub:
+  debug: true
+  allowedOrigins:
+    - http://localhost:3000
+    - https://localhost:3000
+  # Chart default is off (see values.yaml + issue #95: uploaded servers run
+  # as unsandboxed in-pod subprocesses). Enabled here for dev only, which
+  # has no real user data (see postgresTemporal.syncCommitOff above).
+  # Known risk accepted for dev: issue #95's caveat 1 notes /upload is no
+  # longer admin-gated (any authenticated user can trigger this), tracked
+  # as an open follow-up, not blocking here.
+  processDeployments:
+    enabled: true
+    autostart: true
+
+scheduling:
+  # Same rationale as infra.nodeSelector above: deploy-aks-dev must be able to
+  # recover the live dev cluster even when workload labels drift or autoscaled
+  # nodes are recreated without them.
+  nodeSelector: {}
+
+podDisruptionBudgets:
+  enabled: false

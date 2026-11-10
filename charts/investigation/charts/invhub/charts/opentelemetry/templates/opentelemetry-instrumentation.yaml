@@ -1,0 +1,15 @@
+{{- if .Capabilities.APIVersions.Has "opentelemetry.io/v1alpha1/Instrumentation" -}}
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: otel-instrumentation
+spec:
+  propagators:
+    - tracecontext
+    - baggage
+  sampler:
+    type: parentbased_traceidratio
+    argument: "1"
+  nodejs:
+    volumeLimitSize: "256Mi"
+{{- end }}

@@ -1,0 +1,18 @@
+nameOverride: ""
+fullnameOverride: "copilot-common"
+
+config:
+  azureOpenAIEndpoint: ""
+  azureOpenAIApiVersion: ""
+  openAIApiVersion: ""
+  azureDeploymentName: ""
+  azureDeploymentNameSupervisor: ""
+  azureOpenAIApiVersionSupervisor: ""
+  azureEmbeddingsEndpoint: ""
+  azureEmbeddingsDeployment: ""
+  azureEmbeddingsModel: ""
+
+secrets:
+  azureOpenAIKey: ""
+  azureEmbeddingsKey: ""
+  tavilyApiKey: ""

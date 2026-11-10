@@ -1,0 +1,3 @@
+tempoUrl: "tempo-distributor:4317"
+jaegerUrl: "jaeger-collector:4317"
+otelCollectorUrl: "http://otel-collector-collector:4317"

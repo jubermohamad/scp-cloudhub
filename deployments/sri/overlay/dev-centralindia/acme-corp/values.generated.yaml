@@ -1,0 +1,320 @@
+# ACME Corporation - SRI Investigation Overlay
+# Stage 3: Customer-Specific Customizations
+# These values override/extend the base component values
+
+# ============================================================================
+# Customer Identification
+# ============================================================================
+
+customer:
+  id: acme-corp
+  name: ACME Corporation
+  displayName: ACME Corp
+  type: enterprise
+  tier: premium
+  region: centralindia
+  accountId: "12345"
+
+# ============================================================================
+# Branding & UI Customization
+# ============================================================================
+
+branding:
+  enabled: true
+  logo:
+    url: "https://acme-corp.example.com/logo.png"
+    height: 40
+    width: 200
+  
+  colors:
+    primary: "#003366"      # ACME blue
+    secondary: "#FF6600"    # ACME orange
+    accent: "#00AA44"       # ACME green
+    background: "#F5F5F5"
+  
+  theme:
+    name: acme-theme
+    mode: light
+  
+  organization:
+    legalName: ACME Corporation Inc.
+    website: https://acme-corp.example.com
+    support_email: support@acme-corp.example.com
+
+# ============================================================================
+# Feature Flags & Enablement
+# ============================================================================
+
+features:
+  # Investigation capabilities
+  investigation:
+    enabled: true
+    advancedAnalytics: true
+    customReporting: true
+    predictiveAnalysis: true
+    
+  # Data capabilities
+  data:
+    enabled: true
+    maxDataRetentionDays: 365
+    advancedFiltering: true
+    bulkExport: true
+    
+  # Collaboration features
+  collaboration:
+    enabled: true
+    teamsIntegration: true
+    commentingEnabled: true
+    sharingEnabled: true
+    
+  # Admin features
+  admin:
+    enabled: true
+    userManagement: true
+    auditLogging: true
+    customRules: true
+
+# ============================================================================
+# Tenant-Specific Configuration
+# ============================================================================
+
+tenantConfig:
+  isolation:
+    level: strict
+    namespace: sri-dev-centralindia
+    labels:
+      customer: acme-corp
+      tenant: acme-corp
+      tier: premium
+  
+  quotas:
+    maxUsers: 500
+    maxApiTokens: 100
+    maxWebhooks: 50
+    maxDataStorageGB: 1000
+  
+  authentication:
+    samlEnabled: true
+    samlIdp: "https://acme-corp.okta.com"
+    mfaRequired: true
+    sessionTimeout: 1800  # 30 minutes
+  
+  dataPolicy:
+    dataClassification: sensitive
+    encryptionRequired: true
+    complianceLevel: pci-dss
+    auditLogRetention: 2555  # 7 years
+
+# ============================================================================
+# Resource Allocation for Overlay
+# ============================================================================
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# ============================================================================
+# Customer-Specific ConfigMap
+# ============================================================================
+
+configMap:
+  enabled: true
+  labels:
+    customer: acme-corp
+  data:
+    CUSTOMER_ID: acme-corp
+    CUSTOMER_NAME: "ACME Corporation"
+    BRANDING_THEME: acme-theme
+    FEATURE_ADVANCED_ANALYTICS: "true"
+    FEATURE_CUSTOM_REPORTING: "true"
+    SAML_ENABLED: "true"
+    MFA_REQUIRED: "true"
+    DATA_RETENTION_DAYS: "365"
+
+# ============================================================================
+# Customer-Specific Secrets (Reference Only)
+# ============================================================================
+# Actual secrets should be created separately and NOT stored in helmfile
+# Reference format:
+#
+# secrets:
+#   - name: acme-corp-saml-cert
+#     namespace: sri-dev-centralindia
+#   - name: acme-corp-api-keys
+#     namespace: sri-dev-centralindia
+#
+# ============================================================================
+
+# ============================================================================
+# Customer-Specific Ingress
+# ============================================================================
+
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: basic-auth-acme
+    nginx.ingress.kubernetes.io/auth-realm: "ACME Corp Portal"
+  
+  hosts:
+    - host: sri-acme-corp-dev.symphonyai.com
+      paths:
+        - path: /
+          pathType: Prefix
+        - path: /api
+          pathType: Prefix
+  
+  tls:
+    - secretName: sri-acme-corp-dev-tls
+      hosts:
+        - sri-acme-corp-dev.symphonyai.com
+
+# ============================================================================
+# Customer-Specific Monitoring
+# ============================================================================
+
+monitoring:
+  enabled: true
+  labels:
+    customer: acme-corp
+  dashboards:
+    - name: acme-corp-investigation
+      namespace: sri-dev-centralindia
+  
+  alerts:
+    - alert: ACMECorpHighErrorRate
+      expr: 'rate(http_request_errors{customer="acme-corp"}[5m]) > 0.1'
+      severity: warning
+    
+    - alert: ACMECorpDiskUsageHigh
+      expr: 'kubelet_volume_stats_used_bytes{customer="acme-corp"} / kubelet_volume_stats_capacity_bytes > 0.85'
+      severity: warning
+
+# ============================================================================
+# Customer-Specific RBAC
+# ============================================================================
+
+rbac:
+  enabled: true
+  roles:
+    - name: acme-corp-admin
+      namespace: sri-dev-centralindia
+      rules:
+        - apiGroups: ["*"]
+          resources: ["*"]
+          verbs: ["*"]
+    
+    - name: acme-corp-user
+      namespace: sri-dev-centralindia
+      rules:
+        - apiGroups: [""]
+          resources: ["pods", "services"]
+          verbs: ["get", "list"]
+
+# ============================================================================
+# Customer-Specific NetworkPolicy
+# ============================================================================
+
+networkPolicy:
+  enabled: true
+  labels:
+    customer: acme-corp
+  
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              customer: acme-corp
+      ports:
+        - protocol: TCP
+          port: 8080
+  
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+
+# ============================================================================
+# Customer-Specific Database Configuration
+# ============================================================================
+
+database:
+  # Use shared database but with customer-specific schema
+  schema: acme_corp_dev
+  user: acme_corp_dev
+  connectionPoolSize: 10
+  readOnly: false
+
+# ============================================================================
+# Customer Support & SLA
+# ============================================================================
+
+support:
+  tier: premium
+  sla:
+    responseTime: 1h
+    resolution: 4h
+  contactEmail: support@acme-corp.example.com
+  slackChannel: "#acme-corp-support"
+  accountManager: john.doe@symphonyai.com
+
+# ============================================================================
+# Billing & Usage Tracking
+# ============================================================================
+
+billing:
+  enabled: true
+  costCenter: ACME-001
+  billingContact: finance@acme-corp.example.com
+  invoicingFrequency: monthly
+  tags:
+    - customer:acme-corp
+    - tier:premium
+    - region:centralindia
+
+# ============================================================================
+# Custom Health Checks for Customer
+# ============================================================================
+
+customHealthChecks:
+  - name: acme-corp-data-sync
+    interval: 300s
+    endpoint: /health/acme-data-sync
+  
+  - name: acme-corp-saml-provider
+    interval: 600s
+    endpoint: /health/saml-provider
+
+# ============================================================================
+# Compliance & Audit
+# ============================================================================
+
+compliance:
+  enabled: true
+  framework: pci-dss
+  auditEnabled: true
+  logLevel: verbose
+  logsRetention: 2555  # 7 years
+  labels:
+    compliance: pci-dss
+    audited: "true"
+
+# ============================================================================
+# IMPORTANT: Overlay Scope
+# ============================================================================
+# This overlay:
+# - EXTENDS the base component configuration
+# - Does NOT modify the component itself
+# - Can be deployed independently
+# - Can be rolled back independently
+# - Multiple overlays can coexist for same component
+# - Each customer has isolated namespace/resources
+# ============================================================================

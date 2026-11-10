@@ -1,0 +1,235 @@
+<processing>
+    <profilings>
+        <profiling name="Transaction_profiling" profilePeriod="all" outputMode="parquet"/>
+        <profiling name="AccountUpdate_profiling" profilePeriod="all" outputMode="parquet"/>
+        <profiling name="IUCustomer_profiling" profilePeriod="all" outputMode="parquet"/>
+        <profiling name="AlertFeedback_profiling" profilePeriod="all" outputMode="parquet"/>
+		<profiling name="SensaCustScore_profiling" profilePeriod="all" outputMode="parquet"/>
+		<profiling name="SensaAlertScore_profiling" profilePeriod="all" outputMode="parquet"/>
+        <profiling name="bulk_profiling" profilePeriod="all" outputMode="parquet"/>
+    </profilings>
+
+    <detections>
+        <detection name="Transaction_detection" timeBase="all" checkType="alerting"/>
+        <detection name="Transaction_detection_event" checkType="event"/>
+        <detection name="Alert_IET_rescoring" timeBase="all" checkType="scoring"/>
+    </detections>
+    <profileTrimmings>
+        <profileTrimming name="ProfileTrimming_bulk" permanentRemoval="true">
+            <timeSelectors>
+                <timeSelector period="day" root="bulk*" numberOfPeriods="1"/>
+            </timeSelectors>
+        </profileTrimming>
+    </profileTrimmings>
+    <snapshots>
+        <snapshot name="snapshot_all" extended="true"/>
+    </snapshots>
+    <processes>
+        <process name="AML_Profiling" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="IUCustomer" entity="" onError="stop">
+                    <apply name="IUCustomer_profiling"/>
+                </service>
+                <service type="profiling" dataSource="AccountUpdate" entity="" onError="stop">
+                    <apply name="AccountUpdate_profiling"/>
+                </service>
+                <service type="profiling" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+            </services>
+        </process>
+        <process name="AML_Detection" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection"/>
+                </service>
+            </services>
+        </process>
+        <process name="AML_AlertFeedback" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="AlertFeedback" entity="" onError="stop">
+                    <apply name="AlertFeedback_profiling"/>
+                </service>
+            </services>
+        </process>
+        <process name="AML_ProfilingSensaAlertScore" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="SensaAlertScore" entity="" onError="continue">
+                    <apply name="SensaAlertScore_profiling"/>
+                </service>
+            </services>
+        </process>
+        <process name="AML_ProfilingSensaCustomerScore" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="SensaCustomerScore" entity="" onError="continue">
+                    <apply name="SensaCustScore_profiling"/>
+                </service>
+            </services>
+        </process>
+
+
+        <process name="AML_BulkProfiling" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="bulk" entity="" onError="stop">
+                    <apply name="bulk_profiling"/>
+                </service>
+            </services>
+        </process>        
+        <process name="AML_ProfileTrimmer" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profile_trimmer">
+                    <apply name="ProfileTrimming_bulk"/>
+                </service>
+            </services>
+        </process>        
+        <process name="AML_Tagging" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+               <service type="tagging" dataSource="Transaction" entity="" orgUnit="" onError="stop" dbspec="dbspec_Transaction_Tagging.xml">
+                    <apply name="transactionTagging"/>
+                </service>
+            </services>
+        </process>
+
+
+        <process name="AML_Processing" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="IUCustomer" entity="" onError="stop">
+                    <apply name="IUCustomer_profiling"/>
+                </service>
+                <service type="profiling" dataSource="AccountUpdate" entity="" onError="stop">
+                    <apply name="AccountUpdate_profiling"/>
+                </service>
+                <service type="profiling" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection_event"/>
+                </service>
+                <service type="profiling" dataSource="Internal" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection"/>
+                </service>
+                <service type="profiling" dataSource="AlertFeedback" entity="" onError="stop">
+                    <apply name="AlertFeedback_profiling"/>
+                </service>
+                <service type="bulk" entity="" onError="stop">
+                    <apply name="bulk_profiling"/>
+                </service>
+                <service type="profile_trimmer">
+                    <apply name="ProfileTrimming_bulk"/>
+                </service>
+            </services>
+        </process>
+        <process name="AML_ProcessingAndTagging" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="IUCustomer" entity="" onError="stop">
+                    <apply name="IUCustomer_profiling"/>
+                </service>
+                <service type="profiling" dataSource="AccountUpdate" entity="" onError="stop">
+                    <apply name="AccountUpdate_profiling"/>
+                </service>
+                <service type="profiling" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection_event"/>
+                </service>
+                <service type="profiling" dataSource="Internal" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection"/>
+                </service>
+                <service type="profiling" dataSource="AlertFeedback" entity="" onError="stop">
+                    <apply name="AlertFeedback_profiling"/>
+                </service>
+                <service type="profiling" dataSource="SensaAlertScore" entity="" onError="continue">
+                    <apply name="SensaAlertScore_profiling"/>
+                </service>
+                <service type="profiling" dataSource="SensaCustomerScore" entity="" onError="continue">
+                    <apply name="SensaCustScore_profiling"/>
+                </service>				
+                <service type="bulk" entity="" onError="stop">
+                    <apply name="bulk_profiling"/>
+                </service>
+                <service type="profile_trimmer">
+                    <apply name="ProfileTrimming_bulk"/>
+                </service>
+                <service type="tagging" dataSource="Transaction" entity="" orgUnit="" onError="stop" dbspec="dbspec_Transaction_Tagging.xml">
+                    <apply name="transactionTagging"/>
+                </service>
+            </services>
+        </process>
+		<process name="AMLIET_Processing" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="IETAlert" entity="" onError="continue" />
+               <service type="detection" dataSource="IETAlert" entity="" onError="stop">
+                   <apply name="Alert_IET_rescoring"/>
+                </service>
+                <service type="snapshot" dataSource="IETAlert" entity="Customer" view="Client" onError="stop">
+                    <apply name="snapshot_all"/>
+                </service>
+            </services>
+        </process>	
+		<process name="SENSA_DAILY_Processing" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="SensaAlertScore" entity="" onError="continue" />
+                <service type="profiling" dataSource="SensaAlertScore" entity="" onError="continue">
+                    <apply name="SensaAlertScore_profiling"/>
+                </service>						
+            </services>
+        </process>			
+		<process name="SENSA_MONTHLY_Processing" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="SensaCustomerScore" entity="" onError="continue" />
+                <service type="profiling" dataSource="SensaCustomerScore" entity="" onError="continue">
+                    <apply name="SensaCustScore_profiling"/>
+                </service>						
+            </services>
+        </process>
+        <process name="AML_EventProcessing" domain="SUSPICIOUS_ACTIVITY">
+            <services>
+                <service type="MODEL_REFRESH" dataSource="Transaction" entity="" onError="continue" />
+                <service type="profiling" dataSource="IUCustomer" entity="" onError="stop">
+                    <apply name="IUCustomer_profiling"/>
+                </service>
+                <service type="profiling" dataSource="AccountUpdate" entity="" onError="stop">
+                    <apply name="AccountUpdate_profiling"/>
+                </service>
+                <service type="profiling" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection_event"/>
+                </service>
+                <service type="profiling" dataSource="Internal" entity="" onError="stop">
+                    <apply name="Transaction_profiling"/>
+                </service>
+                <service type="detection" dataSource="Transaction" entity="" onError="stop">
+                    <apply name="Transaction_detection"/>
+                </service>
+                <service type="profiling" dataSource="AlertFeedback" entity="" onError="stop">
+                    <apply name="AlertFeedback_profiling"/>
+                </service>
+                <service type="bulk" entity="" onError="stop">
+                    <apply name="bulk_profiling"/>
+                </service>
+                <service type="profile_trimmer">
+                    <apply name="ProfileTrimming_bulk"/>
+                </service>
+            </services>
+        </process>
+    </processes>
+</processing>

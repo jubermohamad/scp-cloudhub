@@ -1,0 +1,108 @@
+global:
+  # Standalone-install default. In the platform the umbrella sets
+  # global.imagePullPolicy once and every chart follows it.
+  imagePullPolicy: Always
+
+# Defaults mirror the running sri-dev-domain deployment (both components were live
+# before this chart existed — fs-cra-svc via kubectl-applied k8s/deployment.yaml in
+# streaming-test for local dev; cra-widget-ui via a hand-applied kubectl
+# Deployment/Service/Ingress in sri-dev-domain for the shared AKS dev cluster).
+# Environment overrides live in deployments/<env>/values.overrides.yaml.
+
+image:
+  registry: symphonyfs.azurecr.io
+  # <registry>/<prefix>/<component image name>:<tag>
+  prefix: sensa-data-fin-cra-service
+  # Mutable branch tag by convention (build-push.yml tags images by branch name,
+  # slashes sanitized to dashes) — CD stamps podAnnotations.gitSha so a rebuilt tag
+  # still rolls pods (a mutable tag alone changes nothing in the pod spec).
+  tag: develop
+  pullPolicy: ""            # empty = inherit global.imagePullPolicy
+
+# Pre-existing in the namespace (not chart-managed) — created out-of-band alongside
+# the hand-applied cra-widget-ui objects. Both components pull through it.
+imagePullSecret: symphonyfs-acr-secret
+
+# Stamped by CD (gitSha=<commit>) onto every pod template below.
+podAnnotations: {}
+
+# ── fs-cra-svc — CRA/KYC backend (FastAPI + signal/event consumers) ─────────────
+craSvc:
+  enabled: true
+  imageName: fs-cra-svc
+  port: 8080
+
+  postgres:
+    # Shared instance owned by the ontology (lens) release, in another namespace —
+    # this stack only points at it, same pattern as sensa-data-fin-pipeline-service.
+    host: lens-sensa-data-ontology-postgres.sri-dev-ontology.svc.cluster.local
+    port: 5432
+    # envFrom secret carrying POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD. Must exist
+    # in the namespace already (not chart-managed — no secret material rides in
+    # values). ISOLATION: POSTGRES_DB/POSTGRES_USER inside this secret MUST be unique
+    # to this environment on the shared instance (do not reuse another stack's
+    # role/db) — the ensure-database job below creates whatever this secret names.
+    existingSecret: postgres-secret
+
+  kafka:
+    bootstrapServers: sri-dev-kafka-bootstrap.common-res.svc.cluster.local:9092
+    # LITERAL sink topics declared by the pipeline's signal_map/event_map node
+    # lowering (execution.sink.topic) — cannot be renamed here without also
+    # renaming them on the producer side.
+    signalTopic: CDD_SIGNAL_INGEST
+    eventTopic: CDD_EVENT_INGEST
+    # Consumer groups: safe to leave at the binary's defaults while this is the
+    # ONLY environment consuming these topics on this Kafka cluster. If a second
+    # environment ever shares this same cluster + these same (literal) topic
+    # names, give it distinct groups here — same isolation lesson as
+    # sensa-data-fin-pipeline-service's exec-svc (two environments sharing one
+    # Kafka cluster on the same topic MUST use distinct consumer groups, or one
+    # env's consumer eats the other's events).
+    signalConsumerGroup: fs-cra-svc-cdd-signal-ingest
+    eventConsumerGroup: fs-cra-svc-cdd-event-ingest
+    # Third consumer loop, new upstream on develop: the party-score fact feed
+    # (the executor's party_score sink).
+    partyScoreTopic: CDD_PARTY_SCORE_INGEST
+    partyScoreConsumerGroup: fs-cra-svc-cdd-party-score
+
+  valkey:
+    # party:events write-through projection target — the SAME instance the
+    # executor's party_score handler reads for cross-run history. Without these
+    # the binary falls back to VALKEY_HOST=redis-master, which resolves nowhere
+    # here, and the (best-effort) write-through silently no-ops.
+    #
+    # Upstream's default is the sri-cdd DEV instance; an environment overrides it.
+    host: valkey.sri-cdd-valkey.svc.cluster.local
+    port: 6379
+
+# ── cra-widget-ui — Module-Federation remote (static assets via nginx) ─────────
+craWidgetUi:
+  enabled: true
+  imageName: cra-widget-ui
+  port: 5300
+
+ingress:
+  enabled: true
+  className: nginx
+  # Only ONE ingress per hostname on this cluster may carry the cluster-issuer
+  # annotation (convention noted in deployment_guideline / cluster facts). This
+  # chart's cra-widget-ui Ingress IS that one for sri-dev-domain.invhub.fseng.net —
+  # it 1:1-replaces the hand-applied ingress of the same name, which also carried
+  # this annotation. Any FUTURE ingress added on this same host (e.g. for
+  # craSvc) must leave this annotation unset and just reference tlsSecretName.
+  clusterIssuer: letsencrypt-production
+  host: sri-dev-domain.invhub.fseng.net
+  tlsSecretName: sri-dev-domain-tls
+
+# ── Setup jobs (idempotent Helm hooks) ──────────────────────────────────────────
+
+# Pre-install/upgrade: create the app role + database on the shared Postgres if
+# missing (NOT the KYC schema itself — fs-cra-svc applies app/schema.sql
+# idempotently on its own startup, same as fs-demo-svc's fct_alert_dtls pattern).
+# Needs an in-namespace admin secret — no secret material in values.
+ensureDatabase:
+  enabled: true
+  image: postgres:16-alpine
+  adminExistingSecret: postgres-admin
+  adminUserKey: username
+  adminPasswordKey: password

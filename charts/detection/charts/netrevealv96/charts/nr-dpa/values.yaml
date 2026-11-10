@@ -1,0 +1,58 @@
+dpaDockerImage: "nri-nrod-k8s-dpa:dpa-9.4-20250512072522"
+
+job:
+  eim:
+    pod:
+      java:
+        maxMemory: "4096M"
+        minMemory: "2048M"
+      resources:
+        requests:
+          memory: "4096Mi"
+          cpu: "250m"
+        limits:
+          memory: "4096Mi"
+          cpu: "500m"
+    properties:
+      archiverRetentionPeriodDays: "365"
+      archiverPurgingPeriodDays: "730"
+      autoCreateFlag: "false"
+      ignoreDuplicates: "false"
+    schedule: "0 23 * * *"
+    # This field defines a deadline (in whole seconds) for starting the Job, if that Job misses its scheduled time for any reason.
+    startingDeadlineSeconds: 3600
+    # How many completed Jobs should be kept
+    successfulJobsHistoryLimit: 10
+    # How many failed Jobs should be kept
+    failedJobsHistoryLimit: 10
+    # How long (in seconds) job (and all it's elements) will be kept
+    ttlSecondsAfterFinished: 7776000
+    eimTasks: "SA_CASES SA_ALERTS SA_TASKS_WW SA_NOTIFICATIONS_WW SA_MINORGROUPS SA_CUSTOMERS SA_ASSOCIATED_PARTIES SA_CONNECTED_PARTIES"
+  audit:
+    pod:
+      java:
+        maxMemory: "4096M"
+        minMemory: "2048M"
+      resources:
+        requests:
+          memory: "4096Mi"
+          cpu: "250m"
+        limits:
+          memory: "4096Mi"
+          cpu: "500m"
+    properties:
+      auditLogRetentionPeriodDays: "365"
+      archiverRetentionPeriodDays: "365"
+      auditLogPurgingPeriodMonths: "24"
+      autoCreateFlag: "false"
+      ignoreDuplicates: "false"
+    schedule: "0 23 * * *"
+    # This field defines a deadline (in whole seconds) for starting the Job, if that Job misses its scheduled time for any reason.
+    startingDeadlineSeconds: 3600
+    # How many completed Jobs should be kept
+    successfulJobsHistoryLimit: 10
+    # How many failed Jobs should be kept
+    failedJobsHistoryLimit: 10
+    # How long (in seconds) job (and all it's elements) will be kept
+    ttlSecondsAfterFinished: 7776000
+    auditLogsTasks: "SA_ACQ_BATCH_GROUP SA_ACQ_SRV_ERROR SA_PASSWORD_HISTORY SA_AUDIT_LOGS SA_USER_SESSIONS SA_BMR_ACTION_LOG SA_MON_SYSTEM_LOG SA_TRACE_LOG SA_WF_QUEUE_RULE_AUDIT_LOG"

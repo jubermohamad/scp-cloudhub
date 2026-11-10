@@ -1,0 +1,40 @@
+{{- if and (eq .Values.global.clusterType "aks") .Values.storageClass.enable.scAzureNetapFiles }}
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: azure-netapp-files
+provisioner: csi.trident.netapp.io
+mountOptions:
+  - rw
+  - hard
+  - rsize=262144
+  - wsize=262144
+  - vers=3
+  - tcp
+  - nconnect=8
+parameters:
+  backendType: "azure-netapp-files"
+  fsType: "nfs"
+allowVolumeExpansion: true
+
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: trident-snapshotclass
+  labels:
+    velero.io/csi-volumesnapshot-class: "true"
+driver: csi.trident.netapp.io
+deletionPolicy: Delete
+
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: azure-disk-csi-snapshotclass
+  labels:
+    velero.io/csi-volumesnapshot-class: "true"
+driver: disk.csi.azure.com
+deletionPolicy: Delete
+{{- end }}
