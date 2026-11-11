@@ -507,6 +507,42 @@ export function SriDeploymentHubPage({
       )}
 
       <Grid container spacing={2}>
+        <Grid item xs={12} sm={6} md={3} lg={3} key="sri-provisioner">
+          <Card className={classes.card}>
+            <CardActionArea
+              className={classes.cardArea}
+              onClick={() =>
+                window.open(
+                  'https://sri-provisioner.invhub.fseng.net/',
+                  '_blank',
+                  'noopener,noreferrer',
+                )
+              }
+            >
+              <CardContent className={classes.cardBody}>
+                <BuildIcon className={classes.cardIcon} style={{ color: '#111827' }} />
+                <Box className={classes.cardMeta}>
+                  <Typography className={classes.cardTitle}>SRI Provisioner</Typography>
+                  <Typography className={classes.cardLabel}>
+                    Provision SRI environments and services
+                  </Typography>
+                  <Typography component="span" className={classes.sectionBadge}>
+                    {sectionBadgeLabel}
+                  </Typography>
+                  <Box className={classes.cardActions} aria-label="Available actions">
+                    <Typography component="span" className={classes.cardActionLabel}>
+                      Open
+                    </Typography>
+                    <Typography component="span" className={classes.cardActionLabel}>
+                      Provision
+                    </Typography>
+                  </Box>
+                </Box>
+              </CardContent>
+            </CardActionArea>
+          </Card>
+        </Grid>
+
         {filteredApps.map(application => {
           const linkedComponent = componentByApp.get(application.appName);
           const meta = getCardMeta(linkedComponent?.id ?? application.appName);

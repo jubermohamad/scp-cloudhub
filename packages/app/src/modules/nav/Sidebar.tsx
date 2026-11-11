@@ -13,7 +13,6 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import TimelineIcon from '@mui/icons-material/Timeline';
 import CloudIcon from '@mui/icons-material/Cloud';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
-import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import SettingsApplicationsIcon from '@mui/icons-material/SettingsApplications';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -254,11 +253,6 @@ export const SidebarContent = NavContentBlueprint.make({
                   ))}
                 {showSriCatalog && (
                   <>
-                    <SidebarItem
-                      icon={VerifiedUserIcon}
-                      to="/sri"
-                      text="SRI Catalog"
-                    />
                     <SidebarItem
                       icon={LayersIcon}
                       to="/common-resources"
