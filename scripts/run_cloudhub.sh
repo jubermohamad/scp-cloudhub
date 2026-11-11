@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PORT="${PORT:-3000}"
 BACKEND_PORT="${BACKEND_PORT:-7007}"
+LOCAL_ONLY="${LOCAL_ONLY:-0}"
 
 kill_port() {
   local port="$1"
@@ -59,11 +60,28 @@ kill_repo_processes() {
   fi
 }
 
-for port in "${PORT}" "${BACKEND_PORT}"; do
+for port in "${PORT}" "${BACKEND_PORT}" 5433; do
   kill_port "$port"
 done
 kill_repo_processes
 
 cd "${REPO_ROOT}"
-export PORT BACKEND_PORT
-exec yarn start "$@"
+
+if [ "${LOCAL_ONLY}" = "1" ] || [ "${LOCAL_ONLY}" = "true" ]; then
+  echo "Starting local Backstage dev server (not Docker containers)."
+  export PORT BACKEND_PORT
+  exec yarn start "$@"
+fi
+
+if docker compose version >/dev/null 2>&1; then
+  echo "Starting CloudHub Docker containers"
+  exec docker compose up --build -d "$@"
+fi
+
+if docker-compose version >/dev/null 2>&1; then
+  echo "Starting CloudHub Docker containers"
+  exec docker-compose up --build -d "$@"
+fi
+
+echo "Neither docker compose nor docker-compose is available. Install Docker Desktop or Docker Engine." >&2
+exit 1

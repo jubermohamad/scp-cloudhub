@@ -34,17 +34,20 @@ server {
         proxy_set_header X-Requested-With $http_x_requested_with;
         proxy_cache_bypass $http_upgrade;
         # Allow enough time for Azure token + Management API calls.
-        # Default nginx timeout is 60s which can be hit by cold-start token
-        # acquisition or slow ARM responses.
-        proxy_connect_timeout 10s;
-        proxy_send_timeout    120s;
-        proxy_read_timeout    120s;
+        # Cold-start token acquisition and slow ARM responses can take several
+        # minutes, so the frontend gateway must not time out early.
+        proxy_connect_timeout 30s;
+        proxy_send_timeout    600s;
+        proxy_read_timeout    600s;
     }
 
     location /.backstage/ {
         proxy_pass ${BACKEND_ORIGIN};
         proxy_http_version 1.1;
         proxy_set_header Host $proxy_host;
+        proxy_connect_timeout 30s;
+        proxy_send_timeout    600s;
+        proxy_read_timeout    600s;
     }
 
     # Runtime deployment version exposed to the frontend header.
