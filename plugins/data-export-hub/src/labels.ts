@@ -78,10 +78,10 @@ export const COMPRESSION_LABELS: Record<Compression, string> = {
 
 export const SOURCE_PRODUCT_LABELS: Record<SourceProduct, string> = {
   NETREVEAL: 'NetReveal',
-  SRI: 'Sensa Risk Intelligence',
+  SRI: 'SymphonyAI Risk Intelligence',
   AISTORE: 'AI Store',
   EUREKA: 'Eureka',
-  SENSAAI_SANCTIONS: 'SensaAI for Sanctions',
+  SENSAAI_SANCTIONS: 'SymphonyAI for Sanctions',
 };
 
 export const DATASET_CATEGORY_LABELS: Record<DatasetCategory, string> = {

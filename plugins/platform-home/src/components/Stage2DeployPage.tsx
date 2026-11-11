@@ -1199,7 +1199,7 @@ export function Stage2DeployPage({ isTab = false }: Stage2DeployPageProps) {
               },
               {
                 key: 'wlmSensaAI',
-                label: 'Sensa AI',
+                label: 'SymphonyAI',
                 isChecked: form.solutions.wlmSensaAI,
               },
             ]}

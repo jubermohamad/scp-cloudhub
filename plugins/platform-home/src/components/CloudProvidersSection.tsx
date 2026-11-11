@@ -302,7 +302,7 @@ export function CloudProvidersSection({
                       SRI
                     </Typography>
                     <Typography className={classes.providerTagline}>
-                      Sensa Risk Intelligence
+                      SymphonyAI Risk Intelligence
                     </Typography>
                   </div>
                 </CardActionArea>

@@ -496,7 +496,7 @@ export function SriPage() {
           <ArrowBackIcon fontSize="small" /> Platform Home
         </RouterLink>
         <Typography className={classes.heroEyebrow}>
-          Sensa Risk Intelligence
+          SymphonyAI Risk Intelligence
         </Typography>
         <Typography className={classes.heroTitle}>
           SRI — Deploy to AKS
@@ -679,7 +679,7 @@ export function SriPage() {
                   color="textSecondary"
                   display="block"
                 >
-                  Sensa Risk Intelligence {selectedService?.title} base platform
+                  SymphonyAI Risk Intelligence {selectedService?.title} base platform
                   service deployed successfully to target environment.
                 </Typography>
               </div>
@@ -969,7 +969,7 @@ export function SriPage() {
         // ─── STEP 1: SELECT SERVICE VIEW (GRID) ──────────────────────────────
         <>
           <Typography className={classes.sectionTitle}>
-            {SRI_COMPONENTS.length} Sensa Risk Intelligence components available
+            {SRI_COMPONENTS.length} SymphonyAI Risk Intelligence components available
             to deploy
           </Typography>
 

@@ -471,7 +471,7 @@ export function SriDeploymentHubPage({
           <Typography component="span" className={classes.heroMetaCurrent}>{copy.breadcrumb}</Typography>
         </Box>
         <Typography variant="overline" className={classes.heroEyebrow}>
-          Sensa Risk Intelligence
+          SymphonyAI Risk Intelligence
         </Typography>
         <Typography variant="h4" className={classes.heroTitle}>
           {copy.heroTitle}

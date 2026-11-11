@@ -319,7 +319,7 @@ const ROUTE_TITLES: Array<[RegExp, string]> = [
   [/^\/cloud\/azure/, 'Azure'],
   [/^\/cloud\//, 'Cloud Provider'],
   [/^\/gpu-compute/, 'GPU Compute'],
-  [/^\/sri/, 'Sensa Risk Intelligence'],
+  [/^\/sri/, 'SymphonyAI Risk Intelligence'],
   [/^\/eng-tools/, 'Eng. Tools'],
   [/^\/sre\/clusters/, 'Environment Health'],
   [/^\/operations\/k8s-health-check/, 'Kubernetes Health'],
@@ -610,12 +610,12 @@ export function GlobalHeader() {
         onClick={() => goTo('/')}
         role="link"
         tabIndex={0}
-        aria-label="Sensa Cloud Platform home"
+        aria-label="SymphonyAI Cloud Platform home"
         onKeyDown={e => e.key === 'Enter' && goTo('/')}
       >
         <div className={classes.logoMark}>SC</div>
         <div className={classes.brandText}>
-          <span className={classes.brandName}>Sensa Cloud Platform</span>
+          <span className={classes.brandName}>SymphonyAI Cloud Platform</span>
           <span className={classes.brandSub}>{pageTitle}</span>
         </div>
       </div>

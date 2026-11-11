@@ -24,11 +24,9 @@ import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import GitHubIcon from '@mui/icons-material/GitHub';
 import ImportExportIcon from '@mui/icons-material/ImportExport';
 import LayersIcon from '@mui/icons-material/Layers';
-import ShieldIcon from '@mui/icons-material/Shield';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import StorageIcon from '@mui/icons-material/Storage';
 import AppsIcon from '@mui/icons-material/Apps';
-import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import PeopleIcon from '@mui/icons-material/People';
 import HistoryIcon from '@mui/icons-material/History';
 import {
@@ -57,7 +55,6 @@ const deploymentNavItems = [
   { label: 'Create AKS', path: '/deployment/aks', icon: StorageIcon },
   { label: 'Deploy common-res', path: '/deployment/common-res', icon: LayersIcon },
   { label: 'Deploy SRI', path: '/deployment/sri', icon: AppsIcon },
-  { label: 'Deploy NetReveal', path: '/deployment/netreveal', icon: CloudUploadIcon },
   {
     label: 'Deploy Customer Overlay',
     path: '/deployment/customer-overlay',
@@ -252,18 +249,7 @@ export const SidebarContent = NavContentBlueprint.make({
                     />
                   ))}
                 {showSriCatalog && (
-                  <>
-                    <SidebarItem
-                      icon={LayersIcon}
-                      to="/common-resources"
-                      text="Common Resources"
-                    />
-                    <SidebarItem
-                      icon={ShieldIcon}
-                      to="/deploy-netreveal"
-                      text="Deploy NetReveal"
-                    />
-                  </>
+                  <></>
                 )}
                 <SidebarItem
                   icon={AppRegistrationIcon}
