@@ -163,22 +163,24 @@ const useStyles = makeStyles(theme => ({
   },
   hero: {
     borderRadius: 12,
-    padding: theme.spacing(2.5),
+    padding: theme.spacing(1.5, 2.25, 1.75),
     color: '#fff',
     display: 'flex',
     flexDirection: 'column',
-    gap: theme.spacing(0.75),
+    gap: theme.spacing(0.5),
     marginBottom: theme.spacing(2),
     background: 'linear-gradient(135deg, #1e3a5f 0%, #1d4ed8 100%)',
   },
   heroMeta: {
     display: 'flex',
     alignItems: 'center',
-    gap: theme.spacing(0.75),
-    marginBottom: theme.spacing(0.25),
+    flexWrap: 'wrap',
+    gap: theme.spacing(0.25),
+    marginBottom: 0,
     color: '#fff',
     opacity: 0.9,
-    fontSize: '0.75rem',
+    fontSize: '0.72rem',
+    lineHeight: 1.2,
   },
   heroMetaLink: {
     color: '#fff',
@@ -200,14 +202,14 @@ const useStyles = makeStyles(theme => ({
     margin: 0,
   },
   heroTitle: {
-    fontSize: '1.25rem',
+    fontSize: '1.1rem',
     fontWeight: 700,
     lineHeight: 1.2,
     margin: 0,
   },
   heroSubtitle: {
     color: '#fff',
-    fontSize: '0.875rem',
+    fontSize: '0.8rem',
     opacity: 0.85,
     margin: 0,
     maxWidth: 760,
@@ -469,10 +471,9 @@ export function SriDeploymentHubPage({
           </MuiLink>
           <Typography component="span" className={classes.heroMetaCurrent}>/</Typography>
           <Typography component="span" className={classes.heroMetaCurrent}>{copy.breadcrumb}</Typography>
+          <Typography component="span" className={classes.heroMetaCurrent}>•</Typography>
+          <Typography component="span" className={classes.heroMetaCurrent}>SymphonyAI Risk Intelligence</Typography>
         </Box>
-        <Typography variant="overline" className={classes.heroEyebrow}>
-          SymphonyAI Risk Intelligence
-        </Typography>
         <Typography variant="h4" className={classes.heroTitle}>
           {copy.heroTitle}
         </Typography>
