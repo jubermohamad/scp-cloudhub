@@ -27,6 +27,11 @@ import ImportExportIcon from '@mui/icons-material/ImportExport';
 import LayersIcon from '@mui/icons-material/Layers';
 import ShieldIcon from '@mui/icons-material/Shield';
 import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
+import StorageIcon from '@mui/icons-material/Storage';
+import AppsIcon from '@mui/icons-material/Apps';
+import CloudUploadIcon from '@mui/icons-material/CloudUpload';
+import PeopleIcon from '@mui/icons-material/People';
+import HistoryIcon from '@mui/icons-material/History';
 import {
   dataExportHubRoot,
 } from '@internal/plugin-data-export-hub';
@@ -47,6 +52,20 @@ const useStyles = makeStyles(theme => ({
     },
   },
 }));
+
+// Deployment stages, each a first-level sidebar entry in lifecycle order.
+const deploymentNavItems = [
+  { label: 'Create AKS', path: '/deployment/aks', icon: StorageIcon },
+  { label: 'Deploy common-res', path: '/deployment/common-res', icon: LayersIcon },
+  { label: 'Deploy SRI', path: '/deployment/sri', icon: AppsIcon },
+  { label: 'Deploy NetReveal', path: '/deployment/netreveal', icon: CloudUploadIcon },
+  {
+    label: 'Deploy Customer Overlay',
+    path: '/deployment/customer-overlay',
+    icon: PeopleIcon,
+  },
+  { label: 'Deployment History', path: '/deployment/history', icon: HistoryIcon },
+];
 
 const NavSection = ({ label, icon, children }: any) => (
   <>
@@ -224,13 +243,15 @@ export const SidebarContent = NavContentBlueprint.make({
 
             {showDeliverySection && (
               <NavSection label="Delivery" icon={<AccountTreeIcon />}>
-                {showDeployment && (
-                  <SidebarItem
-                    icon={AccountTreeIcon}
-                    to="/deployment"
-                    text="Deployment"
-                  />
-                )}
+                {showDeployment &&
+                  deploymentNavItems.map(item => (
+                    <SidebarItem
+                      key={item.path}
+                      icon={item.icon}
+                      to={item.path}
+                      text={item.label}
+                    />
+                  ))}
                 {showSriCatalog && (
                   <>
                     <SidebarItem

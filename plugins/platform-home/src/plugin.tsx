@@ -17,7 +17,12 @@ import { AdminSettingsPage } from './components/AdminSettingsPage';
 import { UserSettingsPage } from './components/UserSettingsPage';
 import { DocumentationPage } from './components/DocumentationPage';
 import { AksWorkflowPage } from './components/AksWorkflowPage';
-import { DeploymentPage } from './components/DeploymentPage';
+import { CreateAksPage } from './components/deployment/CreateAksPage';
+import { DeployCommonResPage } from './components/deployment/DeployCommonResPage';
+import { DeploySriPage } from './components/deployment/DeploySriPage';
+import { DeployNetRevealPage } from './components/deployment/DeployNetRevealPage';
+import { DeployCustomerOverlayPage } from './components/deployment/DeployCustomerOverlayPage';
+import { DeploymentHistoryPage } from './components/deployment/DeploymentHistoryPage';
 import { EngToolsPage } from './components/EngToolsPage';
 import { GpuComputePage } from './components/gpu-compute/GpuComputePage';
 import { CreateGpuInstancePage } from './components/gpu-compute/CreateGpuInstancePage';
@@ -161,22 +166,79 @@ const sriDeployIndexPage = PageBlueprint.make({
 
 // ── Three-stage pipeline pages ──────────────────────────────────────────────
 
-const pipelineOverviewPage = PageBlueprint.make({
+const deploymentAllowedPersonas = [
+  'cloudhub-platform',
+  'app-engineering',
+  'professional-services',
+];
+
+// Each deployment stage is a standalone route (and sidebar entry).
+const deploymentPage = (
+  name: string,
+  path: string,
+  resource: string,
+  element: React.ReactElement,
+) =>
+  PageBlueprint.make({
+    name,
+    params: {
+      path,
+      loader: async () => (
+        <PersonaGate allowed={deploymentAllowedPersonas} resource={resource}>
+          {element}
+        </PersonaGate>
+      ),
+    },
+  });
+
+const deploymentCreateAksPage = deploymentPage(
+  'deployment-aks',
+  '/deployment/aks',
+  'Create AKS',
+  <CreateAksPage />,
+);
+
+const deploymentCommonResPage = deploymentPage(
+  'deployment-common-res',
+  '/deployment/common-res',
+  'Deploy common-res',
+  <DeployCommonResPage />,
+);
+
+const deploymentSriPage = deploymentPage(
+  'deployment-sri',
+  '/deployment/sri',
+  'Deploy SRI',
+  <DeploySriPage />,
+);
+
+const deploymentNetRevealPage = deploymentPage(
+  'deployment-netreveal',
+  '/deployment/netreveal',
+  'Deploy NetReveal',
+  <DeployNetRevealPage />,
+);
+
+const deploymentCustomerOverlayPage = deploymentPage(
+  'deployment-customer-overlay',
+  '/deployment/customer-overlay',
+  'Deploy Customer Overlay',
+  <DeployCustomerOverlayPage />,
+);
+
+const deploymentHistoryPage = deploymentPage(
+  'deployment-history',
+  '/deployment/history',
+  'Deployment History',
+  <DeploymentHistoryPage />,
+);
+
+// Legacy entry point: /deployment lands on the first step.
+const deploymentIndexRedirectPage = PageBlueprint.make({
   name: 'deployment',
   params: {
     path: '/deployment',
-    loader: async () => (
-      <PersonaGate
-        allowed={[
-          'cloudhub-platform',
-          'app-engineering',
-          'professional-services',
-        ]}
-        resource="Deployment"
-      >
-        <DeploymentPage />
-      </PersonaGate>
-    ),
+    loader: async () => <Navigate to="/deployment/aks" replace />,
   },
 });
 
@@ -334,7 +396,13 @@ export default createFrontendPlugin({
     netRevealPage,
     sriDeployIndexPage,
     sriDeployPage,
-    pipelineOverviewPage,
+    deploymentIndexRedirectPage,
+    deploymentCreateAksPage,
+    deploymentCommonResPage,
+    deploymentSriPage,
+    deploymentNetRevealPage,
+    deploymentCustomerOverlayPage,
+    deploymentHistoryPage,
     // New App page
     PageBlueprint.make({
       name: 'new-app',

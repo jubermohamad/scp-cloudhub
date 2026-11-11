@@ -35,12 +35,10 @@ const useStyles = makeStyles(theme => ({
 
 function usePathname() {
   const [pathname, setPathname] = useState(window.location.pathname);
-  const [search, setSearch] = useState(window.location.search);
 
   useEffect(() => {
     const update = () => {
       setPathname(window.location.pathname);
-      setSearch(window.location.search);
     };
     const originalPushState = window.history.pushState;
     const originalReplaceState = window.history.replaceState;
@@ -65,32 +63,46 @@ function usePathname() {
     };
   }, []);
 
-  return { pathname, search };
+  return pathname;
 }
 
-function getDeploymentTab(pathname: string, search: string): HeaderTab {
-  const urlParams = new URLSearchParams(search);
-  const stage = urlParams.get('stage');
+// Mirrors the deployment sidebar entries so the header label matches the
+// active section.
+const DEPLOYMENT_SECTIONS: HeaderTab[] = [
+  { label: 'Create AKS', path: '/deployment/aks', match: /^\/deployment\/aks/ },
+  {
+    label: 'Deploy common-res',
+    path: '/deployment/common-res',
+    match: /^\/deployment\/common-res/,
+  },
+  { label: 'Deploy SRI', path: '/deployment/sri', match: /^\/deployment\/sri/ },
+  {
+    label: 'Deploy NetReveal',
+    path: '/deployment/netreveal',
+    match: /^\/deployment\/netreveal/,
+  },
+  {
+    label: 'Deploy Customer Overlay',
+    path: '/deployment/customer-overlay',
+    match: /^\/deployment\/customer-overlay/,
+  },
+  {
+    label: 'Deployment History',
+    path: '/deployment/history',
+    match: /^\/deployment\/history/,
+  },
+];
 
+function getDeploymentTab(pathname: string): HeaderTab {
+  const section = DEPLOYMENT_SECTIONS.find(s => s.match.test(pathname));
+  if (section) {
+    return section;
+  }
   if (/^\/deployment\/stage\/1/.test(pathname)) {
     return {
       label: 'AKS Cluster',
       path: '/deployment/stage/1',
       match: /^\/deployment\/stage\/1/,
-    };
-  }
-  if (pathname === '/deployment' && stage === 's3') {
-    return {
-      label: 'Deploy SRI',
-      path: '/deployment?stage=s3',
-      match: /^\/deployment$/, // Will match /deployment path with s3 stage in search
-    };
-  }
-  if (pathname === '/deployment' && stage === 's4') {
-    return {
-      label: 'Deploy NetReveal',
-      path: '/deployment?stage=s4',
-      match: /^\/deployment$/, // Will match /deployment path with s4 stage in search
     };
   }
   if (/^\/deployment\/stage\/2/.test(pathname)) {
@@ -107,7 +119,11 @@ function getDeploymentTab(pathname: string, search: string): HeaderTab {
       match: /^\/deployment\/stage\/3/,
     };
   }
-  return { label: 'Deployment', path: '/deployment', match: /^\/deployment/ };
+  return {
+    label: 'Deployment',
+    path: '/deployment/aks',
+    match: /^\/deployment/,
+  };
 }
 
 const STATIC_TABS: HeaderTab[] = [
@@ -117,14 +133,14 @@ const STATIC_TABS: HeaderTab[] = [
 
 export function AppShellTabs() {
   const classes = useStyles();
-  const { pathname, search } = usePathname();
+  const pathname = usePathname();
   const [host, setHost] = useState<HTMLElement | null>(null);
 
   const staticTabs = useMemo(() => STATIC_TABS, []);
 
   const tabs = useMemo(
-    () => [getDeploymentTab(pathname, search), ...staticTabs],
-    [pathname, search, staticTabs],
+    () => [getDeploymentTab(pathname), ...staticTabs],
+    [pathname, staticTabs],
   );
 
   useEffect(() => {
@@ -181,19 +197,7 @@ export function AppShellTabs() {
   return createPortal(
     <nav className={classes.navTabs} aria-label="App shell navigation tabs">
       {tabs.map(tab => {
-        // For deployment tabs with stage param, check both pathname and search
-        let active = tab.match.test(pathname);
-        if (pathname === '/deployment') {
-          const urlParams = new URLSearchParams(search);
-          const stage = urlParams.get('stage');
-          if (tab.path === '/deployment?stage=s3' && stage === 's3') {
-            active = true;
-          } else if (tab.path === '/deployment?stage=s4' && stage === 's4') {
-            active = true;
-          } else if (tab.path === '/deployment' && !stage) {
-            active = true;
-          }
-        }
+        const active = tab.match.test(pathname);
         return (
           <Button
             key={tab.path}
